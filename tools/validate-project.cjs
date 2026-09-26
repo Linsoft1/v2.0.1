@@ -3,7 +3,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
-const files = ['app.js', 'main.cjs', 'preload.cjs', path.join('Linsoft centrum app', 'app.js')];
+const files = ['app.js', 'main.cjs', 'preload.cjs', path.join('lib', 'browser-policies.cjs'), path.join('lib', 'permission-handlers.cjs'), path.join('Linsoft centrum app', 'app.js')];
 for (const file of files) {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`Syntax error in ${file}: ${result.stderr || result.stdout}`);
@@ -12,6 +12,7 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 
 const protocols = packageJson.build?.protocols || [];
 const hasLinsoftProtocol = protocols.some((entry) => entry.schemes?.includes('linsoft'));
 if (!hasLinsoftProtocol) throw new Error('Missing linsoft protocol registration');
+if (!packageJson.build.files.includes('lib/**/*')) throw new Error('Browser policy module is missing from packaged files');
 if (!packageJson.build.files.includes('Linsoft centrum app/**/*')) throw new Error('Standalone App Centrum is missing from packaged files');
 const standaloneFiles = ['index.html', 'styles.css', 'app.js'];
 for (const file of standaloneFiles) {

@@ -4,16 +4,19 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
+const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
+const { createPermissionCheckHandler, createPermissionRequestHandler } = require('./lib/permission-handlers.cjs');
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { autoUpdater = null; }
 let updateState = { status: 'idle' };
 const isLinux = process.platform === 'linux';
-const writableDataPath = path.join(app.getPath('appData'), 'Linsoft Browser');
+const writableDataPath = process.env.LINSOFT_BROWSER_USER_DATA || path.join(app.getPath('appData'), 'Linsoft Browser');
 app.setPath('userData', writableDataPath);
 app.setPath('cache', path.join(writableDataPath, 'Cache'));
 const windowStatePath = path.join(writableDataPath, 'window-state.json');
 const passwordVaultPath = path.join(writableDataPath, 'password-vault.json');
 const downloadHistoryPath = path.join(writableDataPath, 'download-history.json');
+const sitePermissionsPath = path.join(writableDataPath, 'site-permissions.json');
 /** @type {Set<import('electron').BrowserWindow>} */
 const browserWindows = new Set();
 
@@ -24,29 +27,19 @@ function publishUpdateState(state) {
   }
 }
 
-function updateFailure(error) {
-  const detail = error instanceof Error ? error.message : String(error);
-  if (/Unable to find latest version on GitHub|ensure a production release exists|releases\/latest/i.test(detail)) {
-    return { ok: false, status: 'unavailable', message: 'Zatiaľ nie je zverejnené stabilné vydanie aktualizácie. Skús to znova neskôr.' };
-  }
-  if (detail.length > 220) return { ok: false, status: 'error', message: 'Kontrola aktualizácií zlyhala. Skús to znova neskôr.' };
-  return { ok: false, status: 'error', message: detail };
-}
-
 function setupAutoUpdater() {
   if (!autoUpdater || !app.isPackaged || process.platform !== 'win32') return;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('update-available', (info) => publishUpdateState({ status: 'available', version: info.version }));
-  autoUpdater.on('update-not-available', (info) => publishUpdateState({ status: 'latest', version: info.version }));
+  autoUpdater.on('update-available', (info) => publishUpdateState({ status: 'available', version: info.version, checkedAt: Date.now() }));
+  autoUpdater.on('update-not-available', (info) => publishUpdateState({ status: 'latest', version: info.version, checkedAt: Date.now() }));
   autoUpdater.on('download-progress', (progress) => publishUpdateState({ status: 'downloading', version: updateState.version, percent: Math.round(progress.percent || 0) }));
   autoUpdater.on('update-downloaded', (info) => publishUpdateState({ status: 'downloaded', version: info.version }));
-  autoUpdater.on('error', (error) => console.warn('Linsoft Browser update check failed:', error.message));
+  autoUpdater.on('error', (error) => { console.warn('Linsoft Browser update check failed:', error.message); publishUpdateState({ ...formatUpdateFailure(error), checkedAt: Date.now() }); });
 
   const checkForUpdates = () => {
-    if (!browserPreferences.autoUpdateCheck) return;
-    if (['downloading', 'downloaded'].includes(updateState.status)) return;
-    autoUpdater.checkForUpdates().catch((error) => console.warn('Linsoft Browser update check failed:', error.message));
+    if (!canAutoCheckForUpdates({ isPackaged: app.isPackaged, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) return;
+    autoUpdater.checkForUpdates().catch((error) => publishUpdateState({ ...formatUpdateFailure(error), checkedAt: Date.now() }));
   };
   setTimeout(checkForUpdates, 8000);
   setInterval(checkForUpdates, 6 * 60 * 60 * 1000);
@@ -60,6 +53,70 @@ let openVpnProfile = '';
 const activeDownloads = new Map();
 let downloadHistory = [];
 let passwordVault = [];
+let sitePermissions = {};
+
+function loadSitePermissions() {
+  try {
+    const stored = JSON.parse(require('node:fs').readFileSync(sitePermissionsPath, 'utf8'));
+    sitePermissions = {};
+    if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+      for (const [key, decision] of Object.entries(stored)) {
+        const separator = key.lastIndexOf('|');
+        const origin = key.slice(0, separator);
+        const permission = key.slice(separator + 1);
+        if (separator > 0 && normalizePermissionOrigin(origin) === origin && ['allow', 'deny'].includes(decision) && ['notifications', 'audio', 'video', 'audio,video'].includes(permission)) sitePermissions[key] = decision;
+      }
+    }
+  } catch {
+    sitePermissions = {};
+  }
+}
+
+function saveSitePermissions() {
+  require('node:fs').mkdirSync(path.dirname(sitePermissionsPath), { recursive: true });
+  require('node:fs').writeFileSync(sitePermissionsPath, JSON.stringify(sitePermissions), 'utf8');
+}
+
+function permissionLabel(permission, mediaTypes = []) {
+  if (permission === 'notifications') return 'webovým upozorneniam';
+  const labels = mediaTypes.map((type) => type === 'video' ? 'kamere' : type === 'audio' ? 'mikrofónu' : '').filter(Boolean);
+  return labels.length ? labels.join(' a ') : 'médiám';
+}
+
+function isGuestWebContents(webContents) {
+  const parentContents = webContents?.hostWebContents || webContents;
+  return BrowserWindow.fromWebContents(parentContents)?.__guest === true;
+}
+
+async function requestSitePermission(webContents, permission, callback, details = {}) {
+  const guest = isGuestWebContents(webContents);
+  const request = getPermissionDecision({ permission, mediaTypes: details.mediaTypes, requestingUrl: details.requestingUrl, preferences: browserPreferences, decisions: guest ? {} : sitePermissions });
+  if (request.decision === 'deny') return callback(false);
+  if (request.decision === 'allow') return callback(true);
+
+  try {
+    const parentContents = webContents.hostWebContents || webContents;
+    const parentWindow = BrowserWindow.fromWebContents(parentContents) || undefined;
+    const result = await dialog.showMessageBox(parentWindow, {
+      type: 'question',
+      title: 'Povolenie webovej stránky',
+      message: `${request.origin} žiada o prístup ku ${permissionLabel(permission, details.mediaTypes)}.`,
+      detail: 'Povoliť prístup iba tejto stránke?',
+      buttons: ['Blokovať', 'Povoliť teraz', 'Vždy povoliť'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    });
+    const allowed = result.response === 1 || result.response === 2;
+    if (!guest && (result.response === 0 || result.response === 2)) {
+      sitePermissions[request.key] = allowed ? 'allow' : 'deny';
+      saveSitePermissions();
+    }
+    callback(allowed);
+  } catch {
+    callback(false);
+  }
+}
 
 function saveDownloadHistory() {
   require('node:fs').mkdirSync(path.dirname(downloadHistoryPath), { recursive: true });
@@ -278,7 +335,7 @@ function startupUrlFromArgs(args) {
 }
 
 function supportedWebUrl(value) {
-  try { const parsed = new URL(String(value)); return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname); } catch { return false; }
+  return isSafeWebUrl(value);
 }
 
 function supportedNavigationUrl(value) {
@@ -320,10 +377,41 @@ function dispatchExternalUrl(window, url) {
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) app.quit();
 
-function createWindow(initialUrl = 'linsoft://start') {
+function configureGuestSession(guestSession) {
+  guestSession.setPermissionRequestHandler(createPermissionRequestHandler(requestSitePermission));
+  guestSession.setPermissionCheckHandler(createPermissionCheckHandler(({ permission, requestingUrl, mediaTypes }) => {
+    return getPermissionDecision({ permission, mediaTypes, requestingUrl, preferences: browserPreferences, decisions: {} });
+  }));
+  guestSession.on('will-attach-webview', (event, webPreferences, params) => {
+    if (!supportedWebUrl(params.src)) {
+      event.preventDefault();
+      return;
+    }
+    delete webPreferences.preload;
+    delete webPreferences.preloadURL;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+  });
+  guestSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    details.requestHeaders.DNT = '1';
+    details.requestHeaders['Sec-GPC'] = '1';
+    callback({ requestHeaders: details.requestHeaders });
+  });
+  guestSession.webRequest.onBeforeRequest((details, callback) => {
+    if (details.resourceType === 'mainFrame') return callback({ cancel: false });
+    callback({ cancel: isBlockedAdRequest(details.url, details) });
+  });
+}
+
+function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
   const safeInitialUrl = /^linsoft:\/\//i.test(initialUrl) || /^file:\/\//i.test(initialUrl);
   const normalizedInitialUrl = initialUrl;
-  const windowState = getVisibleWindowState(savedWindowState);
+  const windowState = guest ? {} : getVisibleWindowState(savedWindowState);
+  const partition = guest ? `guest-${crypto.randomUUID()}` : '';
+  if (guest) configureGuestSession(session.fromPartition(partition));
   const window = new BrowserWindow({
     x: windowState.x,
     y: windowState.y,
@@ -332,7 +420,7 @@ function createWindow(initialUrl = 'linsoft://start') {
     icon: path.join(__dirname, 'assets', isLinux ? 'linsoft-icon-256.png' : 'linsoft-icon.ico'),
     minWidth: 960,
     minHeight: 640,
-    title: 'Linsoft Browser',
+    title: guest ? 'Linsoft Browser - hosť' : 'Linsoft Browser',
     backgroundColor: '#0b1118',
     frame: false,
     titleBarStyle: 'hidden',
@@ -344,15 +432,17 @@ function createWindow(initialUrl = 'linsoft://start') {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
-      sandbox: true
+      sandbox: true,
+      partition: partition || undefined
     }
   });
+  window.__guest = guest;
 
   function isYoutubeCoreHost(hostname) {
     const host = String(hostname || '').toLowerCase();
     return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtubei.googleapis.com' || host.endsWith('.googlevideo.com') || host.endsWith('.ytimg.com') || host.endsWith('.ggpht.com');
   }
-  window.loadFile(path.join(__dirname, 'index.html'));
+  window.loadFile(path.join(__dirname, 'index.html'), { query: guest ? { guest: '1' } : undefined });
   window.once('ready-to-show', () => {
     if (window.isMinimized()) window.restore();
     if (windowState.isMaximized) window.maximize();
@@ -362,11 +452,13 @@ function createWindow(initialUrl = 'linsoft://start') {
     window.focus();
     setTimeout(() => { if (!window.isDestroyed()) window.setAlwaysOnTop(false); }, 700);
   });
-  window.on('resize', () => saveWindowState(window));
-  window.on('move', () => saveWindowState(window));
-  window.on('maximize', () => saveWindowState(window));
-  window.on('unmaximize', () => saveWindowState(window));
-  window.on('close', () => saveWindowState(window));
+  if (!guest) {
+    window.on('resize', () => saveWindowState(window));
+    window.on('move', () => saveWindowState(window));
+    window.on('maximize', () => saveWindowState(window));
+    window.on('unmaximize', () => saveWindowState(window));
+    window.on('close', () => saveWindowState(window));
+  }
   window.on('close', (event) => {
     if (window.__closeConfirmed) return;
     event.preventDefault();
@@ -461,7 +553,25 @@ ipcMain.on('set-browser-preferences', (_event, preferences) => {
   for (const key of Object.keys(browserPreferences)) {
     if (typeof preferences[key] === typeof browserPreferences[key]) browserPreferences[key] = preferences[key];
   }
-  if (enablingAutoUpdates && autoUpdater && app.isPackaged && process.platform === 'win32' && !['downloading', 'downloaded'].includes(updateState.status)) autoUpdater.checkForUpdates().catch(() => {});
+  if (enablingAutoUpdates && autoUpdater && canAutoCheckForUpdates({ isPackaged: app.isPackaged, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) autoUpdater.checkForUpdates().catch(() => {});
+});
+ipcMain.handle('site-permission-list', (event) => {
+  if (isGuestWebContents(event.sender)) return [];
+  return Object.entries(sitePermissions).map(([key, decision]) => {
+  const separator = key.lastIndexOf('|');
+  return { key, origin: key.slice(0, separator), permission: key.slice(separator + 1), decision };
+  });
+});
+ipcMain.handle('site-permission-revoke', (event, key) => {
+  if (isGuestWebContents(event.sender)) return { ok: false };
+  if (typeof key !== 'string' || !Object.hasOwn(sitePermissions, key)) return { ok: false };
+  delete sitePermissions[key];
+  try { saveSitePermissions(); return { ok: true }; } catch { return { ok: false }; }
+});
+ipcMain.handle('site-permission-clear', (event) => {
+  if (isGuestWebContents(event.sender)) return { ok: false };
+  sitePermissions = {};
+  try { saveSitePermissions(); return { ok: true }; } catch { return { ok: false }; }
 });
 ipcMain.handle('clear-cache', async () => {
   try { await session.defaultSession.clearCache(); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
@@ -499,14 +609,15 @@ ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('update-state', () => updateState);
 ipcMain.handle('update-check', async () => {
   if (!autoUpdater || !app.isPackaged) return { ok: false, status: 'unavailable', message: 'Aktualizácie sú dostupné iba v nainštalovanej verzii.' };
-  try { autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; const result = await autoUpdater.checkForUpdates(); return { ok: true, status: result?.updateInfo?.version && result.updateInfo.version !== app.getVersion() ? 'available' : 'latest', version: result?.updateInfo?.version || app.getVersion() }; } catch (error) { return updateFailure(error); }
+  try { autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; const result = await autoUpdater.checkForUpdates(); const state = { ...getUpdateStatus(app.getVersion(), result?.updateInfo), checkedAt: Date.now() }; publishUpdateState(state); return { ok: true, ...state }; } catch (error) { const state = { ...formatUpdateFailure(error), checkedAt: Date.now() }; publishUpdateState(state); return state; }
 });
-ipcMain.handle('update-download', async () => { if (!autoUpdater) return { ok: false }; try { await autoUpdater.downloadUpdate(); return { ok: true }; } catch (error) { return updateFailure(error); } });
+ipcMain.handle('update-download', async () => { if (!autoUpdater) return { ok: false }; try { await autoUpdater.downloadUpdate(); return { ok: true }; } catch (error) { return formatUpdateFailure(error); } });
 ipcMain.on('update-install', () => { if (autoUpdater) autoUpdater.quitAndInstall(); });
-ipcMain.handle('password-list', () => passwordVault.map(({ id, hostname, username, createdAt, updatedAt }) => ({ id, hostname, username, createdAt, updatedAt })));
-ipcMain.handle('password-get', (_event, id) => { const entry = passwordVault.find((item) => item.id === id); return entry ? { hostname: entry.hostname, username: entry.username, password: entry.password } : null; });
-ipcMain.handle('password-save', (_event, entry) => {
+ipcMain.handle('password-list', (event) => isGuestWebContents(event.sender) ? [] : passwordVault.map(({ id, hostname, username, createdAt, updatedAt }) => ({ id, hostname, username, createdAt, updatedAt })));
+ipcMain.handle('password-get', (event, id) => { if (isGuestWebContents(event.sender)) return null; const entry = passwordVault.find((item) => item.id === id); return entry ? { hostname: entry.hostname, username: entry.username, password: entry.password } : null; });
+ipcMain.handle('password-save', (event, entry) => {
   try {
+    if (isGuestWebContents(event.sender)) return { ok: false, message: 'Heslá sa v okne hosťa neukladajú.' };
     const hostname = String(entry?.hostname || '').trim().toLowerCase();
     const username = String(entry?.username || '').trim();
     const password = String(entry?.password || '');
@@ -518,9 +629,10 @@ ipcMain.handle('password-save', (_event, entry) => {
     return { ok: true };
   } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
 });
-ipcMain.handle('password-delete', (_event, id) => { passwordVault = passwordVault.filter((item) => item.id !== id); try { savePasswordVault(); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; } });
+ipcMain.handle('password-delete', (event, id) => { if (isGuestWebContents(event.sender)) return { ok: false, message: 'Heslá sa v okne hosťa nemenia.' }; passwordVault = passwordVault.filter((item) => item.id !== id); try { savePasswordVault(); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; } });
 loadPasswordVault();
 loadDownloadHistory();
+loadSitePermissions();
 ipcMain.handle('adblock-stats', () => adBlockStats());
 ipcMain.handle('adblock-toggle-site', (_event, hostname) => {
   const host = String(hostname || '').toLowerCase().trim();
@@ -545,6 +657,7 @@ ipcMain.handle('adblock-update-list', async () => {
 });
 ipcMain.on('open-browser-window', (_event, url) => { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); if (url) dispatchExternalUrl(mainWindow, url); } else if (hasLock) createWindow(url); });
 ipcMain.on('open-detached-window', (_event, url) => { if (hasLock) createWindow(url || 'linsoft://start'); });
+ipcMain.on('open-guest-window', () => { if (hasLock) createWindow('linsoft://start', { guest: true }); });
 ipcMain.handle('install-web-app', async (_event, data) => {
   if (!data?.url || !supportedWebUrl(data.url)) return { ok: false, message: 'Neplatná webová adresa.' };
   let parsedUrl;
@@ -649,16 +762,37 @@ app.whenReady().then(() => {
     if (details.resourceType === 'mainFrame') return callback({ cancel: false });
     callback({ cancel: (browserPreferences.adBlock || browserPreferences.trackingProtection) && isBlockedAdRequest(details.url, details) });
   });
-  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
-    const mediaTypes = Array.isArray(details?.mediaTypes) ? details.mediaTypes : [];
-    const mediaAllowed = mediaTypes.includes('video') ? browserPreferences.camera : mediaTypes.includes('audio') ? browserPreferences.microphone : browserPreferences.camera || browserPreferences.microphone;
-    callback((permission === 'media' && mediaAllowed) || (permission === 'notifications' && browserPreferences.webNotifications));
+  session.defaultSession.setPermissionRequestHandler(createPermissionRequestHandler(requestSitePermission));
+  session.defaultSession.setPermissionCheckHandler(createPermissionCheckHandler(({ permission, requestingUrl, mediaTypes }) => {
+    return getPermissionDecision({ permission, mediaTypes, requestingUrl, preferences: browserPreferences, decisions: sitePermissions });
+  }));
+  session.defaultSession.on('will-attach-webview', (event, webPreferences, params) => {
+    if (!supportedWebUrl(params.src)) {
+      event.preventDefault();
+      return;
+    }
+    delete webPreferences.preload;
+    delete webPreferences.preloadURL;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
   });
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() !== 'webview') return;
     contents.on('before-input-event', (inputEvent, input) => {
-      if (input.type !== 'keyDown' || (!(input.control || input.meta) && !input.alt)) return;
       const key = String(input.key || '').toLowerCase();
+      if (input.type === 'mouseDown' && input.button === 'left') {
+        contents.hostWebContents?.send('dismiss-webview-overlay');
+        return;
+      }
+      if (input.type === 'keyDown' && key === 'escape') {
+        inputEvent.preventDefault();
+        contents.hostWebContents?.send('browser-shortcut', { key, shift: false });
+        return;
+      }
+      if (input.type !== 'keyDown' || (!(input.control || input.meta) && !input.alt)) return;
       if (!['l', 'k', 'r', 't', 'w', 'c', 'x', 'v', 'a', 'z', 'y', 'f', 'p', '0', '-', '=', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'tab', 'arrowleft', 'arrowright'].includes(key) && !(key === 'i' && input.shift) && !(key === 't' && input.shift) && !(key === 's' && input.shift)) return;
       if (input.alt && !input.control && !input.meta && !['arrowleft', 'arrowright'].includes(key)) return;
       inputEvent.preventDefault();
@@ -707,7 +841,7 @@ app.whenReady().then(() => {
       item.setSavePath(downloadPath);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      sender?.send('download-update', { id: downloadId, fileName: item.getFilename(), filePath: downloadPath, status: `Sťahovanie zlyhalo: ${message}`, received: 0, total: item.getTotalBytes(), startedAt: Date.now(), percent: 0 });
+      sender?.send('download-update', { id: downloadId, fileName: item.getFilename(), filePath: downloadPath, sourceUrl: item.getURL(), status: `Sťahovanie zlyhalo: ${message}`, received: 0, total: item.getTotalBytes(), startedAt: Date.now(), percent: 0 });
       event.preventDefault();
       return;
     }
@@ -715,8 +849,9 @@ app.whenReady().then(() => {
     activeDownloads.set(downloadId, item);
     const startedAt = Date.now();
     /** @param {string} status @param {number} [received] @param {number} [total] */
-    const sendUpdate = (status, received = 0, total = item.getTotalBytes()) => sender?.send('download-update', { id: downloadId, fileName, filePath: downloadPath, status, received, total, startedAt, percent: total > 0 ? Math.round((received / total) * 100) : 0 });
-    sender?.send('download-update', { id: downloadId, fileName, filePath: downloadPath, status: 'Pripravuje sa', received: 0, total: item.getTotalBytes(), startedAt, percent: 0 });
+    const sourceUrl = item.getURL();
+    const sendUpdate = (status, received = 0, total = item.getTotalBytes()) => sender?.send('download-update', { id: downloadId, fileName, filePath: downloadPath, sourceUrl, status, received, total, startedAt, percent: total > 0 ? Math.round((received / total) * 100) : 0 });
+    sender?.send('download-update', { id: downloadId, fileName, filePath: downloadPath, sourceUrl, status: 'Pripravuje sa', received: 0, total: item.getTotalBytes(), startedAt, percent: 0 });
     sendUpdate('Sťahovanie začalo');
     item.on('updated', (_downloadEvent, state) => { if (state === 'progressing') sendUpdate('Sťahuje sa', item.getReceivedBytes(), item.getTotalBytes()); });
     item.once('done', (_downloadEvent, state) => {
@@ -724,7 +859,7 @@ app.whenReady().then(() => {
       const status = state === 'completed' ? 'Stiahnuté' : state === 'cancelled' ? 'Zrušené' : 'Sťahovanie zlyhalo';
       const received = item.getReceivedBytes();
       const total = item.getTotalBytes();
-      const record = { id: downloadId, fileName, filePath: downloadPath, status, received, total, startedAt, percent: total > 0 ? Math.round((received / total) * 100) : 0, completedAt: Date.now() };
+      const record = { id: downloadId, fileName, filePath: downloadPath, sourceUrl, status, received, total, startedAt, percent: total > 0 ? Math.round((received / total) * 100) : 0, completedAt: Date.now() };
       downloadHistory = [record, ...downloadHistory.filter((download) => download.id !== downloadId)].slice(0, 100);
       saveDownloadHistory();
       sendUpdate(status, received, total);

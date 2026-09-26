@@ -1,3 +1,4 @@
+.download-item-body small { display: block; margin-top: 3px; overflow: hidden; color: #7f93a7; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 :root {
   color-scheme: dark;
   --chrome: #0d131c;
@@ -43,6 +44,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outl
 .tab-close { -webkit-app-region: no-drag; cursor: pointer; }
 .managed-tab:not(.active) { opacity: .72; background: rgba(16, 21, 30, 0.72); border-color: rgba(137, 181, 255, 0.08); }
 .new-tab, .window-buttons button { border: 0; color: var(--muted); background: transparent; }
+.guest-indicator { align-self: center; margin: 0 4px 9px; padding: 4px 7px; border: 1px solid rgba(255,191,105,.5); border-radius: 6px; color: var(--orange); background: rgba(255,191,105,.1); font-size: 10px; font-weight: 700; letter-spacing: .08em; }
 .new-tab { width: 36px; height: 34px; border-radius: 10px; font-size: 22px; -webkit-app-region: no-drag; transition: .18s ease; }
 .new-tab:hover, .window-buttons button:hover { color: var(--ink); background: rgba(130, 180, 255, 0.08); }
 .window-buttons { display: flex; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
@@ -58,9 +60,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outl
 .tab-context-menu { position: fixed; z-index: 30; width: 210px; padding: 6px; border: 1px solid var(--line-bright); border-radius: 9px; background: rgba(19,31,44,.98); box-shadow: var(--shadow); }
 .tab-context-menu button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 6px; color: var(--ink); background: transparent; text-align: left; font-size: 12px; }
 .tab-context-menu button:hover { background: var(--surface-raised); }
-.webview-context-menu { position: fixed; z-index: 40; width: 280px; padding: 6px; border: 1px solid var(--line-bright); border-radius: 9px; background: rgba(19,31,44,.98); box-shadow: var(--shadow); }
+.webview-context-menu { position: fixed; z-index: 40; width: 280px; max-height: calc(100vh - 88px); overflow-y: auto; padding: 6px; border: 1px solid var(--line-bright); border-radius: 9px; background: rgba(19,31,44,.98); box-shadow: var(--shadow); }
 .webview-context-menu button { display: flex; align-items: center; width: 100%; min-height: 34px; padding: 8px 10px; border: 0; border-radius: 6px; color: var(--ink); background: transparent; text-align: left; font-size: 12px; white-space: nowrap; }
 .webview-context-menu button:hover { background: var(--surface-raised); }
+.webview-context-menu button:disabled { cursor: default; opacity: .42; }
+.webview-context-menu button:disabled:hover { background: transparent; }
+.webview-context-menu kbd { margin-left: auto; padding-left: 18px; color: var(--muted); font: 10px "Segoe UI Variable", sans-serif; }
+.context-menu-divider { height: 1px; margin: 5px 4px; background: var(--line); }
 .context-menu-icon { display: inline-grid; width: 24px; margin-right: 5px; color: var(--blue); text-align: center; font-size: 15px; }
 
 .toolbar { display: flex; align-items: center; gap: 6px; height: 68px; padding: 10px 16px; border-bottom: 1px solid rgba(137, 181, 255, 0.08); background: linear-gradient(180deg, rgba(17, 27, 38, 0.9), rgba(10, 15, 20, 0.84)); -webkit-app-region: no-drag; }
@@ -146,6 +152,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outl
 .browser-menu button:hover span { color: var(--ink); }
 .security-panel { position: fixed; top: 112px; left: 18px; z-index: 13; width: 310px; padding: 15px; border: 1px solid rgba(148, 196, 255, 0.18); border-radius: 12px; background: rgba(19,31,44,.99); box-shadow: var(--shadow); }.security-panel-head { display:flex; align-items:center; gap:10px; }.security-panel-head > div { flex:1; }.security-panel-head strong,.security-panel-head small { display:block; }.security-panel-head strong { font-size:13px; }.security-panel-head small { margin-top:3px; color:var(--muted); font-size:10px; }.security-panel-head > button { border:0; color:var(--muted); background:transparent; font-size:18px; }.security-check { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; color:#10261c; background:var(--green); font-weight:800; }.ip-row { display:flex; justify-content:space-between; gap:12px; margin-top:16px; padding-top:13px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }.ip-row strong { color:var(--ink); font-size:12px; }.ip-note { display:block; margin-top:9px; color:var(--muted); font-size:10px; line-height:1.4; }
 .download-panel { position: fixed; top: 112px; right: 18px; z-index: 12; width: 370px; max-height: 430px; overflow: auto; padding: 15px; border: 1px solid var(--line-bright); border-radius: 12px; background: rgba(19,31,44,.99); box-shadow: var(--shadow); }.download-panel-head { display:flex; align-items:center; justify-content:space-between; padding-bottom:10px; border-bottom:1px solid var(--line); }.download-panel-head strong { font-size:14px; }.download-panel-head > div { display:flex; align-items:center; gap:4px; }.download-panel-head button { border:0; border-radius:6px; padding:4px 7px; color:var(--muted); background:transparent; font-size:12px; }.download-panel-head button:hover { color:var(--ink); background:var(--surface-raised); }.download-panel-head button:last-child { padding:1px 5px; font-size:18px; }.download-list { display:grid; gap:2px; }.download-item { display:grid; grid-template-columns:28px 1fr auto; align-items:center; gap:10px; padding:12px 3px; border-bottom:1px solid rgba(42,64,83,.55); }.download-file-icon { display:grid; place-items:center; width:26px; height:26px; border-radius:7px; color:var(--green); background:rgba(92,218,166,.12); font-size:13px; }.download-item-body { min-width:0; }.download-item-body strong,.download-item-body span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.download-item-body strong { font-size:12px; }.download-item-body span { margin-top:4px; color:var(--muted); font-size:10px; }.download-item-percent { color:var(--blue); font-size:11px; }.download-item-progress { height:3px; margin-top:7px; overflow:hidden; border-radius:3px; background:#2b4053; }.download-item-progress i { display:block; height:100%; background:var(--green); transition:width .2s; }.download-item-actions { display:flex; gap:8px; margin-top:6px; }.download-item-actions button { border:0; padding:0; color:var(--blue); background:transparent; font-size:10px; }.open-downloads { width:100%; margin-top:12px; padding:9px; border:1px solid var(--line); border-radius:7px; color:var(--blue); background:transparent; font-size:11px; }.open-downloads:hover { background:var(--surface-raised); }.downloads-empty { display:grid; justify-items:center; gap:6px; padding:28px 5px; color:var(--muted); text-align:center; font-size:12px; }.downloads-empty span { display:grid; place-items:center; width:34px; height:34px; border:1px solid var(--line-bright); border-radius:50%; color:var(--blue); font-size:18px; }.downloads-empty strong { color:var(--ink); font-size:12px; }.downloads-empty small { color:var(--muted); font-size:10px; }
+.download-filter { width: 100%; height: 32px; margin: 10px 0 3px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: #101c28; font-size: 11px; }
 
 @media (max-width: 800px) { .browser-window { min-width: 0; } .window-buttons { display: none; } .tab { width: 190px; } .bookmarks button:nth-child(n+4) { display: none; } .start { width: calc(100% - 32px); padding-top: 80px; } .start-form { flex-direction: column; } .start-form > button { height: 46px; } .start-footer { margin-top: 70px; flex-direction: column; gap: 8px; } }
 
@@ -195,6 +202,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outl
 .vpn-actions { margin-top: 18px; }
 .vpn-log-wrap { margin-top: 18px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #0b141e; }.vpn-log-title { margin-bottom: 8px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }.vpn-log-wrap pre { height: 72px; margin: 0; overflow: auto; color: #9ed8b7; font: 11px/1.5 Consolas,monospace; white-space: pre-wrap; }
 .security-subsection { margin-top: 30px; padding-top: 24px; border-top: 1px solid rgba(108,130,151,.22); }
+.permission-list-toolbar { display: flex; gap: 8px; margin: 10px 0; }
+.permission-list-toolbar .settings-input { min-width: 0; flex: 1; }
 .light-theme .settings-heading p, .light-theme .setting-card small, .light-theme .vpn-card small { color: #6f7b87; }
 .light-theme .setting-card, .light-theme .vpn-card, .light-theme .about-card { border-color: #d2dce6; background: #fff; }
 .light-theme .setting-card:hover, .light-theme .vpn-card:hover, .light-theme .about-card:hover { background: #f7faff; border-color: #8db3e1; }
@@ -274,6 +283,8 @@ body.light-theme { --chrome:#f4f7fa; --chrome-deep:#e9eef3; --surface:#fff; --su
 .update-notice-primary:disabled { opacity: .65; cursor: default; }
 .update-notice-dismiss { border: 1px solid var(--line); color: var(--muted); background: transparent; }
 .update-notice-dismiss:hover { color: var(--ink); background: var(--surface-raised); }
+.toast-notice { position: fixed; right: 18px; bottom: 18px; z-index: 70; max-width: min(420px, calc(100vw - 36px)); padding: 11px 14px; border: 1px solid var(--line-bright); border-radius: 8px; color: var(--ink); background: rgba(13, 25, 37, .97); box-shadow: 0 14px 36px rgba(0,0,0,.36); font-size: 13px; animation: update-notice-in .2s ease-out both; }
+.toast-notice[hidden] { display: none; }
 @keyframes update-notice-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
 @media (max-width: 800px) { .update-notice { top: 138px; right: 10px; width: min(390px, calc(100vw - 20px)); } }
 .quick { margin-top: 30px; }

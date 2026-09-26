@@ -1,6 +1,8 @@
 const addressInput = document.getElementById('addressInput');
 const content = document.getElementById('content');
 const tabTitle = document.getElementById('tabTitle');
+const isGuestWindow = new URLSearchParams(window.location.search).has('guest');
+document.getElementById('guestIndicator').hidden = !isGuestWindow;
 const historyStack = ['linsoft://start'];
 let historyIndex = 0;
 let activeTabId = 1;
@@ -32,6 +34,16 @@ if (Number(settingsFromStorage.downloadBehaviorVersion || 0) < 2) {
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>\"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]);
+}
+
+let toastTimeout = null;
+function showToast(message) {
+  const toast = document.getElementById('toastNotice');
+  if (!toast) return;
+  toast.textContent = String(message || '');
+  toast.hidden = false;
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
 function updateActiveTab(url, title) {
@@ -181,6 +193,12 @@ function openNewTab(url = 'linsoft://start') {
   newTab?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
+function openBackgroundTab(url) {
+  const previousTabId = activeTabId;
+  openNewTab(url);
+  selectTab(previousTabId);
+}
+
 function selectTab(id) { const tab = tabs.get(id); if (!tab) return; activeTabId = id; updateActiveTab(tab.url, tab.title); addressInput.value = tab.url; tabTitle.textContent = tab.title; if (suspendedTabs.has(id) || tab.crashed) { suspendedTabs.delete(id); tab.suspended = false; tab.crashed = false; navigate(tab.url, false); } else if (tab.url === 'linsoft://start' && !content.querySelector(`.tab-surface[data-tab-id="${id}"]`)) startPage(); else if (tab.url === 'linsoft://settings') openSettings(); else if (tab.url === 'linsoft://apps') openAppCenter(); else activateSurface(id); updateNavigationButtons(); }
 
 function closeTab(id) { const tab = tabs.get(id); if (!tab || tab.pinned || tab.locked) return; const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`); surface?.querySelectorAll('webview').forEach((viewer) => viewer.remove()); if (tabs.size === 1) { activeTabId = id; tabs.get(id).url = 'linsoft://start'; tabs.get(id).title = 'Nová karta'; tabs.get(id).history = ['linsoft://start']; tabs.get(id).historyIndex = 0; startPage(); return; } closedTabs.unshift({ ...tab }); closedTabs.splice(10); const ids = [...tabs.keys()]; const closedIndex = ids.indexOf(id); const fallbackId = ids[Math.max(0, closedIndex - 1)]; surface?.remove(); document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.remove(); tabs.delete(id); updateTabDensity(); saveSession(); if (activeTabId === id) selectTab(fallbackId); }
@@ -231,7 +249,7 @@ function startPage() {
   setTabIcon(activeTabId);
   let surface = content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"]`);
   if (!surface) { surface = document.createElement('div'); surface.className = 'tab-surface'; surface.dataset.tabId = activeTabId; content.appendChild(surface); }
-  surface.innerHTML = `<div class="start"><div class="start-kicker">LINSOFT BROWSER <span></span></div><div class="logo"><span class="logo-l">L</span>in<span>soft</span><i>•</i></div><p>Rýchly, súkromný a skutočný webový prehliadač pre Windows a Linux Debian.</p><form class="start-form"><div class="start-search"><span>⌕</span><input class="start-input" placeholder="Hľadať na webe alebo zadať adresu" autocomplete="off" /></div><button type="submit">Hľadať</button></form><div class="quick"><button data-url="https://www.google.com">G <span>Google</span></button><button data-url="https://www.youtube.com">▶ <span>YouTube</span></button><button data-url="https://github.com">⌘ <span>GitHub</span></button><button data-url="https://news.google.com">N <span>Správy</span></button></div><div class="start-footer"><span>● Chránené prehliadanie aktívne</span><span>Linsoft Browser 2.0 • Windows + Linux</span></div></div>`;
+  surface.innerHTML = `<div class="start"><div class="start-kicker">LINSOFT BROWSER <span></span></div><div class="logo"><span class="logo-l">L</span>in<span>soft</span><i>•</i></div><p>${isGuestWindow ? 'Okno hosťa: história, cookies a údaje stránok sa po zatvorení nezachovajú.' : 'Rýchly, súkromný a skutočný webový prehliadač pre Windows a Linux Debian.'}</p><form class="start-form"><div class="start-search"><span>⌕</span><input class="start-input" placeholder="Hľadať na webe alebo zadať adresu" autocomplete="off" /></div><button type="submit">Hľadať</button></form><div class="quick"><button data-url="https://www.google.com">G <span>Google</span></button><button data-url="https://www.youtube.com">▶ <span>YouTube</span></button><button data-url="https://github.com">⌘ <span>GitHub</span></button><button data-url="https://news.google.com">N <span>Správy</span></button></div><div class="start-footer"><span>● ${isGuestWindow ? 'Režim hosťa aktívny' : 'Chránené prehliadanie aktívne'}</span><span>Linsoft Browser 2.0 • Windows + Linux</span></div></div>`;
   surface.querySelector('.start-form').addEventListener('submit', (event) => { event.preventDefault(); navigate(surface.querySelector('.start-input').value); });
   surface.querySelectorAll('[data-url]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.url)));
   surface.querySelectorAll('[data-library]').forEach((button) => button.addEventListener('click', () => openLibrary(button.dataset.library)));
@@ -415,10 +433,37 @@ function addSecuritySettings() {
   const surface = getActiveSurface();
   const panel = surface.querySelector('[data-settings-panel="privacy"]');
   if (!panel) return;
+  panel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">ULOŽENÉ POVOLENIA WEBOV</p><div class="permission-list-toolbar"><input class="settings-input" id="sitePermissionFilter" placeholder="Filtrovať podľa domény" autocomplete="off"><button class="settings-control" id="clearSitePermissions">Odobrať všetko</button></div><div id="sitePermissionList" class="password-list"><small class="update-note">Načítavam povolenia...</small></div></div>');
   panel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">POVOLENIA WEBOV</p><div class="setting-card"><div><strong>Kamera</strong><small>Weby môžu požiadať o prístup ku kamere.</small></div><button class="settings-toggle" data-setting-toggle="camera"><i></i></button></div><div class="setting-card"><div><strong>Mikrofón</strong><small>Weby môžu požiadať o prístup k mikrofónu.</small></div><button class="settings-toggle" data-setting-toggle="microphone"><i></i></button></div><div class="setting-card"><div><strong>Upozornenia</strong><small>Weby môžu zobrazovať systémové upozornenia.</small></div><button class="settings-toggle" data-setting-toggle="webNotifications"><i></i></button></div></div>');
   panel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">ADBLOCK</p><div class="setting-card"><div><strong>Štatistiky blokovania</strong><small id="adBlockStats">Načítavam štatistiky...</small></div><button class="settings-control" id="refreshAdBlockStats">Obnoviť</button></div><div class="setting-card"><div><strong>Výnimka pre aktuálnu stránku</strong><small>Povolí reklamné požiadavky pre doménu otvorenej stránky.</small></div><button class="settings-control" id="toggleAdBlockSite">Povoliť stránku</button></div></div>');
   panel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">HESLÁ</p><div class="setting-card"><div><strong>Uložené prihlasovacie údaje</strong><small>Heslá sa ukladajú šifrovane do systému, nie do histórie prehliadača.</small></div><button class="settings-control" id="refreshPasswords">Obnoviť</button></div><div id="passwordList" class="password-list"></div><div class="password-form"><input class="settings-input" id="passwordHost" placeholder="Doména, napr. example.com" autocomplete="off"><input class="settings-input" id="passwordUsername" placeholder="Používateľ" autocomplete="off"><input class="settings-input" id="passwordValue" type="password" placeholder="Heslo" autocomplete="new-password"><button class="save-settings" id="savePasswordButton">Uložiť heslo</button></div></div>');
   ['camera', 'microphone', 'webNotifications'].forEach((key) => { const toggle = panel.querySelector(`[data-setting-toggle="${key}"]`); toggle.classList.toggle('on', settingsState[key]); toggle.addEventListener('click', () => toggle.classList.toggle('on')); });
+  let sitePermissionEntries = [];
+  const renderSitePermissions = async (reload = true) => {
+    const list = panel.querySelector('#sitePermissionList');
+    if (reload) sitePermissionEntries = await window.linsoftBrowser?.listSitePermissions?.() || [];
+    const filter = panel.querySelector('#sitePermissionFilter')?.value.trim().toLowerCase() || '';
+    const entries = sitePermissionEntries.filter((entry) => entry.origin.toLowerCase().includes(filter));
+    if (!list) return;
+    list.innerHTML = (entries || []).map((entry) => {
+      const permission = entry.permission === 'notifications' ? 'Upozornenia' : `Médiá (${entry.permission})`;
+      const decision = entry.decision === 'allow' ? 'Povolené' : 'Blokované';
+      return `<div class="password-row"><span><strong>${escapeHtml(entry.origin)}</strong><small>${escapeHtml(permission)} · ${decision}</small></span><button class="settings-control" data-revoke-site-permission="${escapeHtml(entry.key)}">Odvolať</button></div>`;
+    }).join('') || '<small class="update-note">Zatiaľ nie sú uložené žiadne povolenia.</small>';
+    list.querySelectorAll('[data-revoke-site-permission]').forEach((button) => button.addEventListener('click', async () => {
+      const result = await window.linsoftBrowser?.revokeSitePermission?.(button.dataset.revokeSitePermission);
+      if (result?.ok) { renderSitePermissions(); showToast('Povolenie stránky bolo odvolané.'); }
+      else showToast('Povolenie sa nepodarilo odvolať.');
+    }));
+  };
+  renderSitePermissions();
+  panel.querySelector('#sitePermissionFilter').addEventListener('input', () => renderSitePermissions(false));
+  panel.querySelector('#clearSitePermissions').addEventListener('click', async () => {
+    if (!sitePermissionEntries.length || !window.confirm('Odobrať všetky uložené povolenia webov?')) return;
+    const result = await window.linsoftBrowser?.clearSitePermissions?.();
+    if (result?.ok) { renderSitePermissions(); showToast('Všetky povolenia webov boli odvolané.'); }
+    else showToast('Povolenia sa nepodarilo odvolať.');
+  });
   const renderAdBlockStats = async () => { const stats = await window.linsoftBrowser?.getAdblockStats(); const label = panel.querySelector('#adBlockStats'); if (label && stats) label.textContent = `${stats.blocked} zablokovaných požiadaviek · ${stats.learned} naučených hostov · ${stats.allowlisted} výnimiek`; };
   panel.querySelector('#refreshAdBlockStats').addEventListener('click', renderAdBlockStats);
   panel.querySelector('#toggleAdBlockSite').addEventListener('click', async (event) => { let host = ''; try { host = new URL(addressInput.value).hostname; } catch {} if (!host) return showToast('Aktuálna stránka nemá platnú doménu.'); const result = await window.linsoftBrowser?.toggleAdblockSite(host); if (!result?.ok) return showToast(result?.message || 'Výnimku sa nepodarilo nastaviť.'); event.currentTarget.textContent = result.allowlisted ? 'Výnimka zapnutá' : 'Povoliť stránku'; renderAdBlockStats(); showToast(result.allowlisted ? `Reklamy povolené pre ${host}.` : `Výnimka odstránená pre ${host}.`); });
@@ -480,6 +525,7 @@ function renderSettingsUpdateState(state) {
     else if (state.status === 'downloading') note.textContent = `Sťahuje sa aktualizácia: ${Math.max(0, Math.min(100, Number(state.percent) || 0))} %.`;
     else if (state.status === 'downloaded') note.textContent = `Verzia ${state.version} je pripravená na inštaláciu.`;
     else if (state.status === 'latest') note.textContent = `Používaš najnovšiu verziu Linsoft Browser ${state.version}.`;
+    else if (state.status === 'error' || state.status === 'unavailable') note.textContent = state.message || 'Aktualizácie sa teraz nedajú overiť.';
     if (state.status === 'downloaded') {
       button.dataset.updateAction = 'install';
       button.textContent = 'Reštartovať a nainštalovať';
@@ -501,7 +547,7 @@ function addAdvancedSettings() {
   const navigation = surface.querySelector('.settings-nav');
   const panels = surface.querySelector('.settings-panels');
   navigation.insertAdjacentHTML('beforeend', '<button data-settings-section="advanced">⌘ <span>Pokročilé</span></button>');
-  panels.insertAdjacentHTML('beforeend', '<section data-settings-panel="advanced" hidden><p class="settings-label">POKROČILÉ</p><h2>Ďalšie možnosti</h2><div class="setting-card"><div><strong>Blokovanie reklám</strong><small>Blokuje reklamné siete a učí sa z opakovaných reklamných požiadaviek lokálne.</small></div><button class="settings-toggle" data-setting-toggle="adBlock"><i></i></button></div><div class="setting-card"><div><strong>Ochrana proti sledovaniu</strong><small>Obmedzí trackery, analytické pixely a odošle signál Do Not Track.</small></div><button class="settings-toggle" data-setting-toggle="trackingProtection"><i></i></button></div><div class="setting-card"><div><strong>Priečinok na stiahnuté súbory</strong><small>Miesto, kam Linsoft Browser ukladá stiahnuté súbory.</small></div><select id="downloadsSetting"><option value="Downloads">Downloads</option><option value="Desktop">Plocha</option><option value="Documents">Dokumenty</option></select></div><div class="setting-card"><div><strong>Vždy sa opýtať pred stiahnutím</strong><small>Zobrazí potvrdenie pred každým stiahnutím.</small></div><button class="settings-toggle" data-setting-toggle="askDownload"><i></i></button></div><div class="setting-card"><div><strong>Upozornenia webov</strong><small>Povolí upozornenia zo stránok, ktoré navštíviš.</small></div><button class="settings-toggle" data-setting-toggle="notifications"><i></i></button></div><div class="setting-card"><div><strong>Obnoviť karty po spustení</strong><small>Po otvorení obnoví poslednú pracovnú reláciu.</small></div><button class="settings-toggle" data-setting-toggle="restoreTabs"><i></i></button></div><div class="setting-card"><div><strong>Predvolené priblíženie</strong><small>Veľkosť obsahu webových stránok.</small></div><select id="zoomSetting"><option value="80">80 %</option><option value="90">90 %</option><option value="100">100 %</option><option value="110">110 %</option><option value="125">125 %</option></select></div><div class="setting-card"><div><strong>Vymazať údaje pri ukončení</strong><small>Po zatvorení browsera vymaže lokálnu históriu.</small></div><button class="settings-toggle" data-setting-toggle="clearExit"><i></i></button></div><div class="setting-card"><div><strong>Aktualizovať reklamný zoznam</strong><small>Stiahne nový zoznam reklamných domén z verejného zdroja.</small></div><button class="settings-control" id="updateAdblockList">Aktualizovať</button></div></section>');
+  panels.insertAdjacentHTML('beforeend', '<section data-settings-panel="advanced" hidden><p class="settings-label">POKROČILÉ</p><h2>Ďalšie možnosti</h2><div class="setting-card"><div><strong>Blokovanie reklám</strong><small>Blokuje reklamné siete a učí sa z opakovaných reklamných požiadaviek lokálne.</small></div><button class="settings-toggle" data-setting-toggle="adBlock"><i></i></button></div><div class="setting-card"><div><strong>Ochrana proti sledovaniu</strong><small>Obmedzí trackery, analytické pixely a odošle signál Do Not Track.</small></div><button class="settings-toggle" data-setting-toggle="trackingProtection"><i></i></button></div><div class="setting-card"><div><strong>Priečinok na stiahnuté súbory</strong><small>Miesto, kam Linsoft Browser ukladá stiahnuté súbory.</small></div><select id="downloadsSetting"><option value="Downloads">Downloads</option><option value="Desktop">Plocha</option><option value="Documents">Dokumenty</option></select></div><div class="setting-card"><div><strong>Vždy sa opýtať pred stiahnutím</strong><small>Zobrazí potvrdenie pred každým stiahnutím.</small></div><button class="settings-toggle" data-setting-toggle="askDownload"><i></i></button></div><div class="setting-card"><div><strong>Obnoviť karty po spustení</strong><small>Po otvorení obnoví poslednú pracovnú reláciu.</small></div><button class="settings-toggle" data-setting-toggle="restoreTabs"><i></i></button></div><div class="setting-card"><div><strong>Predvolené priblíženie</strong><small>Veľkosť obsahu webových stránok.</small></div><select id="zoomSetting"><option value="80">80 %</option><option value="90">90 %</option><option value="100">100 %</option><option value="110">110 %</option><option value="125">125 %</option></select></div><div class="setting-card"><div><strong>Vymazať údaje pri ukončení</strong><small>Po zatvorení browsera vymaže lokálnu históriu.</small></div><button class="settings-toggle" data-setting-toggle="clearExit"><i></i></button></div><div class="setting-card"><div><strong>Aktualizovať reklamný zoznam</strong><small>Stiahne nový zoznam reklamných domén z verejného zdroja.</small></div><button class="settings-control" id="updateAdblockList">Aktualizovať</button></div></section>');
   navigation.insertAdjacentHTML('beforeend', '<button data-settings-section="vpn">⌁ <span>OpenVPN</span></button>');
   panels.insertAdjacentHTML('beforeend', '<section data-settings-panel="vpn" hidden><p class="settings-label">OPENVPN</p><h2>VPN pripojenie</h2><div class="vpn-card"><div><strong>OpenVPN profil</strong><small id="openVpnProfileName">Nie je vybraný žiadny .ovpn súbor.</small></div><button class="settings-control" id="chooseOpenVpn">Vybrať profil</button></div><div class="vpn-card"><div><strong>Stav pripojenia</strong><small id="openVpnStatus">VPN je odpojená.</small></div><span class="vpn-status-dot" id="openVpnDot"></span></div><div class="vpn-actions"><button class="save-settings" id="connectOpenVpn">Pripojiť VPN</button><button class="settings-reset" id="disconnectOpenVpn">Odpojiť</button></div><div class="vpn-log-wrap"><div class="vpn-log-title">Živý log</div><pre id="openVpnLog">Čaká sa na operáciu...</pre></div><p class="update-note">Vyžaduje nainštalovaný OpenVPN klient vo Windowse a platný .ovpn profil.</p></section>');
   panels.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">SPRÁVA A VÝKON</p><div class="setting-card"><div><strong>Potvrdiť zatvorenie viacerých kariet</strong><small>Zobrazí potvrdenie pred zatvorením okna s viacerými kartami.</small></div><button class="settings-toggle" data-setting-toggle="confirmClose"><i></i></button></div><div class="setting-card"><div><strong>Pozastavovať neaktívne karty</strong><small>Šetrí pamäť; aktívne, pripnuté a YouTube karty zostanú aktívne.</small></div><button class="settings-toggle" data-setting-toggle="suspendInactiveTabs"><i></i></button></div><div class="setting-card"><div><strong>Vymazať cache</strong><small>Vyčistí dočasné Chromium dáta bez odstránenia záložiek a kariet.</small></div><button class="settings-control" id="clearCacheButton">Vymazať</button></div></div>');
@@ -515,11 +561,11 @@ function addAdvancedSettings() {
   surface.querySelector('#connectOpenVpn').addEventListener('click', () => window.linsoftBrowser?.connectOpenVpn(vpnProfile));
   surface.querySelector('#disconnectOpenVpn').addEventListener('click', () => window.linsoftBrowser?.disconnectOpenVpn()); window.linsoftBrowser?.onOpenVpnStatus(showVpnStatus);
   vpnButton.addEventListener('click', () => { navigation.querySelectorAll('[data-settings-section]').forEach((item) => item.classList.toggle('active', item === vpnButton)); panels.querySelectorAll('[data-settings-panel]').forEach((panel) => { panel.hidden = panel !== vpnPanel; }); });
-  ['adBlock', 'trackingProtection', 'askDownload', 'notifications', 'restoreTabs', 'clearExit', 'confirmClose', 'suspendInactiveTabs'].forEach((key) => { const toggle = advancedPanel.querySelector(`[data-setting-toggle="${key}"]`); toggle.classList.toggle('on', settingsState[key]); toggle.addEventListener('click', () => toggle.classList.toggle('on')); });
+  ['adBlock', 'trackingProtection', 'askDownload', 'restoreTabs', 'clearExit', 'confirmClose', 'suspendInactiveTabs'].forEach((key) => { const toggle = surface.querySelector(`[data-setting-toggle="${key}"]`); if (!toggle) return; toggle.classList.toggle('on', settingsState[key]); toggle.addEventListener('click', () => toggle.classList.toggle('on')); });
   advancedButton.addEventListener('click', () => { navigation.querySelectorAll('[data-settings-section]').forEach((item) => item.classList.toggle('active', item === advancedButton)); panels.querySelectorAll('[data-settings-panel]').forEach((panel) => { panel.hidden = panel !== advancedPanel; }); });
   surface.querySelector('#updateAdblockList').addEventListener('click', async (event) => { const button = event.currentTarget; button.disabled = true; button.textContent = 'Aktualizujem...'; const result = await window.linsoftBrowser?.updateAdblockList(); button.disabled = false; button.textContent = 'Aktualizovať'; showToast(result?.ok ? `Zoznam aktualizovaný: ${result.count} domén.` : `Aktualizácia zlyhala: ${result?.message || 'neznáma chyba'}`); });
   surface.querySelector('#clearCacheButton').addEventListener('click', async () => { const result = await window.linsoftBrowser?.clearCache(); showToast(result?.ok ? 'Cache bola vymazaná.' : `Cache sa nepodarilo vymazať: ${result?.message || 'neznáma chyba'}`); });
-  surface.querySelector('#saveSettings').addEventListener('click', () => { settingsState.downloads = downloads.value; settingsState.zoom = zoom.value; ['adBlock', 'trackingProtection', 'askDownload', 'notifications', 'restoreTabs', 'clearExit', 'confirmClose', 'suspendInactiveTabs'].forEach((key) => { settingsState[key] = advancedPanel.querySelector(`[data-setting-toggle="${key}"]`).classList.contains('on'); }); settingsState.webNotifications = settingsState.notifications; saveSettings(); });
+  surface.querySelector('#saveSettings').addEventListener('click', () => { settingsState.downloads = downloads.value; settingsState.zoom = zoom.value; ['adBlock', 'trackingProtection', 'askDownload', 'restoreTabs', 'clearExit', 'confirmClose', 'suspendInactiveTabs'].forEach((key) => { const toggle = surface.querySelector(`[data-setting-toggle="${key}"]`); if (toggle) settingsState[key] = toggle.classList.contains('on'); }); saveSettings(); });
 }
 
 function navigate(value, addHistory = true) {
@@ -531,10 +577,9 @@ function navigate(value, addHistory = true) {
   if (!input || input === 'linsoft://start' || input.toLowerCase() === 'home') { startPage(); return; }
   if (/^(javascript|data|vbscript):/i.test(input)) { showToast('Tento typ adresy je z bezpečnostných dôvodov zablokovaný.'); return; }
   const explicitHttp = /^https?:\/\//i.test(input);
-  const explicitFile = /^file:\/\//i.test(input);
   const networkAddress = normalizeNetworkAddress(input);
-  const looksLikeUrl = explicitHttp || explicitFile || networkAddress.isIp || /^[^\s]+\.[^\s]+$/.test(input);
-  const requestedUrl = looksLikeUrl ? (explicitHttp || explicitFile ? input : networkAddress.isIp ? networkAddress.value : `https://${input}`) : searchUrl(input);
+  const looksLikeUrl = explicitHttp || networkAddress.isIp || /^[^\s]+\.[^\s]+$/.test(input);
+  const requestedUrl = looksLikeUrl ? (explicitHttp ? input : networkAddress.isIp ? networkAddress.value : `https://${input}`) : searchUrl(input);
   const url = requestedUrl;
   const currentTab = tabs.get(activeTabId);
   if (addHistory && currentTab) { currentTab.history = currentTab.history || [currentTab.url]; currentTab.history.splice(currentTab.historyIndex + 1); currentTab.history.push(url); currentTab.historyIndex = currentTab.history.length - 1; }
@@ -547,7 +592,7 @@ function navigate(value, addHistory = true) {
   addressInput.value = url;
   updateConnectionIndicator(url);
   const tabLabel = url.replace(/^https?:\/\//, '').split('/')[0]; tabTitle.textContent = tabLabel; updateActiveTab(url, tabLabel); saveSession();
-  const viewer = window.linsoftBrowser ? `<webview class="webview" src="${escapeHtml(url)}" allowpopups zoom-factor="${Number(settingsState.zoom) / 100}"></webview>` : `<iframe class="webview" src="${escapeHtml(url)}" title="Web page"></iframe>`;
+  const viewer = window.linsoftBrowser ? `<webview class="webview" src="${escapeHtml(url)}" zoom-factor="${Number(settingsState.zoom) / 100}"></webview>` : `<iframe class="webview" src="${escapeHtml(url)}" title="Web page"></iframe>`;
   let surface = content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"]`);
   if (!surface) { surface = document.createElement('div'); surface.className = 'tab-surface'; surface.dataset.tabId = activeTabId; content.appendChild(surface); }
   if (!window.linsoftBrowser && /^https?:\/\//i.test(url)) { showExternalPreview(surface, url); return; }
@@ -594,7 +639,7 @@ document.getElementById('clearAddress').addEventListener('click', () => { addres
 document.getElementById('installAppButton').addEventListener('click', installCurrentApp);
 document.getElementById('cancelInstall').addEventListener('click', closeInstallDialog); document.getElementById('cancelInstallButton').addEventListener('click', closeInstallDialog); document.getElementById('confirmInstall').addEventListener('click', async () => { const button = document.getElementById('confirmInstall'); const url = addressInput.value; const title = tabTitle.textContent; button.disabled = true; const result = await window.linsoftBrowser?.installWebApp(url, title); button.disabled = false; closeInstallDialog(); if (!result?.ok) return showToast(result?.message || 'Webovú aplikáciu sa nepodarilo nainštalovať.'); const existing = installedApps.find((item) => item.url === url); if (existing) existing.title = title; else installedApps.push({ url, title, installedAt: Date.now() }); localStorage.setItem('linsoft-apps', JSON.stringify(installedApps)); showToast('Aplikácia bola pridaná do Linsoft App Centra.'); openAppCenter(); });
 const securityPanel = document.getElementById('securityPanel'); const publicIp = document.getElementById('publicIp'); const publicNetwork = document.getElementById('publicNetwork'); const ipNote = document.getElementById('ipNote'); let ipLoaded = false;
-document.getElementById('securityButton').addEventListener('click', async (event) => { event.preventDefault(); event.stopPropagation(); securityPanel.hidden = !securityPanel.hidden; if (securityPanel.hidden || ipLoaded) return; publicIp.textContent = 'Načítavam...'; publicNetwork.textContent = 'Načítavam...'; const endpoints = [{ url: 'https://ipapi.co/json/', parse: (data) => ({ ip: data.ip, network: `${data.org || 'Neznáma sieť'} · ${data.country_name || 'Neznáma krajina'}` }) }, { url: 'https://ipwho.is/', parse: (data) => ({ ip: data.ip, network: `${data.connection?.isp || 'Neznáma sieť'} · ${data.country || 'Neznáma krajina'}` }) }, { url: 'https://api.ipify.org?format=json', parse: (data) => ({ ip: data.ip, network: 'Sieť a krajina nie sú dostupné' }) }]; let lastError = 'IP služby neodpovedali'; for (const endpoint of endpoints) { try { const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 7000); const response = await fetch(endpoint.url, { cache: 'no-store', signal: controller.signal }); window.clearTimeout(timeout); if (!response.ok) throw new Error(`HTTP ${response.status}`); const result = endpoint.parse(await response.json()); if (!result.ip) throw new Error('Prázdna odpoveď'); publicIp.textContent = result.ip; publicNetwork.textContent = result.network; ipNote.textContent = 'Verejná IP podľa aktuálneho internetového pripojenia.'; ipLoaded = true; return; } catch (error) { lastError = error.name === 'AbortError' ? 'Časový limit vypršal' : error.message; } } publicIp.textContent = 'Nepodarilo sa načítať'; publicNetwork.textContent = 'Neznáme'; ipNote.textContent = `${lastError}. Skontroluj internet, VPN alebo firewall a skús znova.`; }); document.getElementById('closeSecurity').addEventListener('click', () => { securityPanel.hidden = true; });
+document.getElementById('securityButton').addEventListener('click', async (event) => { event.preventDefault(); event.stopPropagation(); securityPanel.hidden = !securityPanel.hidden; if (securityPanel.hidden || ipLoaded) return; publicIp.textContent = 'Načítavam...'; publicNetwork.textContent = 'Načítavam...'; const endpoints = [{ url: 'https://ipapi.co/json/', parse: (data) => ({ ip: data.ip, network: `${data.org || 'Neznáma sieť'} · ${data.country_name || 'Neznáma krajina'}` }) }, { url: 'https://ipwho.is/', parse: (data) => ({ ip: data.ip, network: `${data.connection?.isp || 'Neznáma sieť'} · ${data.country || 'Neznáma krajina'}` }) }, { url: 'https://api.ipify.org?format=json', parse: (data) => ({ ip: data.ip, network: 'Sieť a krajina nie sú dostupné' }) }]; let lastError = 'IP služby neodpovedali'; for (const endpoint of endpoints) { try { const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 7000); const response = await fetch(endpoint.url, { cache: 'no-store', signal: controller.signal }); window.clearTimeout(timeout); if (!response.ok) throw new Error(`HTTP ${response.status}`); const result = endpoint.parse(await response.json()); if (!result.ip) throw new Error('Prázdna odpoveď'); publicIp.textContent = result.ip; publicNetwork.textContent = result.network; ipNote.textContent = 'Verejná IP podľa aktuálneho internetového pripojenia.'; ipLoaded = true; return; } catch (error) { lastError = error.name === 'AbortError' ? 'Časový limit vypršal' : error.message; } } publicIp.textContent = 'Nepodarilo sa načítať'; publicNetwork.textContent = 'Neznáme'; ipNote.textContent = `${lastError}. Skontroluj internet, VPN alebo firewall a skús znova.`; }); document.getElementById('closeSecurity').addEventListener('click', () => { securityPanel.hidden = true; }); securityPanel.addEventListener('click', (event) => event.stopPropagation()); document.addEventListener('click', () => { securityPanel.hidden = true; });
 document.getElementById('homeButton').addEventListener('click', () => { navigate(settingsState.home); });
 function activeEditCommand(command) {
   const viewer = ensureActiveTabLoaded();
@@ -629,29 +674,63 @@ window.linsoftBrowser?.onWebviewContextMenu?.((data) => {
   document.querySelector('.webview-context-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'webview-context-menu';
-  const actions = [];
-  if (data.isEditable) actions.push(['paste', '▤', 'Vložiť'], ['cut', '✂', 'Vystrihnúť']);
-  if (data.selectionText) actions.push(['copy', '▣', 'Kopírovať'], ['search', '⌕', 'Vyhľadať výber']);
-  if (data.linkURL) actions.push(['open-link', '↗', 'Otvoriť odkaz v novej karte'], ['open-window', '□', 'Otvoriť odkaz v novom okne'], ['copy-link', '↗', 'Kopírovať adresu odkazu']);
-  if (data.mediaType === 'image' && data.srcURL) actions.push(['open-image', '▧', 'Otvoriť obrázok v novej karte'], ['copy-image', '↗', 'Kopírovať adresu obrázka']);
-  actions.push(['copy-page', '↗', 'Kopírovať adresu stránky'], ['open-page-tab', '+', 'Otvoriť stránku v novej karte'], ['screenshot', '▧', 'Urobiť snímku webu'], ['copy-screenshot', '▣', 'Kopírovať snímku'], ['back', '‹', 'Späť'], ['forward', '›', 'Dopredu'], ['reload', '↻', 'Obnoviť'], ['print', '▣', 'Tlačiť']);
-  menu.innerHTML = actions.map((entry) => { const [action, first, second] = entry; const icon = second === undefined ? '' : first; const label = second === undefined ? first : second; return `<button data-context-action="${action}"><span class="context-menu-icon">${icon || ''}</span>${label || ''}</button>`; }).join('');
+  menu.setAttribute('role', 'menu');
+  const viewer = activeViewer();
+  const hasSelection = Boolean(data.selectionText);
+  const hasLink = /^https?:\/\//i.test(data.linkURL || '');
+  const hasImage = data.mediaType === 'image' && /^https?:\/\//i.test(data.srcURL || '');
+  const actions = [
+    ['paste', '▤', 'Vložiť', !data.isEditable, 'Ctrl+V'], ['copy', '▣', 'Kopírovať', !hasSelection, 'Ctrl+C'], ['cut', '✂', 'Vystrihnúť', !data.isEditable, 'Ctrl+X'], ['divider'],
+    ['search', '⌕', 'Vyhľadať výber', !hasSelection], ['translate', 'A', 'Preložiť výber', !hasSelection]
+  ];
+  if (hasLink) actions.push(['divider'], ['open-link', '↗', 'Otvoriť odkaz v novej karte'], ['open-link-background', '▣', 'Otvoriť odkaz na pozadí'], ['open-window', '□', 'Otvoriť odkaz v novom okne'], ['copy-link', '↗', 'Kopírovať adresu odkazu']);
+  if (hasImage) actions.push(['divider'], ['open-image', '▧', 'Otvoriť obrázok v novej karte'], ['save-image', '⇩', 'Uložiť obrázok'], ['copy-image', '↗', 'Kopírovať adresu obrázka']);
+  actions.push(['divider'], ['bookmark-page', '★', 'Pridať medzi záložky', false, 'Ctrl+D'], ['copy-page', '↗', 'Kopírovať adresu stránky'], ['open-page-tab', '+', 'Otvoriť stránku v novej karte'], ['screenshot', '▧', 'Urobiť snímku webu'], ['copy-screenshot', '▣', 'Kopírovať snímku'], ['divider'], ['back', '‹', 'Späť', !viewer?.canGoBack?.()], ['forward', '›', 'Dopredu', !viewer?.canGoForward?.()], ['reload', '↻', 'Obnoviť', false, 'Ctrl+R'], ['print', '▣', 'Tlačiť', false, 'Ctrl+P']);
+  menu.innerHTML = actions.map((entry) => entry[0] === 'divider' ? '<div class="context-menu-divider" role="separator"></div>' : `<button role="menuitem" data-context-action="${entry[0]}"${entry[3] ? ' disabled' : ''}><span class="context-menu-icon">${entry[1]}</span>${entry[2]}${entry[4] ? `<kbd>${entry[4]}</kbd>` : ''}</button>`).join('');
   document.body.appendChild(menu);
-  menu.style.left = `${Math.min(Math.max(8, Number(data.x) || 8), Math.max(8, window.innerWidth - 288))}px`;
-  menu.style.top = `${Math.min(Math.max(80, Number(data.y) || 80), window.innerHeight - 240)}px`;
+  menu.style.left = `${Math.min(Math.max(8, Number(data.x) || 8), Math.max(8, window.innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.min(Math.max(80, Number(data.y) || 80), Math.max(80, window.innerHeight - menu.offsetHeight - 8))}px`;
+  const closeMenu = () => {
+    menu.remove();
+    document.removeEventListener('pointerdown', closeFromOutside, true);
+    document.removeEventListener('keydown', closeFromEscape, true);
+  };
+  menu.closeContextMenu = closeMenu;
+  const closeFromOutside = (event) => {
+    if (event.button === 0 && !menu.contains(event.target)) closeMenu();
+  };
+  const closeFromEscape = (event) => {
+    if (event.key === 'Escape') closeMenu();
+  };
+  document.addEventListener('pointerdown', closeFromOutside, true);
+  document.addEventListener('keydown', closeFromEscape, true);
+  menu.addEventListener('keydown', (event) => {
+    const enabledButtons = [...menu.querySelectorAll('button:not(:disabled)')];
+    const currentIndex = enabledButtons.indexOf(document.activeElement);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      enabledButtons[(currentIndex + direction + enabledButtons.length) % enabledButtons.length]?.focus();
+    }
+  });
+  menu.querySelector('button:not(:disabled)')?.focus();
   menu.addEventListener('click', async (event) => {
     const action = event.target.closest('[data-context-action]')?.dataset.contextAction;
     if (!action) return;
-    menu.remove();
+    closeMenu();
     if (action === 'paste') activeEditCommand('paste');
     if (action === 'cut') activeEditCommand('cut');
     if (action === 'copy') activeEditCommand('copy');
     if (action === 'search' && data.selectionText) navigate(searchUrl(data.selectionText));
+    if (action === 'translate' && data.selectionText) openNewTab(`https://translate.google.com/?sl=auto&tl=sk&text=${encodeURIComponent(data.selectionText)}&op=translate`);
     if (action === 'open-link' && data.linkURL) openNewTab(data.linkURL);
+    if (action === 'open-link-background' && data.linkURL) openBackgroundTab(data.linkURL);
     if (action === 'open-window' && data.linkURL) window.linsoftBrowser?.openBrowserWindow?.(data.linkURL);
     if (action === 'copy-link') await navigator.clipboard?.writeText(data.linkURL);
     if (action === 'open-image' && data.srcURL) openNewTab(data.srcURL);
+    if (action === 'save-image' && data.srcURL) { activeViewer()?.downloadURL?.(data.srcURL); showToast('Obrázok sa pridáva do sťahovaní.'); }
     if (action === 'copy-image' && data.srcURL) await navigator.clipboard?.writeText(data.srcURL);
+    if (action === 'bookmark-page') document.getElementById('bookmarkButton').click();
     if (action === 'copy-page') await navigator.clipboard?.writeText(addressInput.value);
     if (action === 'open-page-tab') openNewTab(addressInput.value);
     if (action === 'back') navigateTabHistory(-1);
@@ -696,8 +775,31 @@ document.getElementById('pinWindow').addEventListener('click', () => {
   window.linsoftBrowser?.windowControl('toggle-always-on-top');
 });
 document.getElementById('closeWindow').addEventListener('click', () => window.linsoftBrowser?.windowControl('close'));
-const browserMenu = document.getElementById('browserMenu'); const closeBrowserMenu = () => { browserMenu.hidden = true; document.querySelector('.tab-context-menu')?.remove(); }; document.getElementById('menuButton').addEventListener('click', (event) => { event.stopPropagation(); browserMenu.hidden = !browserMenu.hidden; }); document.addEventListener('click', closeBrowserMenu); browserMenu.addEventListener('click', (event) => event.stopPropagation()); document.getElementById('menuNewTab').addEventListener('click', () => { closeBrowserMenu(); addTab(); }); document.getElementById('menuBookmarks').addEventListener('click', () => { closeBrowserMenu(); openLibrary('bookmarks'); }); document.getElementById('menuHistory').addEventListener('click', () => { closeBrowserMenu(); openLibrary('history'); }); document.getElementById('menuSettings').addEventListener('click', () => { closeBrowserMenu(); openSettings('general'); }); document.getElementById('menuDownloads').addEventListener('click', () => { closeBrowserMenu(); document.getElementById('downloadsButton').click(); }); document.getElementById('menuClearData').addEventListener('click', () => { closeBrowserMenu(); localStorage.clear(); showToast('Údaje prehliadania boli vymazané.'); }); document.getElementById('menuAbout').addEventListener('click', () => { closeBrowserMenu(); openSettings('about'); });
+const browserMenu = document.getElementById('browserMenu');
+const downloadPanel = document.getElementById('downloadPanel');
+const closeBrowserMenu = () => { browserMenu.hidden = true; document.querySelector('.tab-context-menu')?.remove(); };
+const closeTransientPanels = () => { closeBrowserMenu(); downloadPanel.hidden = true; securityPanel.hidden = true; };
+browserMenu.setAttribute('role', 'menu');
+document.getElementById('menuButton').addEventListener('click', (event) => {
+  event.stopPropagation();
+  browserMenu.hidden = !browserMenu.hidden;
+  if (!browserMenu.hidden) browserMenu.querySelector('button')?.focus();
+});
+document.addEventListener('click', closeBrowserMenu);
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeTransientPanels(); });
+browserMenu.addEventListener('click', (event) => event.stopPropagation());
+browserMenu.addEventListener('keydown', (event) => {
+  const buttons = [...browserMenu.querySelectorAll('button:not(:disabled)')];
+  const current = buttons.indexOf(document.activeElement);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    buttons[(current + direction + buttons.length) % buttons.length]?.focus();
+  }
+});
+document.getElementById('menuNewTab').addEventListener('click', () => { closeBrowserMenu(); addTab(); }); document.getElementById('menuBookmarks').addEventListener('click', () => { closeBrowserMenu(); openLibrary('bookmarks'); }); document.getElementById('menuHistory').addEventListener('click', () => { closeBrowserMenu(); openLibrary('history'); }); document.getElementById('menuSettings').addEventListener('click', () => { closeBrowserMenu(); openSettings('general'); }); document.getElementById('menuDownloads').addEventListener('click', () => { closeBrowserMenu(); document.getElementById('downloadsButton').click(); }); document.getElementById('menuClearData').addEventListener('click', () => { closeBrowserMenu(); localStorage.clear(); showToast('Údaje prehliadania boli vymazané.'); }); document.getElementById('menuAbout').addEventListener('click', () => { closeBrowserMenu(); openSettings('about'); });
 document.getElementById('menuInstallApp').addEventListener('click', () => { closeBrowserMenu(); installCurrentApp(); }); document.getElementById('menuAppCenter').addEventListener('click', () => { closeBrowserMenu(); openAppCenter(); });
+document.getElementById('menuGuestWindow').addEventListener('click', () => { closeBrowserMenu(); window.linsoftBrowser?.openGuestWindow?.(); });
 document.getElementById('menuSearchTabs').addEventListener('click', () => { closeBrowserMenu(); searchOpenTabs(); });
 document.getElementById('toggleBookmarksBar').addEventListener('click', () => { settingsState.showBookmarksBar = !settingsState.showBookmarksBar; saveSettings(); updateBookmarksBar(); closeBrowserMenu(); });
 document.querySelectorAll('[data-app-url]').forEach((button) => button.addEventListener('click', () => { closeBrowserMenu(); openNewTab(button.dataset.appUrl); }));
@@ -726,7 +828,14 @@ function updateDownloadButton() {
 
 function renderDownloads() {
   const list = document.getElementById('downloadList');
-  const items = [...downloadItems.values()].sort((left, right) => (right.startedAt || 0) - (left.startedAt || 0));
+  const filter = document.getElementById('downloadFilter')?.value || 'all';
+  const items = [...downloadItems.values()].filter((item) => {
+    const active = item.active === true && !['Stiahnuté', 'Zrušené', 'Sťahovanie zlyhalo'].includes(item.status);
+    if (filter === 'active') return active;
+    if (filter === 'completed') return item.status === 'Stiahnuté';
+    if (filter === 'failed') return ['Zrušené', 'Sťahovanie zlyhalo'].includes(item.status) || item.status.startsWith('Sťahovanie zlyhalo:');
+    return true;
+  }).sort((left, right) => (right.startedAt || 0) - (left.startedAt || 0));
 
   list.innerHTML = items.map((item) => {
     const size = item.total ? `${(item.received / 1048576).toFixed(1)} / ${(item.total / 1048576).toFixed(1)} MB` : '';
@@ -737,7 +846,13 @@ function renderDownloads() {
     const percent = Math.max(0, Math.min(100, Number(item.percent) || 0));
 
     const progressAction = isPaused ? `<button data-resume-download="${escapeHtml(effectiveId)}">Pokračovať</button>` : `<button data-pause-download="${escapeHtml(effectiveId)}">Pozastaviť</button>`;
-    return `<div class="download-item" data-download-id="${escapeHtml(effectiveId)}"><span class="download-file-icon">${item.status === 'Stiahnuté' ? '✓' : isPaused ? 'Ⅱ' : '↓'}</span><div class="download-item-body"><strong>${escapeHtml(item.fileName)}</strong><span>${escapeHtml(item.status)}${size ? ` · ${size}` : ''}${speed && !isPaused ? ` · ${speed}` : ''}</span><div class="download-item-progress"><i style="width:${percent}%"></i></div><div class="download-item-actions">${item.status === 'Stiahnuté' ? `<button data-open-download="${escapeHtml(item.filePath || '')}">Otvoriť</button><button data-show-download="${escapeHtml(item.filePath || '')}">Zobraziť v priečinku</button>` : isInProgress ? `${progressAction}<button data-cancel-download="${escapeHtml(effectiveId)}">Zrušiť</button>` : ''}<button data-remove-download="${escapeHtml(effectiveId)}">Odstrániť</button></div></div><span class="download-item-percent">${percent}%</span></div>`;
+    const destination = item.filePath ? `<small title="${escapeHtml(item.filePath)}">${escapeHtml(item.filePath)}</small>` : '';
+    const retryAction = !isInProgress && item.status !== 'Stiahnuté' && /^https?:\/\//i.test(item.sourceUrl || '') ? `<button data-retry-download="${escapeHtml(effectiveId)}">Stiahnuť znova</button>` : '';
+    return `<div class="download-item" data-download-id="${escapeHtml(effectiveId)}"><span class="download-file-icon">${item.status === 'Stiahnuté' ? '✓' : isPaused ? 'Ⅱ' : '↓'}</span><div class="download-item-body"><strong>${escapeHtml(item.fileName)}</strong><span>${escapeHtml(item.status)}${size ? ` · ${size}` : ''}${speed && !isPaused ? ` · ${speed}` : ''}</span>${destination}<div class="download-item-progress"><i style="width:${percent}%"></i></div><div class="download-item-actions">${item.status === 'Stiahnuté' ? `<button data-open-download="${escapeHtml(item.filePath || '')}">Otvoriť</button><button data-show-download="${escapeHtml(item.filePath || '')}">Zobraziť v priečinku</button>` : isInProgress ? `${progressAction}<button data-cancel-download="${escapeHtml(effectiveId)}">Zrušiť</button>` : retryAction}<button data-remove-download="${escapeHtml(effectiveId)}">Odstrániť</button></div></div><span class="download-item-percent">${percent}%</span></div>`;
+  if (isNewDownload) {
+    panel.hidden = false;
+    showToast(`Sťahuje sa ${download.fileName} do ${download.filePath || 'vybraného priečinka'}.`);
+  }
   }).join('') || '<div class="downloads-empty"><span>↓</span><strong>Žiadne sťahovania</strong><small>Stiahnuté súbory sa zobrazia tu.</small></div>';
 
   list.querySelectorAll('[data-open-download]').forEach((button) => button.addEventListener('click', () => window.linsoftBrowser?.openDownloadFile(button.dataset.openDownload)));
@@ -766,6 +881,12 @@ function renderDownloads() {
     window.linsoftBrowser?.removeDownload?.(id);
     renderDownloads();
   }));
+  list.querySelectorAll('[data-retry-download]').forEach((button) => button.addEventListener('click', () => {
+    const sourceUrl = downloadItems.get(button.dataset.retryDownload)?.sourceUrl;
+    const viewer = activeViewer();
+    if (!sourceUrl || !viewer?.downloadURL) return showToast('Tento súbor sa nedá znova stiahnuť.');
+    viewer.downloadURL(sourceUrl);
+  }));
   updateDownloadButton();
 }
 
@@ -785,6 +906,7 @@ document.getElementById('clearDownloads').addEventListener('click', async () => 
   renderDownloads();
 });
 document.getElementById('downloadPanel').addEventListener('click', (event) => event.stopPropagation());
+document.getElementById('downloadFilter').addEventListener('change', renderDownloads);
 
 window.linsoftBrowser?.onDownload((download) => {
   const id = String(download.id || download.fileName || `${Date.now()}-${Math.random()}`);
@@ -807,7 +929,12 @@ window.linsoftBrowser?.listDownloads?.().then((downloads) => {
 document.addEventListener('click', () => { document.getElementById('downloadPanel').hidden = true; });
 
 window.linsoftBrowser?.onExternalUrl((url) => navigate(url));
+window.linsoftBrowser?.onDismissWebviewOverlay?.(() => {
+  document.querySelector('.webview-context-menu')?.closeContextMenu?.();
+  closeTransientPanels();
+});
 window.linsoftBrowser?.onBrowserShortcut?.(({ key, shift }) => {
+  if (key === 'escape') { document.querySelector('.webview-context-menu')?.closeContextMenu?.(); closeTransientPanels(); return; }
   if (key === 'l' || key === 'k') { addressInput.focus(); addressInput.select(); return; }
   if (key === 'r') { document.getElementById('reloadButton').click(); return; }
   if (key === 't' && shift) { restoreClosedTab(); return; }

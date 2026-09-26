@@ -13,7 +13,7 @@ $publishPaths = @(
   '.github', '.gitignore', 'README.md', 'RELEASE_CHECKLIST.md',
   'Linsoft centrum app', 'app.js', 'index.html', 'main.cjs',
   'package-lock.json', 'package.json', 'preload.cjs', 'styles.css',
-  'assets', 'packaging', 'scripts', 'tools'
+  'assets', 'lib', 'packaging', 'scripts', 'tests', 'tools'
 )
 
 function Invoke-Git {
