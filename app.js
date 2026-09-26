@@ -669,12 +669,6 @@ document.getElementById('printButton').addEventListener('click', printCurrentPag
 document.getElementById('savePdfButton').addEventListener('click', saveCurrentPagePdf);
 document.getElementById('capturePageButton').addEventListener('click', captureCurrentPage);
 const readerModeButton = document.createElement('button'); readerModeButton.id = 'readerModeButton'; readerModeButton.title = 'Čitateľský režim'; readerModeButton.setAttribute('aria-label', 'Čitateľský režim'); readerModeButton.textContent = 'Aa'; document.querySelector('.toolbar')?.insertBefore(readerModeButton, document.getElementById('downloadsButton')); readerModeButton.addEventListener('click', toggleReaderMode);
-document.getElementById('menuUndo').addEventListener('click', () => { activeEditCommand('undo'); closeBrowserMenu(); });
-document.getElementById('menuRedo').addEventListener('click', () => { activeEditCommand('redo'); closeBrowserMenu(); });
-document.getElementById('menuCut').addEventListener('click', () => { activeEditCommand('cut'); closeBrowserMenu(); });
-document.getElementById('menuCopy').addEventListener('click', () => { activeEditCommand('copy'); closeBrowserMenu(); });
-document.getElementById('menuPaste').addEventListener('click', () => { activeEditCommand('paste'); closeBrowserMenu(); });
-document.getElementById('menuSelectAll').addEventListener('click', () => { activeEditCommand('selectAll'); closeBrowserMenu(); });
 document.getElementById('newTab').addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); openNewTab(); });
 document.getElementById('reloadButton').addEventListener('click', () => { const viewer = ensureActiveTabLoaded(); if (viewer) viewer.reload(); else if (tabs.get(activeTabId)?.url === 'linsoft://start') startPage(); });
 document.getElementById('backButton').addEventListener('click', () => navigateTabHistory(-1));
