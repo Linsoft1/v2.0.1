@@ -75,14 +75,15 @@ jobs:
           cp -R dist/linux-unpacked dist-debian-final/linux-unpacked
           node tools/build-deb.cjs
           node tools/verify-deb.cjs
+          mkdir -p release-staging
+          cp dist/*.deb release-staging/
+          cp dist-debian-final/*.deb release-staging/
 
       - name: Upload Debian release files
         uses: actions/upload-artifact@v4
         with:
           name: linux-release-files
-          path: |
-            dist/*.deb
-            dist-debian-final/*.deb
+          path: release-staging/*.deb
 
   publish-release:
     needs: [build-windows, build-linux]
