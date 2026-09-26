@@ -27,7 +27,7 @@ jobs:
       - name: Build Windows installer
         shell: pwsh
         run: |
-          npm run build:installer 2>&1 | Tee-Object -FilePath build-windows.log
+          npm run build:installer -- --publish never 2>&1 | Tee-Object -FilePath build-windows.log
           $buildExitCode = $LASTEXITCODE
           if ($buildExitCode -ne 0) {
             $details = Select-String -Path build-windows.log -Pattern '(?i)(error|failed|exception|ENOENT|EPERM|signtool)' | Select-Object -Last 12
@@ -66,7 +66,7 @@ jobs:
         run: npm ci
 
       - name: Build Linux app bundle
-        run: npx electron-builder --linux dir
+        run: npx electron-builder --linux dir --publish never
 
       - name: Build and verify Linsoft Debian package
         run: |
