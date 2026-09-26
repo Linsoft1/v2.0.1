@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('linsoftBrowser', {
   resumeDownload: (id) => ipcRenderer.send('resume-download', id),
   setBrowserPreferences: (preferences) => ipcRenderer.send('set-browser-preferences', preferences),
   getVersion: () => ipcRenderer.invoke('app-version'),
+  getUpdateState: () => ipcRenderer.invoke('update-state'),
+  onUpdateState: (callback) => ipcRenderer.on('update-state', (_event, state) => callback(state)),
   checkForUpdates: () => ipcRenderer.invoke('update-check'),
   downloadUpdate: () => ipcRenderer.invoke('update-download'),
   installUpdate: () => ipcRenderer.send('update-install'),

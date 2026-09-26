@@ -4,13 +4,39 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npm run build:installer
+
+      - name: Upload Windows release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-files
+          path: |
+            dist/Linsoft-Browser-Setup-*.exe
+            dist/latest.yml
+            dist/*.blockmap
+
+  build-linux:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,36 +48,41 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install Windows build tools
-        run: sudo apt-get update && sudo apt-get install -y wine64
-
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build Windows installer and Debian package
+      - name: Build Debian package
         run: |
-          npm run build:installer
           npm run build:linux
           rm -rf dist-debian-final
           mkdir -p dist-debian-final
           cp -R dist/linux-unpacked dist-debian-final/linux-unpacked
           node tools/build-deb.cjs
           node tools/verify-deb.cjs
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Show generated artifacts
-        run: find dist -maxdepth 1 -type f -printf '%f\n' 2>/dev/null || true
+      - name: Upload Debian release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release-files
+          path: |
+            dist/*.deb
+            dist-debian-final/*.deb
+
+  publish-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.exe
-            dist/*.deb
-            dist/*.yml
-            dist/*.blockmap
-            dist-debian-final/*.deb
+            release-assets/*
           generate_release_notes: true
           prerelease: false
         env:

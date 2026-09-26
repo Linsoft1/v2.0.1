@@ -20,7 +20,7 @@ try {
 }
 let installedApps = [];
 try { installedApps = JSON.parse(localStorage.getItem('linsoft-apps') || '[]'); } catch { installedApps = []; }
-const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://start', search: 'Google', safe: true, popups: true, tracking: false, trackingProtection: true, downloads: 'Downloads', downloadFolderPath: '', askDownload: false, adBlock: true, clearExit: false, restoreTabs: true, suspendInactiveTabs: true, confirmClose: true, camera: false, microphone: false, webNotifications: false, showBookmarksBar: false };
+const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://start', search: 'Google', safe: true, popups: true, tracking: false, trackingProtection: true, downloads: 'Downloads', downloadFolderPath: '', askDownload: false, adBlock: true, clearExit: false, restoreTabs: true, suspendInactiveTabs: true, confirmClose: true, camera: false, microphone: false, webNotifications: false, showBookmarksBar: false, autoUpdateCheck: true };
 let settingsFromStorage = {};
 try { settingsFromStorage = JSON.parse(localStorage.getItem('linsoft-settings') || '{}'); } catch { settingsFromStorage = {}; }
 const settingsState = Object.assign({}, defaultSettings, settingsFromStorage);
@@ -331,7 +331,7 @@ function openAppCenter() {
 function saveSettings() {
   localStorage.setItem('linsoft-settings', JSON.stringify(settingsState));
   document.body.classList.toggle('light-theme', settingsState.theme === 'light');
-  window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, clearExit: settingsState.clearExit });
+  window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, clearExit: settingsState.clearExit, autoUpdateCheck: settingsState.autoUpdateCheck });
 }
 
 function openLibrary(mode) {
@@ -400,15 +400,15 @@ function openSettings(section = 'general') {
   surface.innerHTML = `<div class="settings-page"><div class="settings-heading"><div><span class="settings-eyebrow">LINSOFT BROWSER</span><h1>Nastavenia</h1><p>Prispôsob si browser podľa svojho spôsobu práce.</p></div></div><div class="settings-layout"><nav class="settings-nav"><button data-settings-section="general">⚙ <span>Všeobecné</span></button><button data-settings-section="appearance">◐ <span>Vzhľad</span></button><button data-settings-section="privacy">♢ <span>Súkromie a bezpečnosť</span></button><button data-settings-section="about">ⓘ <span>O aplikácii</span></button></nav><div class="settings-panels"><section data-settings-panel="general"><p class="settings-label">VŠEOBECNÉ</p><h2>Správanie browsera</h2><div class="setting-card"><div><strong>Pri spustení</strong><small>Vyber, čo sa zobrazí po otvorení Linsoft Browsera.</small></div><select id="startupSetting"><option value="start">Nová karta Linsoft</option><option value="home">Domovská stránka</option></select></div><div class="setting-card"><div><strong>Domovská stránka</strong><small>Adresa, ktorú otvorí tlačidlo Domov.</small></div><input class="settings-input" id="homeSetting" value="${escapeHtml(settingsState.home)}" /></div><div class="setting-card"><div><strong>Vyhľadávač</strong><small>Predvolený vyhľadávač pre otázky v adresnom riadku.</small></div><select id="searchSetting"><option>Google</option><option>Bing</option><option>DuckDuckGo</option></select></div></section><section data-settings-panel="appearance"><p class="settings-label">VZHĽAD</p><h2>Vzhľad aplikácie</h2><div class="setting-card"><div><strong>Farebná téma</strong><small>Vyber, ako má Linsoft Browser vyzerať.</small></div><select id="themeSetting"><option value="dark">Tmavá</option><option value="light">Svetlá</option></select></div><div class="setting-card"><div><strong>Kompaktný panel</strong><small>Zmenší výšku navigačných panelov pre viac priestoru.</small></div><button class="settings-toggle" data-setting-toggle="compact"><i></i></button></div></section><section data-settings-panel="privacy"><p class="settings-label">SÚKROMIE</p><h2>Súkromie a bezpečnosť</h2><div class="setting-card"><div><strong>Bezpečné prehliadanie</strong><small>Upozorní pred známymi nebezpečnými stránkami.</small></div><button class="settings-toggle ${settingsState.safe ? 'on' : ''}" data-setting-toggle="safe"><i></i></button></div><div class="setting-card"><div><strong>Blokovať vyskakovacie okná</strong><small>Obmedzí automatické otváranie nových okien.</small></div><button class="settings-toggle ${settingsState.popups ? 'on' : ''}" data-setting-toggle="popups"><i></i></button></div><div class="setting-card"><div><strong>Posielať požiadavku Do Not Track</strong><small>Požiada weby, aby nesledovali tvoju aktivitu.</small></div><button class="settings-toggle ${settingsState.tracking ? 'on' : ''}" data-setting-toggle="tracking"><i></i></button></div><button class="danger-button" id="clearBrowserData">Vymazať históriu a údaje prehliadania</button></section><section data-settings-panel="about"><p class="settings-label">O APLIKÁCII</p><h2>Linsoft Browser</h2><div class="about-card"><span class="about-logo">L</span><div><strong>Linsoft Browser 1.0.0</strong><small>Desktopový prehliadač pre Windows postavený na Electron + Chromium.</small><small>© 2026 Linsoft</small></div></div></section><div class="settings-actions"><button class="settings-reset" id="resetSettings">Obnoviť predvolené</button><button class="save-settings" id="saveSettings">Uložiť zmeny</button></div></div></div></div>`;
   const startup = surface.querySelector('#startupSetting'); const theme = surface.querySelector('#themeSetting'); const search = surface.querySelector('#searchSetting'); const home = surface.querySelector('#homeSetting');
   startup.value = settingsState.startup; theme.value = settingsState.theme; search.value = settingsState.search;
+  addUpdateCheck();
   surface.querySelectorAll('[data-settings-section]').forEach((button) => button.addEventListener('click', () => { surface.querySelectorAll('[data-settings-section]').forEach((item) => item.classList.toggle('active', item === button)); surface.querySelectorAll('[data-settings-panel]').forEach((panel) => panel.hidden = panel.dataset.settingsPanel !== button.dataset.settingsSection); }));
   surface.querySelector(`[data-settings-section="${section}"]`).click();
-  surface.querySelectorAll('[data-setting-toggle]').forEach((toggle) => toggle.addEventListener('click', () => { toggle.classList.toggle('on'); }));
+  surface.querySelectorAll('[data-setting-toggle]').forEach((toggle) => toggle.addEventListener('click', () => { toggle.classList.toggle('on'); if (toggle.dataset.settingToggle === 'autoUpdateCheck') { settingsState.autoUpdateCheck = toggle.classList.contains('on'); saveSettings(); const note = surface.querySelector('[data-update-note]'); if (note) note.textContent = settingsState.autoUpdateCheck ? 'Automatická kontrola je zapnutá.' : 'Automatická kontrola je vypnutá.'; } }));
   surface.querySelector('#saveSettings').addEventListener('click', () => { settingsState.startup = startup.value; settingsState.theme = theme.value; settingsState.search = search.value; settingsState.home = home.value.trim() || 'linsoft://start'; settingsState.safe = surface.querySelector('[data-setting-toggle="safe"]').classList.contains('on'); settingsState.popups = surface.querySelector('[data-setting-toggle="popups"]').classList.contains('on'); settingsState.tracking = surface.querySelector('[data-setting-toggle="tracking"]').classList.contains('on'); ['camera', 'microphone', 'webNotifications'].forEach((key) => { const toggle = surface.querySelector(`[data-setting-toggle="${key}"]`); if (toggle) settingsState[key] = toggle.classList.contains('on'); }); saveSettings(); showToast('Nastavenia boli uložené.'); });
   surface.querySelector('#resetSettings').addEventListener('click', () => { localStorage.removeItem('linsoft-settings'); Object.assign(settingsState, defaultSettings); openSettings(section); showToast('Nastavenia boli obnovené.'); });
   surface.querySelector('#clearBrowserData').addEventListener('click', () => { localStorage.removeItem('linsoft-history'); localStorage.removeItem('linsoft-session'); localStorage.removeItem('linsoft-bookmarks'); localStorage.removeItem('linsoft-apps'); savedBookmarks.splice(0); installedApps.splice(0); renderSavedBookmarks(); showToast('História a údaje boli vymazané.'); });
   addAdvancedSettings();
   addSecuritySettings();
-  addUpdateCheck();
 }
 
 function addSecuritySettings() {
@@ -433,16 +433,67 @@ function addSecuritySettings() {
 
 function addUpdateCheck() {
   const surface = getActiveSurface();
-  const panel = surface.querySelector('[data-settings-panel="about"]');
-  if (!panel) return;
-  const aboutCard = panel.querySelector('.about-card');
+  const aboutPanel = surface.querySelector('[data-settings-panel="about"]');
+  const navigation = surface.querySelector('.settings-nav');
+  const panels = surface.querySelector('.settings-panels');
+  if (!aboutPanel || !navigation || !panels) return;
+  const aboutCard = aboutPanel.querySelector('.about-card');
   if (aboutCard) { const description = aboutCard.querySelector('small'); if (description) description.remove(); aboutCard.querySelector('div').insertAdjacentHTML('beforeend', '<small>Autor: Martin Pastorek</small>'); }
-  panel.insertAdjacentHTML('beforeend', '<div class="license-card"><h3>Licenčné podmienky používania</h3><p>Linsoft Browser je poskytovaný na osobné a interné použitie.</p><p>Je zakázané aplikáciu predávať, meniť, redistribuovať alebo používať na nezákonné účely bez písomného súhlasu autora.</p><p>Aplikácia používa Electron, Chromium a ďalšie komponenty tretích strán, ktoré sa riadia vlastnými licenciami.</p><p>Autor nezodpovedá za obsah webových stránok otvorených v prehliadači ani za škody spôsobené ich používaním.</p></div>');
-  panel.insertAdjacentHTML('beforeend', '<button class="check-update" id="checkUpdate">Skontrolovať aktualizácie</button><p class="update-note" id="updateNote"></p>');
-  const updateNote = document.getElementById('updateNote');
-  const checkUpdate = document.getElementById('checkUpdate');
-  window.linsoftBrowser?.getVersion?.().then((version) => { const versionLabel = panel.querySelector('.about-card strong'); if (versionLabel) versionLabel.textContent = `Linsoft Browser ${version}`; }).catch(() => {});
-  checkUpdate.addEventListener('click', async () => { checkUpdate.disabled = true; updateNote.textContent = 'Kontrolujem aktualizácie...'; const result = await window.linsoftBrowser?.checkForUpdates?.(); if (result?.status === 'available') { updateNote.textContent = `Dostupná je verzia ${result.version}. Sťahujem aktualizáciu...`; const download = await window.linsoftBrowser?.downloadUpdate?.(); if (download?.ok) { updateNote.textContent = 'Aktualizácia je pripravená.'; checkUpdate.textContent = 'Reštartovať a nainštalovať'; checkUpdate.disabled = false; checkUpdate.onclick = () => window.linsoftBrowser?.installUpdate?.(); return; } updateNote.textContent = `Aktualizáciu sa nepodarilo stiahnuť: ${download?.message || 'neznáma chyba'}`; } else if (result?.status === 'latest') updateNote.textContent = `Používaš najnovšiu verziu Linsoft Browser ${result.version}.`; else updateNote.textContent = result?.message || 'Aktualizácie nie sú dostupné.'; checkUpdate.disabled = false; });
+  aboutPanel.insertAdjacentHTML('beforeend', '<div class="license-card"><h3>Licenčné podmienky používania</h3><p>Linsoft Browser je poskytovaný na osobné a interné použitie.</p><p>Je zakázané aplikáciu predávať, meniť, redistribuovať alebo používať na nezákonné účely bez písomného súhlasu autora.</p><p>Aplikácia používa Electron, Chromium a ďalšie komponenty tretích strán, ktoré sa riadia vlastnými licenciami.</p><p>Autor nezodpovedá za obsah webových stránok otvorených v prehliadači ani za škody spôsobené ich používaním.</p></div>');
+  navigation.insertAdjacentHTML('beforeend', '<button data-settings-section="updates">↻ <span>Aktualizácie</span></button>');
+  panels.insertAdjacentHTML('beforeend', '<section data-settings-panel="updates" hidden><p class="settings-label">AKTUALIZÁCIE</p><h2>Verzia a aktualizácie</h2><div class="about-card"><div class="about-logo">↻</div><div><strong id="settingsAppVersion">Linsoft Browser</strong><small>Kontrola aktualizácií pre túto aplikáciu.</small></div></div><div class="setting-card"><div><strong>Automaticky kontrolovať</strong><small>Kontrolovať pri spustení a pravidelne počas používania.</small></div><button class="settings-toggle" id="autoUpdateCheckToggle" data-setting-toggle="autoUpdateCheck"><i></i></button></div><button class="check-update" data-update-action="check" type="button">Skontrolovať teraz</button><p class="update-note" data-update-note></p></section>');
+  const updatePanel = panels.querySelector('[data-settings-panel="updates"]');
+  const updateToggle = updatePanel.querySelector('#autoUpdateCheckToggle');
+  const updateButton = updatePanel.querySelector('[data-update-action]');
+  updateToggle.classList.toggle('on', settingsState.autoUpdateCheck !== false);
+  updateButton.addEventListener('click', async () => {
+    if (updateButton.dataset.updateAction === 'install') return window.linsoftBrowser?.installUpdate?.();
+    updateButton.disabled = true;
+    updatePanel.querySelector('[data-update-note]').textContent = 'Kontrolujem aktualizácie...';
+    const result = await window.linsoftBrowser?.checkForUpdates?.();
+    if (result?.status === 'available') {
+      renderSettingsUpdateState({ status: 'available', version: result.version });
+      const download = await window.linsoftBrowser?.downloadUpdate?.();
+      if (download?.ok) renderSettingsUpdateState({ status: 'downloading', version: result.version, percent: 0 });
+      else { updatePanel.querySelector('[data-update-note]').textContent = `Sťahovanie zlyhalo: ${download?.message || 'neznáma chyba'}`; updateButton.disabled = false; }
+    } else {
+      updatePanel.querySelector('[data-update-note]').textContent = result?.status === 'latest' ? `Používaš najnovšiu verziu Linsoft Browser ${result.version}.` : result?.message || 'Aktualizácie nie sú dostupné.';
+      updateButton.disabled = false;
+    }
+  });
+  window.linsoftBrowser?.getVersion?.().then((version) => {
+    const versionLabel = updatePanel.querySelector('#settingsAppVersion');
+    if (versionLabel) versionLabel.textContent = `Linsoft Browser ${version}`;
+    const aboutLabel = aboutCard?.querySelector('strong');
+    if (aboutLabel) aboutLabel.textContent = `Linsoft Browser ${version}`;
+  }).catch(() => {});
+  window.linsoftBrowser?.getUpdateState?.().then(renderSettingsUpdateState).catch(() => {});
+}
+
+function renderSettingsUpdateState(state) {
+  if (!state) return;
+  document.querySelectorAll('[data-settings-panel="updates"]').forEach((panel) => {
+    const note = panel.querySelector('[data-update-note]');
+    const button = panel.querySelector('[data-update-action]');
+    if (!note || !button) return;
+    if (state.status === 'available') note.textContent = `Dostupná je verzia ${state.version}.`;
+    else if (state.status === 'downloading') note.textContent = `Sťahuje sa aktualizácia: ${Math.max(0, Math.min(100, Number(state.percent) || 0))} %.`;
+    else if (state.status === 'downloaded') note.textContent = `Verzia ${state.version} je pripravená na inštaláciu.`;
+    else if (state.status === 'latest') note.textContent = `Používaš najnovšiu verziu Linsoft Browser ${state.version}.`;
+    if (state.status === 'downloaded') {
+      button.dataset.updateAction = 'install';
+      button.textContent = 'Reštartovať a nainštalovať';
+      button.disabled = false;
+    } else if (state.status === 'downloading') {
+      button.dataset.updateAction = 'check';
+      button.textContent = 'Sťahuje sa...';
+      button.disabled = true;
+    } else {
+      button.dataset.updateAction = 'check';
+      button.textContent = 'Skontrolovať teraz';
+      button.disabled = false;
+    }
+  });
 }
 
 function addAdvancedSettings() {
@@ -802,9 +853,65 @@ window.linsoftBrowser?.onUninstallExternalApp(async (data) => { const index = in
 window.linsoftBrowser?.onLinkInTab((url) => { if (settingsState.popups) openNewTab(url); else showToast('Vyskakovacie okno bolo zablokované.'); });
 document.body.classList.toggle('light-theme', settingsState.theme === 'light');
 updateAdBlockButton();
-  window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, clearExit: settingsState.clearExit });
+  window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, clearExit: settingsState.clearExit, autoUpdateCheck: settingsState.autoUpdateCheck });
 document.addEventListener('keydown', (event) => { const command = event.ctrlKey || event.metaKey; if (command && event.shiftKey && event.key.toLowerCase() === 'i') { event.preventDefault(); content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"] .webview`)?.openDevTools?.(); return; } if (command && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosedTab(); return; } if (command && (event.key.toLowerCase() === 'l' || event.key.toLowerCase() === 'k')) { event.preventDefault(); addressInput.focus(); addressInput.select(); return; } if (command && event.key.toLowerCase() === 'r') { event.preventDefault(); document.getElementById('reloadButton').click(); return; } if (command && event.key.toLowerCase() === 't') { event.preventDefault(); openNewTab(); return; } if (command && event.key.toLowerCase() === 'w') { event.preventDefault(); closeTab(activeTabId); return; } if (command && event.key === 'Tab') { event.preventDefault(); const ids = [...tabs.keys()]; const current = ids.indexOf(activeTabId); const next = event.shiftKey ? (current - 1 + ids.length) % ids.length : (current + 1) % ids.length; selectTab(ids[next]); return; } if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); document.getElementById('backButton').click(); return; } if (event.altKey && event.key === 'ArrowRight') { event.preventDefault(); document.getElementById('forwardButton').click(); } });
 restoreSession();
 if (hadCrash) showToast('Obnovené karty po neočakávanom ukončení.');
 if (addressInput.value === 'linsoft://apps') openAppCenter();
 if (settingsState.startup === 'home' && settingsState.home !== 'linsoft://start') navigate(settingsState.home);
+
+const updateNotice = document.getElementById('updateNotice');
+const updateNoticeTitle = document.getElementById('updateNoticeTitle');
+const updateNoticeText = document.getElementById('updateNoticeText');
+const updateNoticeAction = document.getElementById('updateNoticeAction');
+const updateNoticeDismiss = document.getElementById('updateNoticeDismiss');
+const updateProgress = document.getElementById('updateProgress');
+const updateProgressBar = document.getElementById('updateProgressBar');
+let visibleUpdateState = null;
+
+function renderUpdateNotice(state) {
+  if (!updateNotice || !state) return;
+  visibleUpdateState = state;
+  if (!['available', 'downloading', 'downloaded'].includes(state.status)) {
+    updateNotice.hidden = true;
+    return;
+  }
+  const version = String(state.version || '');
+  if (state.status === 'available' && sessionStorage.getItem('linsoft-dismissed-update') === version) {
+    updateNotice.hidden = true;
+    return;
+  }
+  updateNotice.hidden = false;
+  updateNoticeTitle.textContent = state.status === 'downloaded' ? 'Aktualizácia je pripravená' : 'Nová verzia Linsoft Browser';
+  updateNoticeText.textContent = state.status === 'available'
+    ? `Verzia ${version} je dostupná.`
+    : state.status === 'downloading'
+      ? `Sťahuje sa verzia ${version}: ${Math.max(0, Math.min(100, Number(state.percent) || 0))} %.`
+      : `Verzia ${version} sa nainštaluje po reštarte.`;
+  updateProgress.hidden = state.status !== 'downloading';
+  updateProgressBar.style.width = `${Math.max(0, Math.min(100, Number(state.percent) || 0))}%`;
+  updateNoticeAction.textContent = state.status === 'downloaded' ? 'Reštartovať' : state.status === 'downloading' ? 'Sťahuje sa' : 'Stiahnuť';
+  updateNoticeAction.disabled = state.status === 'downloading';
+}
+
+updateNoticeAction.addEventListener('click', async () => {
+  if (visibleUpdateState?.status === 'downloaded') {
+    window.linsoftBrowser?.installUpdate?.();
+    return;
+  }
+  if (visibleUpdateState?.status !== 'available') return;
+  updateNoticeAction.disabled = true;
+  const result = await window.linsoftBrowser?.downloadUpdate?.();
+  if (!result?.ok) {
+    updateNoticeAction.disabled = false;
+    updateNoticeText.textContent = `Sťahovanie zlyhalo: ${result?.message || 'skús to znova.'}`;
+  }
+});
+
+updateNoticeDismiss.addEventListener('click', () => {
+  if (visibleUpdateState?.status === 'available') sessionStorage.setItem('linsoft-dismissed-update', String(visibleUpdateState.version || ''));
+  updateNotice.hidden = true;
+});
+
+window.linsoftBrowser?.onUpdateState?.((state) => { renderUpdateNotice(state); renderSettingsUpdateState(state); });
+window.linsoftBrowser?.getUpdateState?.().then(renderUpdateNotice).catch(() => {});

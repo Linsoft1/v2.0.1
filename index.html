@@ -30,6 +30,18 @@
     <div class="loading-track" id="loadingTrack"><i></i></div>
     <section id="content" class="content"></section>
   </main>
+  <aside class="update-notice" id="updateNotice" role="status" aria-live="polite" hidden>
+    <span class="update-notice-icon" aria-hidden="true">↑</span>
+    <div class="update-notice-copy">
+      <strong id="updateNoticeTitle">Aktualizácia Linsoft Browser</strong>
+      <p id="updateNoticeText"></p>
+      <div class="update-progress" id="updateProgress" hidden><i id="updateProgressBar"></i></div>
+    </div>
+    <div class="update-notice-actions">
+      <button class="update-notice-primary" id="updateNoticeAction" type="button">Stiahnuť</button>
+      <button class="update-notice-dismiss" id="updateNoticeDismiss" type="button">Neskôr</button>
+    </div>
+  </aside>
   <div class="browser-menu" id="browserMenu" hidden><div class="menu-section-label">UPRAVIŤ</div><button id="menuUndo">↶ Späť <span>Ctrl+Z</span></button><button id="menuRedo">↷ Znova <span>Ctrl+Y</span></button><button id="menuCut">✂ Vystrihnúť <span>Ctrl+X</span></button><button id="menuCopy">▣ Kopírovať <span>Ctrl+C</span></button><button id="menuPaste">▤ Vložiť <span>Ctrl+V</span></button><button id="menuSelectAll">▧ Vybrať všetko <span>Ctrl+A</span></button><div class="menu-divider"></div><div class="menu-section-label">APLIKÁCIE</div><button data-app-url="https://www.google.com">G <span>Google</span></button><button data-app-url="https://www.youtube.com">▶ <span>YouTube</span></button><button data-app-url="https://github.com">⌘ <span>GitHub</span></button><button data-app-url="https://news.google.com">N <span>Správy</span></button><div class="menu-divider"></div><button id="menuAppCenter">▦ Linsoft App Centrum</button><button id="toggleBookmarksBar">☆ Zobraziť lištu záložiek</button><button id="menuInstallApp">⊞ Nainštalovať webovú aplikáciu</button><button id="menuNewTab">＋ Nová karta</button><button id="menuSearchTabs">⌕ Vyhľadať kartu</button><button id="menuBookmarks">★ Správca záložiek</button><button id="menuHistory">◷ História</button><button id="menuSettings">⚙ Nastavenia</button><button id="menuDownloads">⇩ Otvoriť Downloads</button><button id="menuClearData">⌫ Vymazať údaje</button><button id="menuAbout">ⓘ O Linsoft Browser</button></div>
   <div class="download-panel" id="downloadPanel" hidden><div class="download-panel-head"><strong>Sťahovania</strong><div><button id="clearDownloads" title="Vymazať históriu sťahovaní">Vymazať</button><button id="closeDownload" aria-label="Zavrieť">×</button></div></div><div class="download-list" id="downloadList"></div><button class="open-downloads" id="openDownloads">Otvoriť priečinok Downloads</button></div>
   <div class="security-panel" id="securityPanel" hidden><div class="security-panel-head"><span class="security-check">✓</span><div><strong id="securityTitle">Pripojenie je zabezpečené</strong><small>Linsoft Browser</small></div><button id="closeSecurity" aria-label="Zavrieť">×</button></div><div class="ip-row"><span>Verejná IP adresa</span><strong id="publicIp">Načítavam...</strong></div><div class="ip-row"><span>Sieť / krajina</span><strong id="publicNetwork">Načítavam...</strong></div><small class="ip-note" id="ipNote">Údaj sa načíta iba po kliknutí. Poskytovateľ: ipapi.co.</small></div>

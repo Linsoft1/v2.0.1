@@ -258,6 +258,24 @@ body.light-theme { --chrome:#f4f7fa; --chrome-deep:#e9eef3; --surface:#fff; --su
 .start-form { max-width: 760px; }
 .start-search { height: 62px; border-radius: 16px; background: rgba(12,25,38,.9); }
 .start-form > button { height: 50px; min-width: 110px; border-radius: 12px; }
+
+.update-notice { position: fixed; top: 174px; right: 18px; z-index: 60; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 10px; width: min(390px, calc(100vw - 36px)); padding: 14px; border: 1px solid var(--line-bright); border-radius: 12px; color: var(--ink); background: rgba(13, 25, 37, .97); box-shadow: 0 16px 44px rgba(0,0,0,.38), 0 0 24px rgba(123,179,255,.12); backdrop-filter: blur(16px); animation: update-notice-in .2s ease-out both; }
+.update-notice[hidden] { display: none; }
+.update-notice-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: #09221b; background: var(--green); font-size: 21px; font-weight: 800; }
+.update-notice-copy { min-width: 0; align-self: center; }
+.update-notice-copy strong { display: block; font-size: 13px; }
+.update-notice-copy p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.update-progress { height: 4px; margin-top: 9px; overflow: hidden; border-radius: 4px; background: rgba(154,172,191,.2); }
+.update-progress i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--green); transition: width .2s ease; }
+.update-notice-actions { grid-column: 2; display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.update-notice-actions button { min-height: 30px; padding: 0 10px; border-radius: 7px; font-size: 11px; }
+.update-notice-primary { border: 0; color: #071b14; background: var(--green); font-weight: 700; }
+.update-notice-primary:hover:not(:disabled) { background: #91f0c7; }
+.update-notice-primary:disabled { opacity: .65; cursor: default; }
+.update-notice-dismiss { border: 1px solid var(--line); color: var(--muted); background: transparent; }
+.update-notice-dismiss:hover { color: var(--ink); background: var(--surface-raised); }
+@keyframes update-notice-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+@media (max-width: 800px) { .update-notice { top: 138px; right: 10px; width: min(390px, calc(100vw - 20px)); } }
 .quick { margin-top: 30px; }
 .quick button { min-width: 92px; justify-content: center; border-radius: 10px; background: rgba(21,39,54,.85); }
 .quick button { font-weight:700; }.quick button span { color:var(--muted); font-weight:400; }

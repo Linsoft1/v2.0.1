@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { autoUpdater = null; }
+let updateState = { status: 'idle' };
 const isLinux = process.platform === 'linux';
 const writableDataPath = path.join(app.getPath('appData'), 'Linsoft Browser');
 app.setPath('userData', writableDataPath);
@@ -15,6 +16,32 @@ const passwordVaultPath = path.join(writableDataPath, 'password-vault.json');
 const downloadHistoryPath = path.join(writableDataPath, 'download-history.json');
 /** @type {Set<import('electron').BrowserWindow>} */
 const browserWindows = new Set();
+
+function publishUpdateState(state) {
+  updateState = state;
+  for (const window of browserWindows) {
+    if (!window.isDestroyed()) window.webContents.send('update-state', state);
+  }
+}
+
+function setupAutoUpdater() {
+  if (!autoUpdater || !app.isPackaged || process.platform !== 'win32') return;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-available', (info) => publishUpdateState({ status: 'available', version: info.version }));
+  autoUpdater.on('update-not-available', (info) => publishUpdateState({ status: 'latest', version: info.version }));
+  autoUpdater.on('download-progress', (progress) => publishUpdateState({ status: 'downloading', version: updateState.version, percent: Math.round(progress.percent || 0) }));
+  autoUpdater.on('update-downloaded', (info) => publishUpdateState({ status: 'downloaded', version: info.version }));
+  autoUpdater.on('error', (error) => console.warn('Linsoft Browser update check failed:', error.message));
+
+  const checkForUpdates = () => {
+    if (!browserPreferences.autoUpdateCheck) return;
+    if (['downloading', 'downloaded'].includes(updateState.status)) return;
+    autoUpdater.checkForUpdates().catch((error) => console.warn('Linsoft Browser update check failed:', error.message));
+  };
+  setTimeout(checkForUpdates, 8000);
+  setInterval(checkForUpdates, 6 * 60 * 60 * 1000);
+}
 
 /** @type {import('electron').BrowserWindow | null} */
 let mainWindow = null;
@@ -62,7 +89,8 @@ const browserPreferences = {
   camera: false,
   microphone: false,
   webNotifications: false,
-  clearExit: false
+  clearExit: false,
+  autoUpdateCheck: true
 };
 let clearingExitData = false;
 
@@ -420,9 +448,11 @@ ipcMain.handle('download-clear', () => {
 });
 ipcMain.on('set-browser-preferences', (_event, preferences) => {
   if (!preferences || typeof preferences !== 'object') return;
+  const enablingAutoUpdates = browserPreferences.autoUpdateCheck === false && preferences.autoUpdateCheck === true;
   for (const key of Object.keys(browserPreferences)) {
     if (typeof preferences[key] === typeof browserPreferences[key]) browserPreferences[key] = preferences[key];
   }
+  if (enablingAutoUpdates && autoUpdater && app.isPackaged && process.platform === 'win32' && !['downloading', 'downloaded'].includes(updateState.status)) autoUpdater.checkForUpdates().catch(() => {});
 });
 ipcMain.handle('clear-cache', async () => {
   try { await session.defaultSession.clearCache(); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
@@ -457,6 +487,7 @@ ipcMain.handle('capture-page-to-clipboard', async (_event, webContentsId) => {
   try { clipboard.writeImage(nativeImage.createFromBitmap((await contents.capturePage()).toBitmap())); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
 });
 ipcMain.handle('app-version', () => app.getVersion());
+ipcMain.handle('update-state', () => updateState);
 ipcMain.handle('update-check', async () => {
   if (!autoUpdater || !app.isPackaged) return { ok: false, status: 'unavailable', message: 'Aktualizácie sú dostupné iba v nainštalovanej verzii.' };
   try { autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; const result = await autoUpdater.checkForUpdates(); return { ok: true, status: result?.updateInfo?.version && result.updateInfo.version !== app.getVersion() ? 'available' : 'latest', version: result?.updateInfo?.version || app.getVersion() }; } catch (error) { return { ok: false, status: 'error', message: error instanceof Error ? error.message : String(error) }; }
@@ -690,6 +721,7 @@ app.whenReady().then(() => {
       sendUpdate(status, received, total);
     });
   });
+  setupAutoUpdater();
   if (hasLock) createWindow(startupUrlFromArgs(process.argv));
   app.on('activate', () => {
     if (hasLock && BrowserWindow.getAllWindows().length === 0) createWindow('linsoft://start');
