@@ -76,7 +76,6 @@ jobs:
           node tools/build-deb.cjs
           node tools/verify-deb.cjs
           mkdir -p release-staging
-          cp dist/*.deb release-staging/
           cp dist-debian-final/*.deb release-staging/
 
       - name: Upload Debian release files
