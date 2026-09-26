@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'none'; img-src 'self' data:;">
+  <title>Linsoft App Centrum</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="#"><span class="brand-mark">L</span><span>Linsoft <b>App Centrum</b></span></a>
+      <div class="topbar-actions"><span class="online-status"><i></i> Kompatibilné weby</span><a class="ghost-button browser-link" href="linsoft://centrum">Otvoriť v Linsoft Browseri</a><button class="ghost-button" id="themeButton" type="button">Svetlý vzhľad</button><button class="ghost-button" id="refreshButton" type="button">Obnoviť</button></div>
+    </header>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">LINSOFT / WORKSPACE</p>
+        <h1>Tvoje weby.<br><em>Na jednom mieste.</em></h1>
+        <p class="hero-copy">Rýchly priestor pre webové aplikácie, ktoré používaš každý deň.</p>
+      </div>
+      <div class="hero-orbit"><span>APP</span><i></i><b></b></div>
+    </section>
+    <section class="workspace-head">
+      <div><p class="eyebrow">TVOJ PRACOVNÝ PRIESTOR</p><h2>Nainštalované aplikácie <span id="appCount">0</span></h2></div>
+      <div class="workspace-actions"><button class="ghost-button" id="exportButton" type="button">Exportovať</button><button class="ghost-button" id="importButton" type="button">Importovať</button><button class="primary-button" id="addButton" type="button">+ Pridať web</button><input id="importInput" type="file" accept="application/json" hidden></div>
+    </section>
+    <section class="app-grid" id="appGrid"></section>
+    <section class="empty-state" id="emptyState" hidden><div class="empty-icon">⌘</div><h3>Pridaj svoju prvú aplikáciu</h3><p>Ulož si Gmail, Figma, YouTube alebo ľubovoľný web, ktorý chceš mať poruke.</p><button class="primary-button" id="emptyAddButton" type="button">Pridať webovú aplikáciu</button></section>
+    <section class="catalog-section"><div class="catalog-head"><div><p class="eyebrow">KOMPATIBILNÉ S CHROME AJ FIREFOXOM</p><h2>Katalóg webových aplikácií</h2><p class="catalog-note">Vyber aplikáciu alebo online hru a pridaj ju do svojho pracovného priestoru.</p></div><input class="catalog-search" id="catalogSearch" type="search" placeholder="Hľadať aplikáciu alebo hru..."></div><div class="catalog-filters" id="catalogFilters"><button class="filter active" data-category="all" type="button">Všetky</button><button class="filter" data-category="work" type="button">Práca</button><button class="filter" data-category="creative" type="button">Tvorba</button><button class="filter" data-category="social" type="button">Komunikácia</button><button class="filter" data-category="media" type="button">Médiá</button><button class="filter" data-category="games" type="button">Hry</button></div><p class="catalog-status" id="catalogStatus" role="status" aria-live="polite"></p><div class="catalog-grid" id="catalogGrid"></div></section>
+    <footer><span>Linsoft Browser</span><span>Lokálne uložené v tomto zariadení</span></footer>
+  </main>
+  <div class="dialog-backdrop" id="dialog" hidden><form class="dialog" id="appForm"><button class="dialog-close" id="closeDialog" type="button" aria-label="Zavrieť">×</button><p class="eyebrow">NOVÁ APLIKÁCIA</p><h2>Pridaj web do centra</h2><label>Názov aplikácie<input id="nameInput" required maxlength="60" placeholder="napr. Figma"></label><label>Webová adresa<input id="urlInput" type="url" required placeholder="https://example.com"></label><div class="dialog-actions"><button class="ghost-button" id="cancelButton" type="button">Zrušiť</button><button class="primary-button" type="submit">Pridať aplikáciu</button></div></form></div>
+  <script src="app.js"></script>
+</body>
+</html>

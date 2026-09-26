@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+	<defs>
+		<linearGradient id="shell" x1="30" y1="18" x2="224" y2="240" gradientUnits="userSpaceOnUse">
+			<stop stop-color="#b9dcff"/><stop offset=".34" stop-color="#5799ed"/><stop offset="1" stop-color="#16458f"/>
+		</linearGradient>
+		<linearGradient id="glass" x1="128" y1="12" x2="128" y2="132" gradientUnits="userSpaceOnUse">
+			<stop stop-color="#fff" stop-opacity=".48"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+		</linearGradient>
+		<filter id="depth" x="-30%" y="-30%" width="160%" height="160%">
+			<feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#02070d" flood-opacity=".55"/>
+		</filter>
+	</defs>
+	<rect x="18" y="18" width="220" height="220" rx="62" fill="#050b12"/>
+	<rect x="11" y="8" width="220" height="220" rx="62" fill="url(#shell)" filter="url(#depth)"/>
+	<path d="M11 70C56 35 119 19 178 28c21 3 39 8 53 15v-35H11v62Z" fill="url(#glass)"/>
+	<path d="M66 55h35v101h79v35H66V55Z" fill="#fff"/>
+	<path d="M101 156h79v35h-79v-35Z" fill="#d7eaff"/>
+	<path d="M101 55h35v101h-35V55Z" fill="#edf6ff" opacity=".7"/>
+	<circle cx="190" cy="61" r="22" fill="#07161b" opacity=".28"/>
+	<circle cx="190" cy="58" r="17" fill="#62e0a7"/>
+	<circle cx="184" cy="52" r="5" fill="#fff" opacity=".75"/>
+</svg>

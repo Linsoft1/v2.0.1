@@ -1,0 +1,58 @@
+name: Build and publish Linsoft Browser
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Windows build tools
+        run: sudo apt-get update && sudo apt-get install -y wine64
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Windows installer and Debian package
+        run: |
+          npm run build:installer
+          npm run build:linux
+          rm -rf dist-debian-final
+          mkdir -p dist-debian-final
+          cp -R dist/linux-unpacked dist-debian-final/linux-unpacked
+          node tools/build-deb.cjs
+          node tools/verify-deb.cjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Show generated artifacts
+        run: find dist -maxdepth 1 -type f -printf '%f\n' 2>/dev/null || true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.deb
+            dist/*.yml
+            dist/*.blockmap
+            dist-debian-final/*.deb
+          generate_release_notes: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

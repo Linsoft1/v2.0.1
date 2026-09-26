@@ -1,0 +1,115 @@
+{
+  "name": "linsoft-browser",
+  "version": "2.0.2",
+  "description": "Linsoft Browser 2.0 — cross-platform web browser for Windows and Debian Linux",
+  "main": "main.cjs",
+  "productName": "Linsoft Browser",
+  "author": {
+    "name": "Martin Pastorek",
+    "email": "support@linsoft.local"
+  },
+  "homepage": "https://linsoft.local",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build:win": "electron-builder --win portable",
+    "build:portable": "electron-builder --win portable",
+    "build:installer": "electron-builder --win nsis --config.win.signAndEditExecutable=false",
+    "build:linux": "electron-builder --linux deb",
+    "build:deb": "electron-builder --linux deb",
+    "build:all": "npm run build:portable && npm run build:linux",
+    "test": "node tools/validate-project.cjs",
+    "make-icon": "node scripts/make-icon.cjs"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8",
+    "eslint": "^10.11.0",
+    "png-to-ico": "^2.1.8",
+    "rcedit": "^5.0.2",
+    "sharp": "^0.35.4"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "build": {
+    "appId": "sk.linsoft.browser",
+    "productName": "Linsoft Browser",
+    "files": [
+      "index.html",
+      "styles.css",
+      "app.js",
+      "main.cjs",
+      "preload.cjs",
+      "package.json",
+      "Linsoft centrum app/**/*",
+      "assets/**/*"
+    ],
+    "asarUnpack": [
+      "assets/linsoft-icon.ico"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "Linsoft-Browser-Setup-${version}.${ext}",
+      "signAndEditExecutable": false,
+      "icon": "assets/linsoft-icon.ico"
+    },
+    "afterPack": "scripts/set-exe-icon.cjs",
+    "fileAssociations": [
+      {
+        "ext": "html",
+        "name": "HTML dokument",
+        "description": "Otvoriť v Linsoft Browser"
+      },
+      {
+        "ext": "htm",
+        "name": "HTML dokument",
+        "description": "Otvoriť v Linsoft Browser"
+      }
+    ],
+    "protocols": [
+      {
+        "name": "Web URL",
+        "schemes": [
+          "http",
+          "https"
+        ]
+      },
+      {
+        "name": "Linsoft App Installer",
+        "schemes": [
+          "linsoft"
+        ]
+      }
+    ],
+    "linux": {
+      "target": [
+        "deb"
+      ],
+      "category": "Network;WebBrowser",
+      "icon": "assets/linsoft-icon-256.png",
+      "artifactName": "Linsoft-Browser-${version}-${arch}.${ext}",
+      "executableName": "linsoft-browser",
+      "synopsis": "Moderný webový prehliadač Linsoft",
+      "description": "Linsoft Browser je moderný desktopový webový prehliadač s kartami, záložkami, sťahovaním a podporou OpenVPN."
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": false,
+      "installerIcon": "assets/linsoft-icon.ico",
+      "uninstallerIcon": "assets/linsoft-icon.ico",
+      "include": "packaging/installer.nsh"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Linsoft1",
+      "repo": "v2.0.1",
+      "private": false
+    }
+  },
+  "allowScripts": {
+    "electron@31.7.7": true
+  }
+}

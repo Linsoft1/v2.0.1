@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Linsoft Browser
+Comment=Moderný webový prehliadač Linsoft
+Exec=/opt/Linsoft Browser/linsoft-browser %U
+Icon=linsoft-browser
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=Linsoft Browser

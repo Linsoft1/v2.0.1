@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src https: http:; frame-src https: http: file:; font-src 'self' data:;">
+  <title>Linsoft Browser</title>
+  <link rel="icon" href="assets/linsoft-icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="browser-window">
+    <header class="tabs-bar">
+      <button class="tab active managed-tab" draggable="true" data-tab-id="1"><span class="tab-logo">L</span><span id="tabTitle">Nová karta</span><span class="tab-audio" aria-label="Stlmiť kartu" title="Stlmiť kartu"></span><span class="tab-loading" aria-hidden="true"></span><span class="tab-close" title="Zatvoriť kartu">×</span></button>
+      <button id="newTab" class="new-tab" type="button" aria-label="Nová karta" title="Nová karta">+</button>
+      <div class="window-buttons">
+        <button id="minimizeWindow" aria-label="Minimalizovať" title="Minimalizovať okno">−</button>
+        <button id="maximizeWindow" aria-label="Maximalizovať" title="Maximalizovať okno">□</button>
+        <button id="fullscreenWindow" aria-label="Celá obrazovka" title="Celá obrazovka">▣</button>
+        <button id="pinWindow" aria-label="Vždy navrchu" title="Pripnúť okno navrch">📌</button>
+        <button id="closeWindow" aria-label="Zavrieť" title="Zavrieť okno">×</button>
+      </div>
+    </header>
+    <nav class="toolbar" aria-label="Navigácia browsera">
+      <button id="backButton" title="Späť">‹</button><button id="forwardButton" title="Dopredu">›</button><button id="reloadButton" title="Obnoviť">↻</button><button id="homeButton" title="Domov">⌂</button>
+      <form id="addressForm" class="address-bar"><button type="button" class="secure" id="securityButton" aria-label="Informácie o pripojení" title="Informácie o pripojení">●</button><input id="addressInput" value="linsoft://start" aria-label="Adresný riadok" /><button type="button" id="clearAddress">×</button></form>
+      <button id="installAppButton" class="install-app-button" title="Nainštalovať webovú aplikáciu" aria-label="Nainštalovať webovú aplikáciu" hidden>⊞</button><button id="bookmarkButton" title="Záložka">☆</button><button id="adBlockButton" title="AdBlock zapnutý" aria-label="Zapnúť alebo vypnúť AdBlock">🛡</button><button id="findPageButton" title="Hľadať na stránke (Ctrl+F)" aria-label="Hľadať na stránke">⌕</button><button id="zoomOutButton" title="Oddialiť (Ctrl+-)" aria-label="Oddialiť">−</button><button id="zoomInButton" title="Priblížiť (Ctrl++)" aria-label="Priblížiť">＋</button><button id="printButton" title="Tlačiť stránku (Ctrl+P)" aria-label="Tlačiť stránku">▣</button><button id="savePdfButton" title="Uložiť stránku ako PDF" aria-label="Uložiť stránku ako PDF">PDF</button><button id="capturePageButton" title="Snímka webu (Ctrl+Shift+S)" aria-label="Snímka webu">▧</button><button id="downloadsButton" title="Sťahovania" aria-label="Sťahovania">⇩</button><button id="menuButton" title="Menu">⋮</button>
+    </nav>
+    <nav class="bookmarks" id="bookmarksBar" hidden><span></span></nav>
+    <div class="loading-track" id="loadingTrack"><i></i></div>
+    <section id="content" class="content"></section>
+  </main>
+  <div class="browser-menu" id="browserMenu" hidden><div class="menu-section-label">UPRAVIŤ</div><button id="menuUndo">↶ Späť <span>Ctrl+Z</span></button><button id="menuRedo">↷ Znova <span>Ctrl+Y</span></button><button id="menuCut">✂ Vystrihnúť <span>Ctrl+X</span></button><button id="menuCopy">▣ Kopírovať <span>Ctrl+C</span></button><button id="menuPaste">▤ Vložiť <span>Ctrl+V</span></button><button id="menuSelectAll">▧ Vybrať všetko <span>Ctrl+A</span></button><div class="menu-divider"></div><div class="menu-section-label">APLIKÁCIE</div><button data-app-url="https://www.google.com">G <span>Google</span></button><button data-app-url="https://www.youtube.com">▶ <span>YouTube</span></button><button data-app-url="https://github.com">⌘ <span>GitHub</span></button><button data-app-url="https://news.google.com">N <span>Správy</span></button><div class="menu-divider"></div><button id="menuAppCenter">▦ Linsoft App Centrum</button><button id="toggleBookmarksBar">☆ Zobraziť lištu záložiek</button><button id="menuInstallApp">⊞ Nainštalovať webovú aplikáciu</button><button id="menuNewTab">＋ Nová karta</button><button id="menuSearchTabs">⌕ Vyhľadať kartu</button><button id="menuBookmarks">★ Správca záložiek</button><button id="menuHistory">◷ História</button><button id="menuSettings">⚙ Nastavenia</button><button id="menuDownloads">⇩ Otvoriť Downloads</button><button id="menuClearData">⌫ Vymazať údaje</button><button id="menuAbout">ⓘ O Linsoft Browser</button></div>
+  <div class="download-panel" id="downloadPanel" hidden><div class="download-panel-head"><strong>Sťahovania</strong><div><button id="clearDownloads" title="Vymazať históriu sťahovaní">Vymazať</button><button id="closeDownload" aria-label="Zavrieť">×</button></div></div><div class="download-list" id="downloadList"></div><button class="open-downloads" id="openDownloads">Otvoriť priečinok Downloads</button></div>
+  <div class="security-panel" id="securityPanel" hidden><div class="security-panel-head"><span class="security-check">✓</span><div><strong id="securityTitle">Pripojenie je zabezpečené</strong><small>Linsoft Browser</small></div><button id="closeSecurity" aria-label="Zavrieť">×</button></div><div class="ip-row"><span>Verejná IP adresa</span><strong id="publicIp">Načítavam...</strong></div><div class="ip-row"><span>Sieť / krajina</span><strong id="publicNetwork">Načítavam...</strong></div><small class="ip-note" id="ipNote">Údaj sa načíta iba po kliknutí. Poskytovateľ: ipapi.co.</small></div>
+  <div class="install-dialog-backdrop" id="installDialog" hidden><div class="install-dialog"><div class="install-dialog-icon">⊞</div><div><p class="settings-eyebrow">WEBOVÁ APLIKÁCIA</p><h2 id="installDialogTitle">Nainštalovať aplikáciu</h2><p id="installDialogUrl"></p></div><button class="install-dialog-close" id="cancelInstall" aria-label="Zrušiť">×</button><div class="install-dialog-actions"><button class="settings-reset" id="cancelInstallButton">Zrušiť</button><button class="save-settings" id="confirmInstall">Nainštalovať</button></div></div></div>
+  <script src="app.js"></script>
+</body>
+</html>
