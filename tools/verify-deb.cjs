@@ -3,7 +3,7 @@ const path = require('path');
 const zlib = require('zlib');
 const version = require(path.resolve(__dirname, '..', 'package.json')).version;
 
-const file = path.resolve(__dirname, '..', 'dist-debian-final', `Linsoft-Browser-${version}-amd64.deb`);
+const file = process.env.LINSOFT_DEB_FILE ? path.resolve(process.env.LINSOFT_DEB_FILE) : path.resolve(__dirname, '..', 'dist-debian-final', `Linsoft-Browser-${version}-amd64.deb`);
 const archive = fs.readFileSync(file);
 if (archive.subarray(0, 8).toString() !== '!<arch>\n') throw new Error('missing ar magic');
 let offset = 8;

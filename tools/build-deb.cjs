@@ -5,8 +5,8 @@ const crypto = require('crypto');
 
 const root = path.resolve(__dirname, '..');
 const version = require(path.join(root, 'package.json')).version;
-const appDir = path.join(root, 'dist-debian-final', 'linux-unpacked');
-const output = path.join(root, 'dist-debian-final', `Linsoft-Browser-${version}-amd64.deb`);
+const appDir = process.env.LINSOFT_DEB_APP_DIR ? path.resolve(process.env.LINSOFT_DEB_APP_DIR) : path.join(root, 'dist-debian-final', 'linux-unpacked');
+const output = process.env.LINSOFT_DEB_OUTPUT ? path.resolve(process.env.LINSOFT_DEB_OUTPUT) : path.join(root, 'dist-debian-final', `Linsoft-Browser-${version}-amd64.deb`);
 const desktopSource = path.join(root, 'packaging', 'linsoft-browser.desktop');
 const iconSource = path.join(root, 'assets', 'linsoft-icon-256.png');
 

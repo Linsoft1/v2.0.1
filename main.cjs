@@ -24,6 +24,15 @@ function publishUpdateState(state) {
   }
 }
 
+function updateFailure(error) {
+  const detail = error instanceof Error ? error.message : String(error);
+  if (/Unable to find latest version on GitHub|ensure a production release exists|releases\/latest/i.test(detail)) {
+    return { ok: false, status: 'unavailable', message: 'Zatiaľ nie je zverejnené stabilné vydanie aktualizácie. Skús to znova neskôr.' };
+  }
+  if (detail.length > 220) return { ok: false, status: 'error', message: 'Kontrola aktualizácií zlyhala. Skús to znova neskôr.' };
+  return { ok: false, status: 'error', message: detail };
+}
+
 function setupAutoUpdater() {
   if (!autoUpdater || !app.isPackaged || process.platform !== 'win32') return;
   autoUpdater.autoDownload = false;
@@ -490,9 +499,9 @@ ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('update-state', () => updateState);
 ipcMain.handle('update-check', async () => {
   if (!autoUpdater || !app.isPackaged) return { ok: false, status: 'unavailable', message: 'Aktualizácie sú dostupné iba v nainštalovanej verzii.' };
-  try { autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; const result = await autoUpdater.checkForUpdates(); return { ok: true, status: result?.updateInfo?.version && result.updateInfo.version !== app.getVersion() ? 'available' : 'latest', version: result?.updateInfo?.version || app.getVersion() }; } catch (error) { return { ok: false, status: 'error', message: error instanceof Error ? error.message : String(error) }; }
+  try { autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; const result = await autoUpdater.checkForUpdates(); return { ok: true, status: result?.updateInfo?.version && result.updateInfo.version !== app.getVersion() ? 'available' : 'latest', version: result?.updateInfo?.version || app.getVersion() }; } catch (error) { return updateFailure(error); }
 });
-ipcMain.handle('update-download', async () => { if (!autoUpdater) return { ok: false }; try { await autoUpdater.downloadUpdate(); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; } });
+ipcMain.handle('update-download', async () => { if (!autoUpdater) return { ok: false }; try { await autoUpdater.downloadUpdate(); return { ok: true }; } catch (error) { return updateFailure(error); } });
 ipcMain.on('update-install', () => { if (autoUpdater) autoUpdater.quitAndInstall(); });
 ipcMain.handle('password-list', () => passwordVault.map(({ id, hostname, username, createdAt, updatedAt }) => ({ id, hostname, username, createdAt, updatedAt })));
 ipcMain.handle('password-get', (_event, id) => { const entry = passwordVault.find((item) => item.id === id); return entry ? { hostname: entry.hostname, username: entry.username, password: entry.password } : null; });

@@ -26,6 +26,8 @@ jobs:
 
       - name: Build Windows installer
         run: npm run build:installer
+        env:
+          DEBUG: electron-builder
 
       - name: Upload Windows release files
         uses: actions/upload-artifact@v4
@@ -51,9 +53,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Debian package
+      - name: Build Linux app bundle
+        run: npx electron-builder --linux dir
+
+      - name: Build and verify Linsoft Debian package
         run: |
-          npm run build:linux
           rm -rf dist-debian-final
           mkdir -p dist-debian-final
           cp -R dist/linux-unpacked dist-debian-final/linux-unpacked
