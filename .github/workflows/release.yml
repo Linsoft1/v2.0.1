@@ -25,9 +25,21 @@ jobs:
         run: npm ci
 
       - name: Build Windows installer
-        run: npm run build:installer
+        shell: pwsh
+        run: |
+          npm run build:installer 2>&1 | Tee-Object -FilePath build-windows.log
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) {
+            $details = Select-String -Path build-windows.log -Pattern '(?i)(error|failed|exception|ENOENT|EPERM|signtool)' | Select-Object -Last 12
+            if ($details) {
+              $summary = ($details | ForEach-Object { $_.Line }) -join ' | '
+              Write-Output "::error title=Windows installer build::$summary"
+            }
+            exit $buildExitCode
+          }
         env:
           DEBUG: electron-builder
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload Windows release files
         uses: actions/upload-artifact@v4

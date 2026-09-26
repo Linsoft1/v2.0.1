@@ -1,13 +1,13 @@
 # Linsoft Browser Release Checklist
 
-## Current Release: 2.0.6
+## Current Release: 2.0.7
 
 - Electron is upgraded to `44.4.5` and Electron Builder to `26.15.3` to address the audited advisories.
 - `npm ci` succeeds locally with the updated lockfile.
 - `npm test` passes locally.
 - `npm audit` reports zero vulnerabilities.
 - Windows installer `dist/Linsoft-Browser-Setup-2.0.5.exe` builds locally.
-- Publish tag `v2.0.6`; Linux CI builds an unpacked bundle and uses the tested custom Debian packer, avoiding an external FPM dependency. Windows CI emits electron-builder debug output.
+- Publish tag `v2.0.7`; Linux CI builds an unpacked bundle and uses the tested custom Debian packer, avoiding an external FPM dependency. Windows CI disables certificate auto-discovery and surfaces build failure details in check annotations.
 - Wait for both build jobs and the release upload to complete before calling this release complete.
 
 ## Release Gate
