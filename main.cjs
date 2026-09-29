@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, WebContentsView, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const os = require('node:os');
@@ -6,9 +6,11 @@ const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
 const { createPermissionCheckHandler, createPermissionRequestHandler } = require('./lib/permission-handlers.cjs');
+const { NativeTabManager } = require('./lib/native-tab-manager.cjs');
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { autoUpdater = null; }
 let updateState = { status: 'idle' };
+const experimentalNativeTabs = process.env.LINSOFT_NATIVE_TABS === '1';
 const isLinux = process.platform === 'linux';
 const writableDataPath = process.env.LINSOFT_BROWSER_USER_DATA || path.join(app.getPath('appData'), 'Linsoft Browser');
 app.setPath('userData', writableDataPath);
@@ -349,6 +351,23 @@ function supportedNavigationUrl(value) {
   } catch { return false; }
 }
 
+function ownedWebContentsForEvent(event, webContentsId) {
+  if (!Number.isInteger(webContentsId)) return null;
+  const contents = require('electron').webContents.fromId(webContentsId);
+  if (!contents) return null;
+  if (contents === event.sender || contents.hostWebContents === event.sender) return contents;
+  for (const window of browserWindows) {
+    if (window.isDestroyed() || window.webContents !== event.sender) continue;
+    const nativeView = [...(window.__nativeTabs?.views?.values() || [])].find((view) => view.webContents === contents);
+    if (nativeView) return contents;
+  }
+  return null;
+}
+
+function editTargetForEvent(event, webContentsId) {
+  return ownedWebContentsForEvent(event, webContentsId) || event.sender.__lastContextWebContents || null;
+}
+
 function dispatchExternalUrl(window, url) {
   if (!window || !url) return;
   if (/^linsoft:\/\/install\?/i.test(url)) {
@@ -406,11 +425,56 @@ function configureGuestSession(guestSession) {
   });
 }
 
+function configureNativeTabContents(window, tabId, contents) {
+  contents.on('enter-html-full-screen', () => { if (!window.isDestroyed()) { window.setFullScreen(true); window.webContents.send('webview-fullscreen', true); } });
+  contents.on('leave-html-full-screen', () => { if (!window.isDestroyed()) { window.setFullScreen(false); window.webContents.send('webview-fullscreen', false); } });
+  contents.on('before-input-event', (inputEvent, input) => {
+    const key = String(input.key || '').toLowerCase();
+    if (input.type === 'keyDown' && key === 'f' && !input.control && !input.meta && !input.alt && /youtube\.com|youtu\.be/i.test(contents.getURL?.() || '')) {
+      inputEvent.preventDefault();
+      window.setFullScreen(!window.isFullScreen());
+      return;
+    }
+    if (input.type === 'mouseDown' && input.button === 'left') {
+      window.webContents.send('dismiss-webview-overlay');
+      return;
+    }
+    if (input.type === 'mouseDown' && (input.button === 'back' || input.button === 'forward')) {
+      inputEvent.preventDefault();
+      window.webContents.send('browser-shortcut', { key: input.button === 'back' ? 'arrowleft' : 'arrowright', shift: false });
+      return;
+    }
+    if (input.type === 'keyDown' && key === 'escape') {
+      inputEvent.preventDefault();
+      window.webContents.send('browser-shortcut', { key, shift: false });
+      return;
+    }
+    if (input.type !== 'keyDown' || (!(input.control || input.meta) && !input.alt)) return;
+    if (!['l', 'k', 'r', 't', 'w', 'c', 'x', 'v', 'a', 'z', 'y', 'f', 'p', '0', '-', '=', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'tab', 'arrowleft', 'arrowright'].includes(key) && !(key === 'i' && input.shift) && !(key === 't' && input.shift) && !(key === 's' && input.shift)) return;
+    if (input.alt && !input.control && !input.meta && !['arrowleft', 'arrowright'].includes(key)) return;
+    inputEvent.preventDefault();
+    window.webContents.send('browser-shortcut', { key, shift: Boolean(input.shift) });
+  });
+  contents.on('context-menu', (_event, params) => {
+    window.__lastContextWebContents = contents;
+    window.__lastContextPoint = { x: params.x || 0, y: params.y || 0 };
+    window.webContents.send('webview-context-menu', { tabId, x: params.x || 0, y: params.y || 0, selectionText: params.selectionText || '', linkURL: params.linkURL || '', srcURL: params.srcURL || '', isEditable: Boolean(params.isEditable), mediaType: params.mediaType || '' });
+  });
+  contents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+  contents.on('will-navigate', (event, url) => { if (!supportedNavigationUrl(url)) event.preventDefault(); });
+  contents.setWindowOpenHandler(({ url, disposition }) => {
+    if (!supportedWebUrl(url)) return { action: 'deny' };
+    window.webContents.send(disposition === 'new-window' ? 'open-link-in-window' : 'open-link-in-tab', url);
+    return { action: 'deny' };
+  });
+}
+
 function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
   const safeInitialUrl = /^linsoft:\/\//i.test(initialUrl) || /^file:\/\//i.test(initialUrl);
   const normalizedInitialUrl = initialUrl;
   const windowState = guest ? {} : getVisibleWindowState(savedWindowState);
   const partition = guest ? `guest-${crypto.randomUUID()}` : '';
+  const useNativeTabs = experimentalNativeTabs;
   if (guest) configureGuestSession(session.fromPartition(partition));
   const window = new BrowserWindow({
     x: windowState.x,
@@ -431,18 +495,28 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true,
+      webviewTag: !useNativeTabs,
       sandbox: true,
       partition: partition || undefined
     }
   });
   window.__guest = guest;
+  window.__nativeTabsEnabled = useNativeTabs;
+  if (useNativeTabs) {
+    window.__nativeTabs = new NativeTabManager({
+      window,
+      WebContentsView,
+      createWebPreferences: () => ({ contextIsolation: true, nodeIntegration: false, sandbox: true, partition: partition || undefined }),
+      configureWebContents: (tabId, contents) => configureNativeTabContents(window, tabId, contents),
+      onEvent: (tabId, type, data) => window.webContents.send('native-tab-event', { tabId, type, ...data })
+    });
+  }
 
   function isYoutubeCoreHost(hostname) {
     const host = String(hostname || '').toLowerCase();
     return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtubei.googleapis.com' || host.endsWith('.googlevideo.com') || host.endsWith('.ytimg.com') || host.endsWith('.ggpht.com');
   }
-  window.loadFile(path.join(__dirname, 'index.html'), { query: guest ? { guest: '1' } : undefined });
+  window.loadFile(path.join(__dirname, 'index.html'), { query: { ...(guest ? { guest: '1' } : {}), ...(useNativeTabs ? { nativeTabs: '1' } : {}) } });
   window.once('ready-to-show', () => {
     if (window.isMinimized()) window.restore();
     if (windowState.isMaximized) window.maximize();
@@ -478,6 +552,7 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
   });
   browserWindows.add(window);
   window.on('closed', () => {
+    window.__nativeTabs?.destroyAll();
     browserWindows.delete(window);
     if (mainWindow === window) mainWindow = browserWindows.values().next().value || null;
   });
@@ -577,7 +652,7 @@ ipcMain.handle('clear-cache', async () => {
   try { await session.defaultSession.clearCache(); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
 });
 ipcMain.handle('save-page-pdf', async (event, webContentsId) => {
-  const contents = Number.isInteger(webContentsId) ? require('electron').webContents.fromId(webContentsId) : null;
+  const contents = ownedWebContentsForEvent(event, webContentsId);
   if (!contents) return { ok: false, message: 'Stránka nie je pripravená na uloženie.' };
   try {
     const pdf = await contents.printToPDF({ printBackground: true, preferCSSPageSize: true });
@@ -589,7 +664,7 @@ ipcMain.handle('save-page-pdf', async (event, webContentsId) => {
   } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
 });
 ipcMain.handle('capture-page', async (event, webContentsId) => {
-  const contents = Number.isInteger(webContentsId) ? require('electron').webContents.fromId(webContentsId) : null;
+  const contents = ownedWebContentsForEvent(event, webContentsId);
   if (!contents) return { ok: false, message: 'Stránka nie je pripravená na snímku.' };
   try {
     const image = await contents.capturePage();
@@ -600,10 +675,74 @@ ipcMain.handle('capture-page', async (event, webContentsId) => {
     return { ok: true, filePath: result.filePath };
   } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
 });
-ipcMain.handle('capture-page-to-clipboard', async (_event, webContentsId) => {
-  const contents = Number.isInteger(webContentsId) ? require('electron').webContents.fromId(webContentsId) : null;
+ipcMain.handle('capture-page-to-clipboard', async (event, webContentsId) => {
+  const contents = ownedWebContentsForEvent(event, webContentsId);
   if (!contents) return { ok: false, message: 'Stránka nie je pripravená na snímku.' };
   try { clipboard.writeImage(nativeImage.createFromBitmap((await contents.capturePage()).toBitmap())); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
+});
+ipcMain.handle('edit-command', async (event, webContentsId, command) => {
+  const contents = editTargetForEvent(event, webContentsId);
+  const allowedCommands = new Set(['copy', 'cut', 'paste', 'selectAll', 'undo', 'redo']);
+  if (!contents || !allowedCommands.has(command)) return { ok: false, message: 'Úprava nie je dostupná na tejto stránke.' };
+  try {
+    if (command === 'paste') {
+      const text = String(clipboard.readText() || '');
+      const point = event.sender.__lastContextPoint;
+      if (point && typeof contents.executeJavaScript === 'function') {
+        const inserted = await contents.executeJavaScript(`(() => {
+          const target = document.elementFromPoint(${Number(point.x) || 0}, ${Number(point.y) || 0});
+          const field = target?.closest?.('input, textarea, [contenteditable="true"]') || (document.activeElement?.matches?.('input, textarea, [contenteditable="true"]') ? document.activeElement : null) || document.querySelector('textarea.gLFyf, input[name="q"], input[type="search"], textarea, input:not([type="hidden"])');
+          if (!field) return false;
+          field.focus();
+          if ('value' in field) {
+            const start = field.selectionStart ?? field.value.length;
+            const end = field.selectionEnd ?? start;
+            field.setRangeText(${JSON.stringify(text)}, start, end, 'end');
+            field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(text)} }));
+          } else document.execCommand('insertText', false, ${JSON.stringify(text)});
+          return true;
+        })()`, true);
+        if (inserted) return { ok: true };
+      }
+      contents.focus?.();
+      if (typeof contents.sendInputEvent === 'function') {
+        contents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: ['control'] });
+        contents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: ['control'] });
+        return { ok: true };
+      }
+      if (typeof contents.insertText === 'function') contents.insertText(text);
+      else if (typeof contents.paste === 'function') contents.paste();
+      else return { ok: false, message: 'Vloženie nie je dostupné na tejto stránke.' };
+      return { ok: true };
+    }
+    if (typeof contents[command] !== 'function') return { ok: false, message: 'Úprava nie je dostupná na tejto stránke.' };
+    contents[command]();
+    return { ok: true };
+  } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
+});
+ipcMain.handle('clipboard-read-text', () => clipboard.readText());
+ipcMain.handle('clipboard-write-text', (_event, value) => { clipboard.writeText(String(value || '')); return { ok: true }; });
+ipcMain.handle('clipboard-copy-selection', async (event) => {
+  const contents = event.sender.__lastContextWebContents;
+  if (!contents?.executeJavaScript) return { ok: false, message: 'Výber sa nepodarilo načítať.' };
+  try {
+    const text = await contents.executeJavaScript('String(window.getSelection?.()?.toString?.() || document.activeElement?.value?.slice(document.activeElement.selectionStart, document.activeElement.selectionEnd) || "")', true);
+    if (!String(text || '')) return { ok: false, message: 'Nie je označený žiadny text.' };
+    clipboard.writeText(String(text));
+    return { ok: true };
+  } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
+});
+ipcMain.handle('clipboard-write-image', async (_event, url) => {
+  if (!supportedWebUrl(url)) return { ok: false, message: 'Adresa obrázka nie je bezpečná.' };
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return { ok: false, message: `Obrázok sa nepodarilo načítať (${response.status}).` };
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const image = nativeImage.createFromBuffer(buffer);
+    if (image.isEmpty()) return { ok: false, message: 'Odpoveď neobsahuje platný obrázok.' };
+    clipboard.writeImage(image);
+    return { ok: true };
+  } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
 });
 ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('update-state', () => updateState);
@@ -655,9 +794,41 @@ ipcMain.handle('adblock-update-list', async () => {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 });
-ipcMain.on('open-browser-window', (_event, url) => { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); if (url) dispatchExternalUrl(mainWindow, url); } else if (hasLock) createWindow(url); });
+ipcMain.on('open-browser-window', (_event, url) => { if (!supportedWebUrl(url)) return; if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); dispatchExternalUrl(mainWindow, url); } else if (hasLock) createWindow(url); });
 ipcMain.on('open-detached-window', (_event, url) => { if (hasLock) createWindow(url || 'linsoft://start'); });
 ipcMain.on('open-guest-window', () => { if (hasLock) createWindow('linsoft://start', { guest: true }); });
+function nativeTabsForEvent(event) {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  return window?.__nativeTabsEnabled ? window.__nativeTabs : null;
+}
+ipcMain.handle('native-tabs-enabled', (event) => BrowserWindow.fromWebContents(event.sender)?.__nativeTabsEnabled === true);
+ipcMain.on('native-tab-layout', (event, bounds) => {
+  const manager = nativeTabsForEvent(event);
+  if (!manager || !bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) return;
+  manager.setBounds({ x: Math.max(0, Math.round(bounds.x)), y: Math.max(0, Math.round(bounds.y)), width: Math.max(1, Math.round(bounds.width)), height: Math.max(1, Math.round(bounds.height)) });
+});
+ipcMain.handle('native-tab-load', (event, { tabId, url } = {}) => {
+  const manager = nativeTabsForEvent(event);
+  if (!manager || !Number.isInteger(tabId) || !supportedWebUrl(url)) return { ok: false };
+  manager.load(tabId, url);
+  manager.activate(tabId);
+  return { ok: true };
+});
+ipcMain.handle('native-tab-activate', (event, tabId) => ({ ok: nativeTabsForEvent(event)?.activate(tabId) === true }));
+ipcMain.handle('native-tab-deactivate', (event) => { nativeTabsForEvent(event)?.deactivate(); return { ok: true }; });
+ipcMain.handle('native-tab-destroy', (event, tabId) => { nativeTabsForEvent(event)?.destroy(tabId); return { ok: true }; });
+ipcMain.handle('native-tab-command', async (event, { tabId, command, value } = {}) => {
+  const view = nativeTabsForEvent(event)?.views.get(tabId);
+  if (!view) return { ok: false };
+  const contents = view.webContents;
+  if (command === 'reload') contents.reload();
+  else if (command === 'back' && contents.canGoBack()) contents.goBack();
+  else if (command === 'forward' && contents.canGoForward()) contents.goForward();
+  else if (command === 'zoom' && Number.isFinite(value)) contents.setZoomFactor(value);
+  else if (['copy', 'cut', 'paste', 'selectAll', 'undo', 'redo'].includes(command) && typeof contents[command] === 'function') contents[command]();
+  else return { ok: false };
+  return { ok: true };
+});
 ipcMain.handle('install-web-app', async (_event, data) => {
   if (!data?.url || !supportedWebUrl(data.url)) return { ok: false, message: 'Neplatná webová adresa.' };
   let parsedUrl;
@@ -783,8 +954,19 @@ app.whenReady().then(() => {
     if (contents.getType() !== 'webview') return;
     contents.on('before-input-event', (inputEvent, input) => {
       const key = String(input.key || '').toLowerCase();
+      if (input.type === 'keyDown' && key === 'f' && !input.control && !input.meta && !input.alt && /youtube\.com|youtu\.be/i.test(contents.getURL?.() || '')) {
+        inputEvent.preventDefault();
+        const parent = BrowserWindow.fromWebContents(contents.hostWebContents);
+        if (parent && !parent.isDestroyed()) { const fullscreen = !parent.isFullScreen(); parent.setFullScreen(fullscreen); parent.webContents.send('webview-fullscreen', fullscreen); }
+        return;
+      }
       if (input.type === 'mouseDown' && input.button === 'left') {
         contents.hostWebContents?.send('dismiss-webview-overlay');
+        return;
+      }
+      if (input.type === 'mouseDown' && (input.button === 'back' || input.button === 'forward')) {
+        inputEvent.preventDefault();
+        contents.hostWebContents?.send('browser-shortcut', { key: input.button === 'back' ? 'arrowleft' : 'arrowright', shift: false });
         return;
       }
       if (input.type === 'keyDown' && key === 'escape') {
@@ -799,14 +981,18 @@ app.whenReady().then(() => {
       contents.hostWebContents?.send('browser-shortcut', { key, shift: Boolean(input.shift) });
     });
     contents.on('context-menu', (_event, params) => {
+      if (contents.hostWebContents) contents.hostWebContents.__lastContextWebContents = contents;
+      if (contents.hostWebContents) contents.hostWebContents.__lastContextPoint = { x: params.x || 0, y: params.y || 0 };
       contents.hostWebContents?.send('webview-context-menu', { x: params.x || 0, y: params.y || 0, selectionText: params.selectionText || '', linkURL: params.linkURL || '', srcURL: params.srcURL || '', isEditable: Boolean(params.isEditable), mediaType: params.mediaType || '' });
     });
     contents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
     contents.on('render-process-gone', (_event, details) => { contents.hostWebContents?.send('webview-process-gone', { reason: details.reason }); });
+    contents.on('enter-html-full-screen', () => { const parent = BrowserWindow.fromWebContents(contents.hostWebContents); if (parent && !parent.isDestroyed()) { parent.setFullScreen(true); parent.webContents.send('webview-fullscreen', true); } });
+    contents.on('leave-html-full-screen', () => { const parent = BrowserWindow.fromWebContents(contents.hostWebContents); if (parent && !parent.isDestroyed()) { parent.setFullScreen(false); parent.webContents.send('webview-fullscreen', false); } });
     contents.on('will-navigate', (navigationEvent, url) => { if (!supportedNavigationUrl(url)) navigationEvent.preventDefault(); });
-    contents.setWindowOpenHandler(({ url }) => {
+    contents.setWindowOpenHandler(({ url, disposition }) => {
       if (!supportedWebUrl(url)) return { action: 'deny' };
-      contents.hostWebContents?.send('open-link-in-tab', url);
+      contents.hostWebContents?.send(disposition === 'new-window' ? 'open-link-in-window' : 'open-link-in-tab', url);
       return { action: 'deny' };
     });
   });

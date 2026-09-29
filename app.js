@@ -2,6 +2,7 @@ const addressInput = document.getElementById('addressInput');
 const content = document.getElementById('content');
 const tabTitle = document.getElementById('tabTitle');
 const isGuestWindow = new URLSearchParams(window.location.search).has('guest');
+const isNativeTabs = new URLSearchParams(window.location.search).has('nativeTabs');
 document.getElementById('guestIndicator').hidden = !isGuestWindow;
 const historyStack = ['linsoft://start'];
 let historyIndex = 0;
@@ -64,10 +65,17 @@ function setTabIcon(id, iconUrl = '') { const icon = document.querySelector(`.ma
 
 function setTabAudioIcon(id, muted = false, playing = false) { const audio = document.querySelector(`.managed-tab[data-tab-id="${id}"] .tab-audio`); if (!audio) return; audio.textContent = muted ? '🔇' : playing ? '🔊' : ''; audio.title = muted ? 'Zapnúť zvuk' : 'Stlmiť kartu'; audio.setAttribute('aria-label', audio.title); }
 function setTabLoading(id, loading) { document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.classList.toggle('loading', loading); }
+function syncNativeTabLayout() {
+  if (!isNativeTabs) return;
+  const bounds = content.getBoundingClientRect();
+  window.linsoftBrowser?.setNativeTabLayout?.({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height });
+}
+function hideNativeTab() { if (isNativeTabs) window.linsoftBrowser?.deactivateNativeTab?.(); }
+new ResizeObserver(syncNativeTabLayout).observe(content);
 
 function bindTabButton(button, id) {
   button.addEventListener('click', (event) => { if (event.target.classList.contains('tab-close')) { event.preventDefault(); event.stopPropagation(); closeTab(id); } else if (event.target.classList.contains('tab-audio')) { event.preventDefault(); event.stopPropagation(); toggleTabMute(id); } else selectTab(id); });
-  button.addEventListener('contextmenu', (event) => { event.preventDefault(); showTabContextMenu(event.clientX, event.clientY, id); });
+  button.addEventListener('contextmenu', (event) => { event.preventDefault(); selectTab(id); showTabContextMenu(event.clientX, event.clientY, id); });
   bindTabDrag(button, id);
 }
 
@@ -124,11 +132,71 @@ function setTabGroupName(id) { const tab = tabs.get(id); if (!tab) return; const
 function showTabContextMenu(x, y, id) {
   document.querySelector('.tab-context-menu')?.remove();
   const menu = document.createElement('div'); menu.className = 'tab-context-menu';
+  menu.setAttribute('role', 'menu');
   const actions = [['group', 'Zmeniť skupinu/farbu'], ['groupName', 'Pomenovať skupinu'], ['mute', tabs.get(id)?.muted ? 'Zapnúť zvuk karty' : 'Stlmiť kartu'], ['lock', tabs.get(id)?.locked ? 'Odomknúť kartu' : 'Zamknúť kartu'], ['detach', 'Otvoriť kópiu v novom okne'], ['pin', tabs.get(id)?.pinned ? 'Odpnúť kartu' : 'Pripnúť kartu'], ['duplicate', 'Duplikovať kartu'], ['close', 'Zatvoriť kartu'], ['closeOthers', 'Zatvoriť ostatné karty'], ['closeRight', 'Zatvoriť karty napravo']];
-  menu.innerHTML = actions.map(([action, label]) => `<button data-tab-action="${action}">${label}</button>`).join('');
+  menu.innerHTML = actions.map(([action, label]) => `<button role="menuitem" data-tab-action="${action}">${label}</button>`).join('');
   menu.style.left = `${Math.min(x, window.innerWidth - 220)}px`; menu.style.top = `${Math.min(y, window.innerHeight - 220)}px`; document.body.appendChild(menu);
-  menu.addEventListener('click', (event) => { const action = event.target.dataset.tabAction; menu.remove(); if (action === 'group') cycleTabGroup(id); if (action === 'groupName') setTabGroupName(id); if (action === 'mute') toggleTabMute(id); if (action === 'lock') toggleTabLock(id); if (action === 'detach') detachTab(id); if (action === 'pin') togglePinnedTab(id); if (action === 'duplicate') duplicateTab(id); if (action === 'close') closeTab(id); if (action === 'closeOthers') [...tabs.keys()].filter((tabId) => tabId !== id && !tabs.get(tabId)?.pinned).forEach(closeTab); if (action === 'closeRight') closeTabsRight(id); });
+  const closeMenu = () => { menu.remove(); document.removeEventListener('pointerdown', closeFromOutside, true); document.removeEventListener('keydown', closeFromEscape, true); };
+  const closeFromOutside = (event) => { if (!menu.contains(event.target)) closeMenu(); };
+  const closeFromEscape = (event) => { if (event.key === 'Escape') closeMenu(); };
+  document.addEventListener('pointerdown', closeFromOutside, true);
+  document.addEventListener('keydown', closeFromEscape, true);
+  menu.addEventListener('keydown', (event) => {
+    const buttons = [...menu.querySelectorAll('button')];
+    const current = buttons.indexOf(document.activeElement);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const direction = event.key === 'ArrowDown' ? 1 : -1; buttons[(current + direction + buttons.length) % buttons.length]?.focus(); }
+  });
+  menu.querySelector('button')?.focus();
+  menu.addEventListener('click', (event) => { const action = event.target.closest('[data-tab-action]')?.dataset.tabAction; if (!action) return; closeMenu(); if (action === 'group') cycleTabGroup(id); if (action === 'groupName') setTabGroupName(id); if (action === 'mute') toggleTabMute(id); if (action === 'lock') toggleTabLock(id); if (action === 'detach') detachTab(id); if (action === 'pin') togglePinnedTab(id); if (action === 'duplicate') duplicateTab(id); if (action === 'close') closeTab(id); if (action === 'closeOthers') [...tabs.keys()].filter((tabId) => tabId !== id && !tabs.get(tabId)?.pinned).forEach(closeTab); if (action === 'closeRight') closeTabsRight(id); });
 }
+
+function showInputContextMenu(input, x, y) {
+  document.querySelector('.input-context-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.className = 'tab-context-menu input-context-menu';
+  menu.setAttribute('role', 'menu');
+  const hasSelection = input.selectionStart !== input.selectionEnd;
+  const selectionStart = input.selectionStart;
+  const selectionEnd = input.selectionEnd;
+  const selectedText = input.value.slice(selectionStart, selectionEnd);
+  menu.innerHTML = [
+    ['cut', 'Vystrihnúť', !hasSelection || input.readOnly],
+    ['copy', 'Kopírovať', !hasSelection],
+    ['paste', 'Vložiť', input.readOnly],
+    ['selectAll', 'Označiť všetko', input.value.length === 0]
+  ].map(([action, label, disabled]) => `<button role="menuitem" data-input-action="${action}"${disabled ? ' disabled' : ''}>${label}</button>`).join('');
+  menu.style.left = `${Math.min(Math.max(8, x), Math.max(8, window.innerWidth - 220))}px`;
+  menu.style.top = `${Math.min(Math.max(8, y), Math.max(8, window.innerHeight - 190))}px`;
+  document.body.appendChild(menu);
+  const closeMenu = () => { menu.remove(); document.removeEventListener('pointerdown', closeFromOutside, true); document.removeEventListener('keydown', closeFromEscape, true); };
+  const closeFromOutside = (event) => { if (!menu.contains(event.target)) closeMenu(); };
+  const closeFromEscape = (event) => { if (event.key === 'Escape') closeMenu(); };
+  document.addEventListener('pointerdown', closeFromOutside, true);
+  document.addEventListener('keydown', closeFromEscape, true);
+  menu.querySelector('button:not(:disabled)')?.focus();
+  menu.addEventListener('click', async (event) => {
+    const action = event.target.closest('[data-input-action]')?.dataset.inputAction;
+    if (!action) return;
+    input.focus();
+    if (action === 'paste') {
+      try { const text = await window.linsoftBrowser?.readClipboardText?.(); input.setRangeText(String(text || ''), input.selectionStart, input.selectionEnd, 'end'); input.dispatchEvent(new Event('input', { bubbles: true })); } catch { showToast('Text sa nepodarilo vložiť zo schránky.'); }
+    } else if (action === 'copy' || action === 'cut') {
+      const result = await window.linsoftBrowser?.writeClipboardText?.(selectedText);
+      if (action === 'cut' && result?.ok) { input.setRangeText('', selectionStart, selectionEnd, 'start'); input.dispatchEvent(new Event('input', { bubbles: true })); }
+    } else {
+      document.execCommand(action === 'selectAll' ? 'selectAll' : action);
+    }
+    closeMenu();
+  });
+}
+
+document.addEventListener('contextmenu', (event) => {
+  const input = event.target.closest?.('input, textarea');
+  if (!input || input.disabled) return;
+  event.preventDefault();
+  input.focus();
+  showInputContextMenu(input, event.clientX, event.clientY);
+});
 
 function duplicateTab(id) { const tab = tabs.get(id); if (tab) openNewTab(tab.url); }
 function detachTab(id) {
@@ -199,16 +267,17 @@ function openBackgroundTab(url) {
   selectTab(previousTabId);
 }
 
-function selectTab(id) { const tab = tabs.get(id); if (!tab) return; activeTabId = id; updateActiveTab(tab.url, tab.title); addressInput.value = tab.url; tabTitle.textContent = tab.title; if (suspendedTabs.has(id) || tab.crashed) { suspendedTabs.delete(id); tab.suspended = false; tab.crashed = false; navigate(tab.url, false); } else if (tab.url === 'linsoft://start' && !content.querySelector(`.tab-surface[data-tab-id="${id}"]`)) startPage(); else if (tab.url === 'linsoft://settings') openSettings(); else if (tab.url === 'linsoft://apps') openAppCenter(); else activateSurface(id); updateNavigationButtons(); }
+function selectTab(id) { const tab = tabs.get(id); if (!tab) return; activeTabId = id; updateActiveTab(tab.url, tab.title); addressInput.value = tab.url; tabTitle.textContent = tab.title; if (suspendedTabs.has(id) || tab.crashed) { suspendedTabs.delete(id); tab.suspended = false; tab.crashed = false; navigate(tab.url, false); } else if (tab.url === 'linsoft://start' && !content.querySelector(`.tab-surface[data-tab-id="${id}"]`)) { hideNativeTab(); startPage(); } else if (tab.url === 'linsoft://settings') { hideNativeTab(); openSettings(); } else if (tab.url === 'linsoft://apps') { hideNativeTab(); openAppCenter(); } else { activateSurface(id); if (isNativeTabs) { syncNativeTabLayout(); window.linsoftBrowser?.activateNativeTab?.(id); } } updateNavigationButtons(); }
 
-function closeTab(id) { const tab = tabs.get(id); if (!tab || tab.pinned || tab.locked) return; const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`); surface?.querySelectorAll('webview').forEach((viewer) => viewer.remove()); if (tabs.size === 1) { activeTabId = id; tabs.get(id).url = 'linsoft://start'; tabs.get(id).title = 'Nová karta'; tabs.get(id).history = ['linsoft://start']; tabs.get(id).historyIndex = 0; startPage(); return; } closedTabs.unshift({ ...tab }); closedTabs.splice(10); const ids = [...tabs.keys()]; const closedIndex = ids.indexOf(id); const fallbackId = ids[Math.max(0, closedIndex - 1)]; surface?.remove(); document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.remove(); tabs.delete(id); updateTabDensity(); saveSession(); if (activeTabId === id) selectTab(fallbackId); }
+function closeTab(id) { const tab = tabs.get(id); if (!tab || tab.pinned || tab.locked) return; const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`); if (isNativeTabs) window.linsoftBrowser?.destroyNativeTab?.(id); else surface?.querySelectorAll('webview').forEach((viewer) => viewer.remove()); if (tabs.size === 1) { activeTabId = id; tabs.get(id).url = 'linsoft://start'; tabs.get(id).title = 'Nová karta'; tabs.get(id).history = ['linsoft://start']; tabs.get(id).historyIndex = 0; startPage(); return; } closedTabs.unshift({ ...tab }); closedTabs.splice(10); const ids = [...tabs.keys()]; const closedIndex = ids.indexOf(id); const fallbackId = ids[Math.max(0, closedIndex - 1)]; surface?.remove(); document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.remove(); tabs.delete(id); updateTabDensity(); saveSession(); if (activeTabId === id) selectTab(fallbackId); }
 
 function restoreClosedTab() { const tab = closedTabs.shift(); if (!tab) return; const id = nextTabId++; tab.id = id; tabs.set(id, tab); createTabButton(tab); activeTabId = id; navigate(tab.url, false); saveSession(); }
 
-function activeViewer() { return content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"] .webview`); }
+function activeViewer() { return isNativeTabs ? null : content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"] .webview`); }
 function ensureActiveTabLoaded() { const tab = tabs.get(activeTabId); if (tab && suspendedTabs.has(activeTabId)) { suspendedTabs.delete(activeTabId); tab.suspended = false; navigate(tab.url, false); return null; } return activeViewer(); }
 function updateNavigationButtons() { const tab = tabs.get(activeTabId); const viewer = activeViewer(); const back = document.getElementById('backButton'); const forward = document.getElementById('forwardButton'); if (back) back.disabled = !(viewer?.canGoBack?.() || (tab?.historyIndex > 0)); if (forward) forward.disabled = !(viewer?.canGoForward?.() || (tab && tab.historyIndex < tab.history.length - 1)); }
-function navigateTabHistory(direction) { const tab = tabs.get(activeTabId); const viewer = ensureActiveTabLoaded(); if (!tab) return; const nextIndex = tab.historyIndex + direction; if (nextIndex >= 0 && nextIndex < tab.history.length) { tab.historyIndex = nextIndex; navigate(tab.history[nextIndex], false); return; } if (viewer && ((direction < 0 && viewer.canGoBack()) || (direction > 0 && viewer.canGoForward()))) direction < 0 ? viewer.goBack() : viewer.goForward(); }
+function navigateTabHistory(direction) { const tab = tabs.get(activeTabId); const viewer = ensureActiveTabLoaded(); if (!tab) return; const nextIndex = tab.historyIndex + direction; if (nextIndex >= 0 && nextIndex < tab.history.length) { tab.historyIndex = nextIndex; navigate(tab.history[nextIndex], false); return; } if (viewer && ((direction < 0 && viewer.canGoBack()) || (direction > 0 && viewer.canGoForward()))) { direction < 0 ? viewer.goBack() : viewer.goForward(); return; } if (isNativeTabs) window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: direction < 0 ? 'back' : 'forward' }); }
+function navigationErrorMessage(errorCode, description = '') { const messages = { '-105': 'Server sa nenašiel (DNS).', '-106': 'Nie ste pripojení k internetu.', '-102': 'Server odmietol pripojenie.', '-118': 'Pripojenie vypršalo.', '-116': 'Spojenie bolo odmietnuté.' }; return messages[String(errorCode)] || (description ? `Načítanie zlyhalo: ${description}.` : 'Stránku sa nepodarilo načítať.'); }
 
 function activateSurface(id) { content.querySelectorAll('.tab-surface').forEach((surface) => { const active = Number(surface.dataset.tabId) === id; surface.hidden = false; surface.classList.toggle('inactive-surface', !active); }); }
 
@@ -570,11 +639,11 @@ function addAdvancedSettings() {
 
 function navigate(value, addHistory = true) {
   const input = value.trim();
-  if (input.toLowerCase() === 'linsoft://apps') { openAppCenter(); return; }
-  if (input.toLowerCase() === 'linsoft://settings') { openSettings(); return; }
-  if (input.toLowerCase() === 'linsoft://bookmarks') { openLibrary('bookmarks'); return; }
-  if (input.toLowerCase() === 'linsoft://history') { openLibrary('history'); return; }
-  if (!input || input === 'linsoft://start' || input.toLowerCase() === 'home') { startPage(); return; }
+  if (input.toLowerCase() === 'linsoft://apps') { hideNativeTab(); openAppCenter(); return; }
+  if (input.toLowerCase() === 'linsoft://settings') { hideNativeTab(); openSettings(); return; }
+  if (input.toLowerCase() === 'linsoft://bookmarks') { hideNativeTab(); openLibrary('bookmarks'); return; }
+  if (input.toLowerCase() === 'linsoft://history') { hideNativeTab(); openLibrary('history'); return; }
+  if (!input || input === 'linsoft://start' || input.toLowerCase() === 'home') { hideNativeTab(); startPage(); return; }
   if (/^(javascript|data|vbscript):/i.test(input)) { showToast('Tento typ adresy je z bezpečnostných dôvodov zablokovaný.'); return; }
   const explicitHttp = /^https?:\/\//i.test(input);
   const networkAddress = normalizeNetworkAddress(input);
@@ -592,9 +661,16 @@ function navigate(value, addHistory = true) {
   addressInput.value = url;
   updateConnectionIndicator(url);
   const tabLabel = url.replace(/^https?:\/\//, '').split('/')[0]; tabTitle.textContent = tabLabel; updateActiveTab(url, tabLabel); saveSession();
-  const viewer = window.linsoftBrowser ? `<webview class="webview" src="${escapeHtml(url)}" zoom-factor="${Number(settingsState.zoom) / 100}"></webview>` : `<iframe class="webview" src="${escapeHtml(url)}" title="Web page"></iframe>`;
+  const viewer = window.linsoftBrowser ? `<webview class="webview" src="${escapeHtml(url)}" allowpopups allowfullscreen zoom-factor="${Number(settingsState.zoom) / 100}"></webview>` : `<iframe class="webview" src="${escapeHtml(url)}" title="Web page" allowfullscreen></iframe>`;
   let surface = content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"]`);
   if (!surface) { surface = document.createElement('div'); surface.className = 'tab-surface'; surface.dataset.tabId = activeTabId; content.appendChild(surface); }
+  if (isNativeTabs) {
+    surface.innerHTML = '<div class="native-view-placeholder" aria-hidden="true"></div>';
+    activateSurface(activeTabId);
+    syncNativeTabLayout();
+    window.linsoftBrowser?.loadNativeTab?.({ tabId: activeTabId, url });
+    return;
+  }
   if (!window.linsoftBrowser && /^https?:\/\//i.test(url)) { showExternalPreview(surface, url); return; }
   if (!surface.querySelector('.webview')) surface.innerHTML = viewer;
   else surface.querySelector('.webview').src = url;
@@ -612,6 +688,7 @@ function navigate(value, addHistory = true) {
     activeViewer.addEventListener('did-stop-loading', () => { loadingTrack.classList.remove('loading'); setTabLoading(viewerTabId, false); document.getElementById('securityButton').classList.remove('address-loading'); });
     activeViewer.addEventListener('render-process-gone', () => { const tab = tabs.get(viewerTabId); if (tab) { tab.crashed = true; saveSession(); showToast('Karta sa neočakávane ukončila. Klikni na kartu pre obnovenie.'); } });
     activeViewer.addEventListener('dom-ready', () => {
+      activeViewer.insertCSS('*::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }').catch(() => {});
       setInstallAppAvailable(/^https?:\/\//i.test(activeViewer.getURL?.() || addressInput.value));
       bindPasswordSavePrompt(activeViewer, activeViewer.getURL?.() || addressInput.value);
     });
@@ -628,23 +705,51 @@ function navigate(value, addHistory = true) {
         activeViewer.src = failedUrl.replace(/^http:/i, 'https:');
         return;
       }
-      showToast('Stránku sa nepodarilo načítať.');
+      showToast(navigationErrorMessage(event.errorCode, event.errorDescription));
     });
   }
 }
 
 document.getElementById('addressForm').addEventListener('submit', (event) => { event.preventDefault(); navigate(addressInput.value); });
-addressInput.addEventListener('change', () => { const value = addressInput.value.trim(); if (value && value !== tabs.get(activeTabId)?.url) navigate(value); });
 document.getElementById('clearAddress').addEventListener('click', () => { addressInput.value = ''; addressInput.focus(); });
 document.getElementById('installAppButton').addEventListener('click', installCurrentApp);
 document.getElementById('cancelInstall').addEventListener('click', closeInstallDialog); document.getElementById('cancelInstallButton').addEventListener('click', closeInstallDialog); document.getElementById('confirmInstall').addEventListener('click', async () => { const button = document.getElementById('confirmInstall'); const url = addressInput.value; const title = tabTitle.textContent; button.disabled = true; const result = await window.linsoftBrowser?.installWebApp(url, title); button.disabled = false; closeInstallDialog(); if (!result?.ok) return showToast(result?.message || 'Webovú aplikáciu sa nepodarilo nainštalovať.'); const existing = installedApps.find((item) => item.url === url); if (existing) existing.title = title; else installedApps.push({ url, title, installedAt: Date.now() }); localStorage.setItem('linsoft-apps', JSON.stringify(installedApps)); showToast('Aplikácia bola pridaná do Linsoft App Centra.'); openAppCenter(); });
 const securityPanel = document.getElementById('securityPanel'); const publicIp = document.getElementById('publicIp'); const publicNetwork = document.getElementById('publicNetwork'); const ipNote = document.getElementById('ipNote'); let ipLoaded = false;
 document.getElementById('securityButton').addEventListener('click', async (event) => { event.preventDefault(); event.stopPropagation(); securityPanel.hidden = !securityPanel.hidden; if (securityPanel.hidden || ipLoaded) return; publicIp.textContent = 'Načítavam...'; publicNetwork.textContent = 'Načítavam...'; const endpoints = [{ url: 'https://ipapi.co/json/', parse: (data) => ({ ip: data.ip, network: `${data.org || 'Neznáma sieť'} · ${data.country_name || 'Neznáma krajina'}` }) }, { url: 'https://ipwho.is/', parse: (data) => ({ ip: data.ip, network: `${data.connection?.isp || 'Neznáma sieť'} · ${data.country || 'Neznáma krajina'}` }) }, { url: 'https://api.ipify.org?format=json', parse: (data) => ({ ip: data.ip, network: 'Sieť a krajina nie sú dostupné' }) }]; let lastError = 'IP služby neodpovedali'; for (const endpoint of endpoints) { try { const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 7000); const response = await fetch(endpoint.url, { cache: 'no-store', signal: controller.signal }); window.clearTimeout(timeout); if (!response.ok) throw new Error(`HTTP ${response.status}`); const result = endpoint.parse(await response.json()); if (!result.ip) throw new Error('Prázdna odpoveď'); publicIp.textContent = result.ip; publicNetwork.textContent = result.network; ipNote.textContent = 'Verejná IP podľa aktuálneho internetového pripojenia.'; ipLoaded = true; return; } catch (error) { lastError = error.name === 'AbortError' ? 'Časový limit vypršal' : error.message; } } publicIp.textContent = 'Nepodarilo sa načítať'; publicNetwork.textContent = 'Neznáme'; ipNote.textContent = `${lastError}. Skontroluj internet, VPN alebo firewall a skús znova.`; }); document.getElementById('closeSecurity').addEventListener('click', () => { securityPanel.hidden = true; }); securityPanel.addEventListener('click', (event) => event.stopPropagation()); document.addEventListener('click', () => { securityPanel.hidden = true; });
 document.getElementById('homeButton').addEventListener('click', () => { navigate(settingsState.home); });
-function activeEditCommand(command) {
+async function activeEditCommand(command) {
   const viewer = ensureActiveTabLoaded();
-  if (!viewer || typeof viewer[command] !== 'function') return showToast('Táto akcia nie je dostupná na tejto stránke.');
-  viewer[command]();
+  if (command === 'paste' && viewer?.executeJavaScript) {
+    try {
+      const text = String(await window.linsoftBrowser?.readClipboardText?.() || '');
+      const inserted = await viewer.executeJavaScript(`(() => {
+        const field = document.activeElement?.matches?.('input, textarea, [contenteditable="true"]') ? document.activeElement : document.querySelector('textarea.gLFyf, input[name="q"], input[type="search"], textarea, input:not([type="hidden"])');
+        if (!field) return false;
+        field.focus();
+        if ('value' in field) {
+          const start = field.selectionStart ?? field.value.length;
+          const end = field.selectionEnd ?? start;
+          field.setRangeText(${JSON.stringify(text)}, start, end, 'end');
+          field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(text)} }));
+        } else document.execCommand('insertText', false, ${JSON.stringify(text)});
+        return true;
+      })()`, true);
+      if (inserted) return;
+    } catch {}
+  }
+  if (isNativeTabs) {
+    const result = await window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command });
+    if (!result?.ok) showToast(result?.message || 'Táto akcia nie je dostupná na tejto stránke.');
+    return;
+  }
+  const webContentsId = viewer?.getWebContentsId?.();
+  const result = webContentsId ? await window.linsoftBrowser?.editCommand?.(webContentsId, command) : null;
+  if (result?.ok) return;
+  if (viewer && typeof viewer[command] === 'function') { viewer[command](); return; }
+  if (viewer?.executeJavaScript && ['copy', 'cut', 'paste', 'selectAll', 'undo', 'redo'].includes(command)) {
+    try { await viewer.executeJavaScript(`document.execCommand(${JSON.stringify(command)})`); return; } catch {}
+  }
+  showToast(result?.message || 'Táto akcia nie je dostupná na tejto stránke.');
 }
 function findOnPage() {
   const viewer = ensureActiveTabLoaded();
@@ -654,13 +759,14 @@ function findOnPage() {
 }
 function changePageZoom(delta) {
   const viewer = ensureActiveTabLoaded();
-  if (!viewer?.setZoomFactor) return;
   settingsState.zoom = Math.max(50, Math.min(200, Number(settingsState.zoom || 100) + delta));
-  viewer.setZoomFactor(Number(settingsState.zoom) / 100);
+  if (isNativeTabs) window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: 'zoom', value: Number(settingsState.zoom) / 100 });
+  else if (viewer?.setZoomFactor) viewer.setZoomFactor(Number(settingsState.zoom) / 100);
+  else return;
   saveSettings();
   showToast(`Priblíženie: ${settingsState.zoom} %`);
 }
-function resetPageZoom() { const viewer = ensureActiveTabLoaded(); settingsState.zoom = 100; viewer?.setZoomFactor?.(1); saveSettings(); showToast('Priblíženie: 100 %'); }
+function resetPageZoom() { const viewer = ensureActiveTabLoaded(); settingsState.zoom = 100; if (isNativeTabs) window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: 'zoom', value: 1 }); else viewer?.setZoomFactor?.(1); saveSettings(); showToast('Priblíženie: 100 %'); }
 function printCurrentPage() { const viewer = ensureActiveTabLoaded(); if (!viewer?.print) return showToast('Tlač nie je dostupná na tejto stránke.'); viewer.print(); }
 async function toggleReaderMode() {
   const viewer = ensureActiveTabLoaded();
@@ -680,11 +786,11 @@ window.linsoftBrowser?.onWebviewContextMenu?.((data) => {
   const hasLink = /^https?:\/\//i.test(data.linkURL || '');
   const hasImage = data.mediaType === 'image' && /^https?:\/\//i.test(data.srcURL || '');
   const actions = [
-    ['paste', '▤', 'Vložiť', !data.isEditable, 'Ctrl+V'], ['copy', '▣', 'Kopírovať', !hasSelection, 'Ctrl+C'], ['cut', '✂', 'Vystrihnúť', !data.isEditable, 'Ctrl+X'], ['divider'],
+    ['paste', '▤', 'Vložiť', false, 'Ctrl+V'], ['copy', '▣', 'Kopírovať', false, 'Ctrl+C'], ['cut', '✂', 'Vystrihnúť', !data.isEditable, 'Ctrl+X'], ['divider'],
     ['search', '⌕', 'Vyhľadať výber', !hasSelection], ['translate', 'A', 'Preložiť výber', !hasSelection]
   ];
   if (hasLink) actions.push(['divider'], ['open-link', '↗', 'Otvoriť odkaz v novej karte'], ['open-link-background', '▣', 'Otvoriť odkaz na pozadí'], ['open-window', '□', 'Otvoriť odkaz v novom okne'], ['copy-link', '↗', 'Kopírovať adresu odkazu']);
-  if (hasImage) actions.push(['divider'], ['open-image', '▧', 'Otvoriť obrázok v novej karte'], ['save-image', '⇩', 'Uložiť obrázok'], ['copy-image', '↗', 'Kopírovať adresu obrázka']);
+  if (hasImage) actions.push(['divider'], ['open-image', '▧', 'Otvoriť obrázok v novej karte'], ['save-image', '⇩', 'Uložiť obrázok'], ['copy-image', '▧', 'Kopírovať obrázok']);
   actions.push(['divider'], ['bookmark-page', '★', 'Pridať medzi záložky', false, 'Ctrl+D'], ['copy-page', '↗', 'Kopírovať adresu stránky'], ['open-page-tab', '+', 'Otvoriť stránku v novej karte'], ['screenshot', '▧', 'Urobiť snímku webu'], ['copy-screenshot', '▣', 'Kopírovať snímku'], ['divider'], ['back', '‹', 'Späť', !viewer?.canGoBack?.()], ['forward', '›', 'Dopredu', !viewer?.canGoForward?.()], ['reload', '↻', 'Obnoviť', false, 'Ctrl+R'], ['print', '▣', 'Tlačiť', false, 'Ctrl+P']);
   menu.innerHTML = actions.map((entry) => entry[0] === 'divider' ? '<div class="context-menu-divider" role="separator"></div>' : `<button role="menuitem" data-context-action="${entry[0]}"${entry[3] ? ' disabled' : ''}><span class="context-menu-icon">${entry[1]}</span>${entry[2]}${entry[4] ? `<kbd>${entry[4]}</kbd>` : ''}</button>`).join('');
   document.body.appendChild(menu);
@@ -718,9 +824,12 @@ window.linsoftBrowser?.onWebviewContextMenu?.((data) => {
     const action = event.target.closest('[data-context-action]')?.dataset.contextAction;
     if (!action) return;
     closeMenu();
-    if (action === 'paste') activeEditCommand('paste');
-    if (action === 'cut') activeEditCommand('cut');
-    if (action === 'copy') activeEditCommand('copy');
+    if (action === 'paste') await activeEditCommand('paste');
+    if (action === 'cut') await activeEditCommand('cut');
+    if (action === 'copy') {
+      const result = data.selectionText ? await window.linsoftBrowser?.writeClipboardText?.(data.selectionText) : await window.linsoftBrowser?.copyClipboardSelection?.();
+      showToast(result?.ok ? 'Text bol skopírovaný.' : (result?.message || 'Text sa nepodarilo skopírovať.'));
+    }
     if (action === 'search' && data.selectionText) navigate(searchUrl(data.selectionText));
     if (action === 'translate' && data.selectionText) openNewTab(`https://translate.google.com/?sl=auto&tl=sk&text=${encodeURIComponent(data.selectionText)}&op=translate`);
     if (action === 'open-link' && data.linkURL) openNewTab(data.linkURL);
@@ -729,7 +838,7 @@ window.linsoftBrowser?.onWebviewContextMenu?.((data) => {
     if (action === 'copy-link') await navigator.clipboard?.writeText(data.linkURL);
     if (action === 'open-image' && data.srcURL) openNewTab(data.srcURL);
     if (action === 'save-image' && data.srcURL) { activeViewer()?.downloadURL?.(data.srcURL); showToast('Obrázok sa pridáva do sťahovaní.'); }
-    if (action === 'copy-image' && data.srcURL) await navigator.clipboard?.writeText(data.srcURL);
+    if (action === 'copy-image' && data.srcURL) { const result = await window.linsoftBrowser?.writeClipboardImage?.(data.srcURL); if (result?.ok) showToast('Obrázok bol skopírovaný.'); else showToast(result?.message || 'Obrázok sa nepodarilo skopírovať.'); }
     if (action === 'bookmark-page') document.getElementById('bookmarkButton').click();
     if (action === 'copy-page') await navigator.clipboard?.writeText(addressInput.value);
     if (action === 'open-page-tab') openNewTab(addressInput.value);
@@ -749,7 +858,7 @@ document.getElementById('savePdfButton').addEventListener('click', saveCurrentPa
 document.getElementById('capturePageButton').addEventListener('click', captureCurrentPage);
 const readerModeButton = document.createElement('button'); readerModeButton.id = 'readerModeButton'; readerModeButton.title = 'Čitateľský režim'; readerModeButton.setAttribute('aria-label', 'Čitateľský režim'); readerModeButton.textContent = 'Aa'; document.querySelector('.toolbar')?.insertBefore(readerModeButton, document.getElementById('downloadsButton')); readerModeButton.addEventListener('click', toggleReaderMode);
 document.getElementById('newTab').addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); openNewTab(); });
-document.getElementById('reloadButton').addEventListener('click', () => { const viewer = ensureActiveTabLoaded(); if (viewer) viewer.reload(); else if (tabs.get(activeTabId)?.url === 'linsoft://start') startPage(); });
+document.getElementById('reloadButton').addEventListener('click', () => { const viewer = ensureActiveTabLoaded(); if (isNativeTabs) window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: 'reload' }); else if (viewer) viewer.reload(); else if (tabs.get(activeTabId)?.url === 'linsoft://start') startPage(); });
 document.getElementById('backButton').addEventListener('click', () => navigateTabHistory(-1));
 document.getElementById('forwardButton').addEventListener('click', () => navigateTabHistory(1));
 document.getElementById('bookmarkButton').addEventListener('click', (event) => { const url = addressInput.value; if (!url || url.startsWith('linsoft://')) return showToast('Na domovskú stránku sa záložka nepridáva.'); if (!savedBookmarks.some((item) => item.url === url)) { savedBookmarks.push({ url, title: tabTitle.textContent }); localStorage.setItem('linsoft-bookmarks', JSON.stringify(savedBookmarks)); renderSavedBookmarks(); } event.currentTarget.textContent = '★'; showToast('Záložka uložená.'); });
@@ -797,7 +906,7 @@ browserMenu.addEventListener('keydown', (event) => {
     buttons[(current + direction + buttons.length) % buttons.length]?.focus();
   }
 });
-document.getElementById('menuNewTab').addEventListener('click', () => { closeBrowserMenu(); addTab(); }); document.getElementById('menuBookmarks').addEventListener('click', () => { closeBrowserMenu(); openLibrary('bookmarks'); }); document.getElementById('menuHistory').addEventListener('click', () => { closeBrowserMenu(); openLibrary('history'); }); document.getElementById('menuSettings').addEventListener('click', () => { closeBrowserMenu(); openSettings('general'); }); document.getElementById('menuDownloads').addEventListener('click', () => { closeBrowserMenu(); document.getElementById('downloadsButton').click(); }); document.getElementById('menuClearData').addEventListener('click', () => { closeBrowserMenu(); localStorage.clear(); showToast('Údaje prehliadania boli vymazané.'); }); document.getElementById('menuAbout').addEventListener('click', () => { closeBrowserMenu(); openSettings('about'); });
+document.getElementById('menuNewTab').addEventListener('click', () => { closeBrowserMenu(); addTab(); }); document.getElementById('menuBookmarks').addEventListener('click', () => { closeBrowserMenu(); openLibrary('bookmarks'); }); document.getElementById('menuHistory').addEventListener('click', () => { closeBrowserMenu(); openLibrary('history'); }); document.getElementById('menuSettings').addEventListener('click', () => { closeBrowserMenu(); openNewTab('linsoft://settings'); }); document.getElementById('menuDownloads').addEventListener('click', () => { closeBrowserMenu(); document.getElementById('downloadsButton').click(); }); document.getElementById('menuClearData').addEventListener('click', () => { closeBrowserMenu(); localStorage.clear(); showToast('Údaje prehliadania boli vymazané.'); }); document.getElementById('menuAbout').addEventListener('click', () => { closeBrowserMenu(); openNewTab('linsoft://settings'); });
 document.getElementById('menuInstallApp').addEventListener('click', () => { closeBrowserMenu(); installCurrentApp(); }); document.getElementById('menuAppCenter').addEventListener('click', () => { closeBrowserMenu(); openAppCenter(); });
 document.getElementById('menuGuestWindow').addEventListener('click', () => { closeBrowserMenu(); window.linsoftBrowser?.openGuestWindow?.(); });
 document.getElementById('menuSearchTabs').addEventListener('click', () => { closeBrowserMenu(); searchOpenTabs(); });
@@ -849,10 +958,6 @@ function renderDownloads() {
     const destination = item.filePath ? `<small title="${escapeHtml(item.filePath)}">${escapeHtml(item.filePath)}</small>` : '';
     const retryAction = !isInProgress && item.status !== 'Stiahnuté' && /^https?:\/\//i.test(item.sourceUrl || '') ? `<button data-retry-download="${escapeHtml(effectiveId)}">Stiahnuť znova</button>` : '';
     return `<div class="download-item" data-download-id="${escapeHtml(effectiveId)}"><span class="download-file-icon">${item.status === 'Stiahnuté' ? '✓' : isPaused ? 'Ⅱ' : '↓'}</span><div class="download-item-body"><strong>${escapeHtml(item.fileName)}</strong><span>${escapeHtml(item.status)}${size ? ` · ${size}` : ''}${speed && !isPaused ? ` · ${speed}` : ''}</span>${destination}<div class="download-item-progress"><i style="width:${percent}%"></i></div><div class="download-item-actions">${item.status === 'Stiahnuté' ? `<button data-open-download="${escapeHtml(item.filePath || '')}">Otvoriť</button><button data-show-download="${escapeHtml(item.filePath || '')}">Zobraziť v priečinku</button>` : isInProgress ? `${progressAction}<button data-cancel-download="${escapeHtml(effectiveId)}">Zrušiť</button>` : retryAction}<button data-remove-download="${escapeHtml(effectiveId)}">Odstrániť</button></div></div><span class="download-item-percent">${percent}%</span></div>`;
-  if (isNewDownload) {
-    panel.hidden = false;
-    showToast(`Sťahuje sa ${download.fileName} do ${download.filePath || 'vybraného priečinka'}.`);
-  }
   }).join('') || '<div class="downloads-empty"><span>↓</span><strong>Žiadne sťahovania</strong><small>Stiahnuté súbory sa zobrazia tu.</small></div>';
 
   list.querySelectorAll('[data-open-download]').forEach((button) => button.addEventListener('click', () => window.linsoftBrowser?.openDownloadFile(button.dataset.openDownload)));
@@ -884,7 +989,7 @@ function renderDownloads() {
   list.querySelectorAll('[data-retry-download]').forEach((button) => button.addEventListener('click', () => {
     const sourceUrl = downloadItems.get(button.dataset.retryDownload)?.sourceUrl;
     const viewer = activeViewer();
-    if (!sourceUrl || !viewer?.downloadURL) return showToast('Tento súbor sa nedá znova stiahnuť.');
+    if (!/^https?:\/\//i.test(sourceUrl || '') || !viewer?.downloadURL) return showToast('Tento súbor sa nedá znova stiahnuť.');
     viewer.downloadURL(sourceUrl);
   }));
   updateDownloadButton();
@@ -929,10 +1034,59 @@ window.linsoftBrowser?.listDownloads?.().then((downloads) => {
 document.addEventListener('click', () => { document.getElementById('downloadPanel').hidden = true; });
 
 window.linsoftBrowser?.onExternalUrl((url) => navigate(url));
+window.linsoftBrowser?.onNativeTabEvent?.((event) => {
+  if (!isNativeTabs) return;
+  const tab = tabs.get(event.tabId);
+  if (!tab) return;
+  if (event.type === 'loading') {
+    setTabLoading(event.tabId, event.loading);
+    document.getElementById('loadingTrack').classList.toggle('loading', event.loading && event.tabId === activeTabId);
+    return;
+  }
+  if (event.type === 'crashed') {
+    tab.crashed = true;
+    saveSession();
+    if (event.tabId === activeTabId) showToast('Karta sa neočakávane ukončila. Klikni na kartu pre obnovenie.');
+    return;
+  }
+  if (event.type === 'failed') {
+    if (event.errorCode !== -3 && event.tabId === activeTabId) showToast(navigationErrorMessage(event.errorCode, event.errorDescription));
+    return;
+  }
+  if (event.type === 'favicon' && event.favicon) {
+    tab.icon = event.favicon;
+    setTabIcon(event.tabId, event.favicon);
+    saveSession();
+    return;
+  }
+  if (event.type === 'title' && event.title) {
+    tab.title = event.title;
+    if (event.tabId === activeTabId) { tabTitle.textContent = event.title; updateActiveTab(tab.url, event.title); }
+    saveSession();
+    return;
+  }
+  if (event.type === 'navigate' && /^https?:\/\//i.test(event.url || '')) {
+    const label = event.url.replace(/^https?:\/\//, '').split('/')[0];
+    tab.url = event.url;
+    tab.history = tab.history || [event.url];
+    const knownIndex = tab.history.indexOf(event.url);
+    if (knownIndex >= 0) tab.historyIndex = knownIndex;
+    else { tab.history.splice(tab.historyIndex + 1); tab.history.push(event.url); tab.historyIndex = tab.history.length - 1; }
+    if (event.tabId === activeTabId) {
+      addressInput.value = event.url;
+      tabTitle.textContent = tab.title || label;
+      updateActiveTab(event.url, tab.title || label);
+      updateConnectionIndicator(event.url);
+      setInstallAppAvailable(true);
+    }
+    saveSession();
+  }
+});
 window.linsoftBrowser?.onDismissWebviewOverlay?.(() => {
   document.querySelector('.webview-context-menu')?.closeContextMenu?.();
   closeTransientPanels();
 });
+window.linsoftBrowser?.onWebviewFullscreen?.((active) => document.querySelector('.browser-window')?.classList.toggle('webview-fullscreen', active));
 window.linsoftBrowser?.onBrowserShortcut?.(({ key, shift }) => {
   if (key === 'escape') { document.querySelector('.webview-context-menu')?.closeContextMenu?.(); closeTransientPanels(); return; }
   if (key === 'l' || key === 'k') { addressInput.focus(); addressInput.select(); return; }
@@ -972,6 +1126,7 @@ window.linsoftBrowser?.onUninstallExternalApp(async (data) => { const index = in
   showToast('Webová aplikácia bola odinštalovaná.');
   openAppCenter(); });
 window.linsoftBrowser?.onLinkInTab((url) => { if (settingsState.popups) openNewTab(url); else showToast('Vyskakovacie okno bolo zablokované.'); });
+window.linsoftBrowser?.onLinkInWindow?.((url) => { if (settingsState.popups) window.linsoftBrowser.openDetachedWindow(url); else showToast('Vyskakovacie okno bolo zablokované.'); });
 document.body.classList.toggle('light-theme', settingsState.theme === 'light');
 updateAdBlockButton();
   window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, clearExit: settingsState.clearExit, autoUpdateCheck: settingsState.autoUpdateCheck });
