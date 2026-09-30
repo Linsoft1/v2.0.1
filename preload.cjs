@@ -71,4 +71,9 @@ contextBridge.exposeInMainWorld('linsoftBrowser', {
   disconnectOpenVpn: () => ipcRenderer.send('openvpn-disconnect'),
   onOpenVpnStatus: (callback) => ipcRenderer.on('openvpn-status', (_event, status) => callback(status)),
   getOpenVpnPath: () => ipcRenderer.invoke('openvpn-path')
+  ,getTorStatus: () => ipcRenderer.invoke('tor-status')
+  ,selectTorFolder: () => ipcRenderer.invoke('tor-select-folder')
+  ,startTorHosting: (folder) => ipcRenderer.invoke('tor-start-hosting', folder)
+  ,stopTorHosting: () => ipcRenderer.invoke('tor-stop-hosting')
+  ,onTorStatus: (callback) => ipcRenderer.on('tor-status', (_event, status) => callback(status))
 });

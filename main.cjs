@@ -1,5 +1,6 @@
 const { app, BrowserWindow, WebContentsView, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
+const http = require('node:http');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
@@ -12,6 +13,7 @@ try { ({ autoUpdater } = require('electron-updater')); } catch { autoUpdater = n
 let updateState = { status: 'idle' };
 const experimentalNativeTabs = process.env.LINSOFT_NATIVE_TABS === '1';
 const isLinux = process.platform === 'linux';
+const browserUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
 const writableDataPath = process.env.LINSOFT_BROWSER_USER_DATA || path.join(app.getPath('appData'), 'Linsoft Browser');
 app.setPath('userData', writableDataPath);
 app.setPath('cache', path.join(writableDataPath, 'Cache'));
@@ -53,6 +55,9 @@ let mainWindow = null;
 let openVpnProcess = null;
 let openVpnProfile = '';
 const activeDownloads = new Map();
+let torProcess = null;
+let torServer = null;
+let torState = { status: 'stopped', onion: '', folder: '', message: 'Tor hosting je vypnutý.' };
 let downloadHistory = [];
 let passwordVault = [];
 let sitePermissions = {};
@@ -432,7 +437,9 @@ function configureNativeTabContents(window, tabId, contents) {
     const key = String(input.key || '').toLowerCase();
     if (input.type === 'keyDown' && key === 'f' && !input.control && !input.meta && !input.alt && /youtube\.com|youtu\.be/i.test(contents.getURL?.() || '')) {
       inputEvent.preventDefault();
-      window.setFullScreen(!window.isFullScreen());
+      const fullscreen = !window.isFullScreen();
+      window.setFullScreen(fullscreen);
+      window.webContents.send('webview-fullscreen', fullscreen);
       return;
     }
     if (input.type === 'mouseDown' && input.button === 'left') {
@@ -460,7 +467,7 @@ function configureNativeTabContents(window, tabId, contents) {
     window.__lastContextPoint = { x: params.x || 0, y: params.y || 0 };
     window.webContents.send('webview-context-menu', { tabId, x: params.x || 0, y: params.y || 0, selectionText: params.selectionText || '', linkURL: params.linkURL || '', srcURL: params.srcURL || '', isEditable: Boolean(params.isEditable), mediaType: params.mediaType || '' });
   });
-  contents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+  contents.setUserAgent(browserUserAgent);
   contents.on('will-navigate', (event, url) => { if (!supportedNavigationUrl(url)) event.preventDefault(); });
   contents.setWindowOpenHandler(({ url, disposition }) => {
     if (!supportedWebUrl(url)) return { action: 'deny' };
@@ -794,6 +801,81 @@ ipcMain.handle('adblock-update-list', async () => {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 });
+function torExecutable() {
+  const platformFolder = process.platform === 'win32' ? 'windows' : 'linux';
+  const binaryName = process.platform === 'win32' ? 'tor.exe' : 'tor';
+  const bundledCandidates = [
+    path.join(process.resourcesPath, 'app.asar.unpacked', 'assets', 'tor', platformFolder, 'tor', binaryName),
+    path.join(__dirname, 'assets', 'tor', platformFolder, 'tor', binaryName)
+  ];
+  const candidates = [...bundledCandidates, process.env.TOR_PATH, process.platform === 'win32' ? 'C:\\Program Files\\Tor\\tor.exe' : '/usr/bin/tor', 'tor.exe', 'tor'].filter(Boolean);
+  const fs = require('node:fs');
+  return candidates.find((candidate) => candidate === 'tor.exe' || candidate === 'tor' || fs.existsSync(candidate)) || '';
+}
+
+function publishTorState(state) {
+  torState = { ...torState, ...state };
+  for (const window of browserWindows) if (!window.isDestroyed()) window.webContents.send('tor-status', torState);
+}
+
+function stopTorHosting() {
+  if (torProcess && !torProcess.killed) torProcess.kill();
+  torProcess = null;
+  if (torServer) torServer.close();
+  torServer = null;
+  publishTorState({ status: 'stopped', onion: '', folder: '', message: 'Tor hosting je vypnutý.' });
+  return { ok: true };
+}
+
+async function startTorHosting(folder) {
+  const fs = require('node:fs');
+  const root = path.resolve(String(folder || ''));
+  if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) return { ok: false, message: 'Vybraný priečinok neexistuje.' };
+  const executable = torExecutable();
+  if (!executable) return { ok: false, message: 'Tor sa nenašiel. Nainštaluj Tor a nastav TOR_PATH.' };
+  stopTorHosting();
+  const hostDir = path.join(writableDataPath, 'tor-hosting');
+  const serviceDir = path.join(hostDir, 'hidden-service');
+  fs.mkdirSync(serviceDir, { recursive: true });
+  torServer = http.createServer((request, response) => {
+    const requested = decodeURIComponent((request.url || '/').split('?')[0]);
+    const relative = requested === '/' ? 'index.html' : requested.replace(/^\/+/, '');
+    const filePath = path.resolve(root, relative);
+    if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) { response.writeHead(403); response.end('Forbidden'); return; }
+    fs.stat(filePath, (error, stats) => {
+      if (error || !stats.isFile()) { response.writeHead(404); response.end('Not found'); return; }
+      fs.createReadStream(filePath).on('error', () => { response.writeHead(500); response.end('Server error'); }).pipe(response);
+    });
+  });
+  await new Promise((resolve, reject) => { torServer.once('error', reject); torServer.listen(0, '127.0.0.1', resolve); });
+  const port = torServer.address().port;
+  const configPath = path.join(hostDir, 'torrc');
+  fs.writeFileSync(configPath, `DataDirectory ${path.join(hostDir, 'data')}\nHiddenServiceDir ${serviceDir}\nHiddenServicePort 80 127.0.0.1:${port}\n`, 'utf8');
+  fs.mkdirSync(path.join(hostDir, 'data'), { recursive: true });
+  publishTorState({ status: 'starting', folder: root, message: 'Tor sa pripája...' });
+  torProcess = spawn(executable, ['-f', configPath], { windowsHide: true });
+  torProcess.once('error', (error) => publishTorState({ status: 'error', message: `Tor sa nespustil: ${error.message}` }));
+  const hostnamePath = path.join(serviceDir, 'hostname');
+  const startedAt = Date.now();
+  await new Promise((resolve) => {
+    const timer = setInterval(() => {
+      if (fs.existsSync(hostnamePath)) { clearInterval(timer); resolve(); }
+      else if (Date.now() - startedAt > 30000) { clearInterval(timer); resolve(); }
+    }, 250);
+  });
+  if (!fs.existsSync(hostnamePath)) { stopTorHosting(); return { ok: false, message: 'Tor nevytvoril onion adresu. Skontroluj Tor log.' }; }
+  const onion = fs.readFileSync(hostnamePath, 'utf8').trim();
+  publishTorState({ status: 'running', onion: `${onion}`, folder: root, message: `Hosting beží na ${onion}` });
+  return { ok: true, ...torState };
+}
+
+ipcMain.handle('tor-status', () => torState);
+ipcMain.handle('tor-select-folder', async (event) => {
+  const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender) || undefined, { properties: ['openDirectory'], title: 'Vybrať priečinok pre Tor hosting' });
+  return result.canceled ? '' : result.filePaths[0];
+});
+ipcMain.handle('tor-start-hosting', (_event, folder) => startTorHosting(folder));
+ipcMain.handle('tor-stop-hosting', () => stopTorHosting());
 ipcMain.on('open-browser-window', (_event, url) => { if (!supportedWebUrl(url)) return; if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); dispatchExternalUrl(mainWindow, url); } else if (hasLock) createWindow(url); });
 ipcMain.on('open-detached-window', (_event, url) => { if (hasLock) createWindow(url || 'linsoft://start'); });
 ipcMain.on('open-guest-window', () => { if (hasLock) createWindow('linsoft://start', { guest: true }); });
@@ -985,7 +1067,7 @@ app.whenReady().then(() => {
       if (contents.hostWebContents) contents.hostWebContents.__lastContextPoint = { x: params.x || 0, y: params.y || 0 };
       contents.hostWebContents?.send('webview-context-menu', { x: params.x || 0, y: params.y || 0, selectionText: params.selectionText || '', linkURL: params.linkURL || '', srcURL: params.srcURL || '', isEditable: Boolean(params.isEditable), mediaType: params.mediaType || '' });
     });
-    contents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+    contents.setUserAgent(browserUserAgent);
     contents.on('render-process-gone', (_event, details) => { contents.hostWebContents?.send('webview-process-gone', { reason: details.reason }); });
     contents.on('enter-html-full-screen', () => { const parent = BrowserWindow.fromWebContents(contents.hostWebContents); if (parent && !parent.isDestroyed()) { parent.setFullScreen(true); parent.webContents.send('webview-fullscreen', true); } });
     contents.on('leave-html-full-screen', () => { const parent = BrowserWindow.fromWebContents(contents.hostWebContents); if (parent && !parent.isDestroyed()) { parent.setFullScreen(false); parent.webContents.send('webview-fullscreen', false); } });

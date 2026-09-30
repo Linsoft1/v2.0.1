@@ -11,6 +11,7 @@ Linsoft Browser is a desktop browser for Windows and Linux Debian, focused on a 
 - App center
 - Downloads panel
 - OpenVPN support
+- Built-in Tor Expert Bundle for static onion hosting
 - Linux `.deb` packaging support
 
 ## Requirements
