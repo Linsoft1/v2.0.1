@@ -1,13 +1,13 @@
 # Linsoft Browser Release Checklist
 
-## Current Release: 2.0.19
+## Current Release: 2.0.20
 
 - Electron is upgraded to `44.4.5` and Electron Builder to `26.15.3` to address the audited advisories.
 - `npm ci` succeeds locally with the updated lockfile.
 - `npm test` passes locally.
 - `npm audit` reports zero vulnerabilities.
 - Windows installer builds locally with the current Electron version.
-- Publish tag `v2.0.19`; Linux CI stages the custom Debian package in a flat folder for release upload. Build jobs use `--publish never`; the dedicated release job uploads assets using `GITHUB_TOKEN`.
+- Publish tag `v2.0.20`; Linux CI stages the custom Debian package in a flat folder for release upload. Build jobs use `--publish never`; the dedicated release job uploads assets using `GITHUB_TOKEN`.
 - Wait for both build jobs and the release upload to complete before calling this release complete.
 
 ## Release Gate
