@@ -58,7 +58,8 @@ let openVpnProfile = '';
 const activeDownloads = new Map();
 let torProcess = null;
 let torServer = null;
-let torState = { status: 'stopped', onion: '', folder: '', proxyEnabled: false, message: 'Tor hosting je vypnutý.' };
+let torReadyPromise = Promise.resolve(false);
+let torState = { status: 'stopped', onion: '', folder: '', proxyEnabled: false, requestCount: 0, lastRequest: '', message: 'Tor hosting je vypnutý.' };
 let downloadHistory = [];
 let passwordVault = [];
 let sitePermissions = {};
@@ -840,23 +841,48 @@ function waitForTcpPort(port, timeout = 30000) {
   });
 }
 
-async function enableTorProxy() {
+function launchTorProcess(executable, args) {
+  let resolveReady;
+  torReadyPromise = new Promise((resolve) => { resolveReady = resolve; });
+  const process = spawn(executable, [...args, '--Log', 'notice stdout'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const observe = (chunk) => { if (/Bootstrapped 100% \(done\)/i.test(String(chunk))) resolveReady(true); };
+  process.stdout?.on('data', observe);
+  process.stderr?.on('data', (chunk) => { console.error('Tor stderr:', String(chunk)); observe(chunk); });
+  process.once('exit', () => resolveReady(false));
+  return process;
+}
+
+let torStartPromise = null;
+
+async function enableTorProxyInternal() {
   const fs = require('node:fs');
   const executable = torExecutable();
   if (!executable) return { ok: false, message: 'Pribalený Tor sa nenašiel.' };
+  publishTorState({ status: 'connecting', proxyEnabled: false, message: 'Tor sa pripája...' });
   if (!torProcess) {
     const proxyDir = path.join(writableDataPath, 'tor-proxy');
     const dataDir = path.join(proxyDir, 'data');
     fs.mkdirSync(dataDir, { recursive: true });
+    try { fs.unlinkSync(path.join(dataDir, 'lock')); } catch {}
     const configPath = path.join(proxyDir, 'torrc');
-    fs.writeFileSync(configPath, `DataDirectory ${dataDir}\nSocksPort 127.0.0.1:9150\n`, 'utf8');
-    torProcess = spawn(executable, ['-f', configPath], { windowsHide: true });
-    torProcess.once('error', (error) => publishTorState({ status: 'error', message: `Tor proxy sa nespustila: ${error.message}` }));
+    const torDataPath = dataDir.replace(/\\/g, '/');
+    fs.writeFileSync(configPath, `DataDirectory "${torDataPath}"\nSocksPort 127.0.0.1:9150\n`, 'utf8');
+    torProcess = launchTorProcess(executable, ['-f', configPath]);
+    torProcess.once('error', (error) => { console.error('Tor proxy error:', error); publishTorState({ status: 'error', message: `Tor proxy sa nespustila: ${error.message}` }); });
+    torProcess.once('exit', (code) => { if (code !== 0) publishTorState({ status: 'error', proxyEnabled: false, message: `Tor proxy skončila s kódom ${code}.` }); });
   }
   if (!(await waitForTcpPort(9150))) return { ok: false, message: 'Tor SOCKS proxy sa nespustila.' };
+  if (!(await Promise.race([torReadyPromise, new Promise((resolve) => setTimeout(() => resolve(false), 30000))]))) return { ok: false, message: 'Tor ešte nie je pripojený do siete. Skús to znova o chvíľu.' };
   await session.defaultSession.setProxy({ proxyRules: 'socks5://127.0.0.1:9150', proxyBypassRules: '<local>' });
+  await session.defaultSession.closeAllConnections();
   publishTorState({ proxyEnabled: true, message: 'Prehliadanie cez Tor je zapnuté.' });
   return { ok: true, ...torState };
+}
+
+async function enableTorProxy() {
+  if (torStartPromise) return torStartPromise;
+  torStartPromise = enableTorProxyInternal();
+  try { return await torStartPromise; } finally { torStartPromise = null; }
 }
 
 async function disableTorProxy() {
@@ -871,30 +897,43 @@ async function startTorHosting(folder) {
   const fs = require('node:fs');
   const root = path.resolve(String(folder || ''));
   if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) return { ok: false, message: 'Vybraný priečinok neexistuje.' };
+  if (!fs.existsSync(path.join(root, 'index.html'))) return { ok: false, message: 'Vybraný priečinok neobsahuje index.html.' };
   const executable = torExecutable();
   if (!executable) return { ok: false, message: 'Tor sa nenašiel. Nainštaluj Tor a nastav TOR_PATH.' };
   stopTorHosting();
   const hostDir = path.join(writableDataPath, 'tor-hosting');
   const serviceDir = path.join(hostDir, 'hidden-service');
   fs.mkdirSync(serviceDir, { recursive: true });
+  const mimeTypes = { '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8' };
+  torState.requestCount = 0;
+  torState.lastRequest = '';
   torServer = http.createServer((request, response) => {
-    const requested = decodeURIComponent((request.url || '/').split('?')[0]);
+    let requested;
+    try { requested = decodeURIComponent((request.url || '/').split('?')[0]); } catch { response.writeHead(400); response.end('Bad request'); return; }
     const relative = requested === '/' ? 'index.html' : requested.replace(/^\/+/, '');
     const filePath = path.resolve(root, relative);
     if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) { response.writeHead(403); response.end('Forbidden'); return; }
+    torState.requestCount += 1;
+    torState.lastRequest = `${request.method || 'GET'} ${requested}`;
+    publishTorState({ requestCount: torState.requestCount, lastRequest: torState.lastRequest });
     fs.stat(filePath, (error, stats) => {
-      if (error || !stats.isFile()) { response.writeHead(404); response.end('Not found'); return; }
-      fs.createReadStream(filePath).on('error', () => { response.writeHead(500); response.end('Server error'); }).pipe(response);
+      if (error || !stats.isFile()) { response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }); response.end('Not found'); return; }
+      response.writeHead(200, { 'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
+      fs.createReadStream(filePath).on('error', () => { if (!response.headersSent) response.writeHead(500); response.end('Server error'); }).pipe(response);
     });
   });
   await new Promise((resolve, reject) => { torServer.once('error', reject); torServer.listen(0, '127.0.0.1', resolve); });
   const port = torServer.address().port;
   const configPath = path.join(hostDir, 'torrc');
-  fs.writeFileSync(configPath, `DataDirectory ${path.join(hostDir, 'data')}\nSocksPort 127.0.0.1:9150\nHiddenServiceDir ${serviceDir}\nHiddenServicePort 80 127.0.0.1:${port}\n`, 'utf8');
+  const torHostDataPath = path.join(hostDir, 'data').replace(/\\/g, '/');
+  const torServicePath = serviceDir.replace(/\\/g, '/');
+  fs.writeFileSync(configPath, `DataDirectory "${torHostDataPath}"\nSocksPort 127.0.0.1:9150\nHiddenServiceDir "${torServicePath}"\nHiddenServicePort 80 127.0.0.1:${port}\n`, 'utf8');
   fs.mkdirSync(path.join(hostDir, 'data'), { recursive: true });
+  try { fs.unlinkSync(path.join(hostDir, 'data', 'lock')); } catch {}
   publishTorState({ status: 'starting', folder: root, message: 'Tor sa pripája...' });
-  torProcess = spawn(executable, ['-f', configPath], { windowsHide: true });
+  torProcess = launchTorProcess(executable, ['-f', configPath]);
   torProcess.once('error', (error) => publishTorState({ status: 'error', message: `Tor sa nespustil: ${error.message}` }));
+  torProcess.once('exit', (code) => { if (code !== 0) publishTorState({ status: 'error', message: `Tor hosting skončil s kódom ${code}.` }); });
   const hostnamePath = path.join(serviceDir, 'hostname');
   const startedAt = Date.now();
   await new Promise((resolve) => {
@@ -905,11 +944,21 @@ async function startTorHosting(folder) {
   });
   if (!fs.existsSync(hostnamePath)) { stopTorHosting(); return { ok: false, message: 'Tor nevytvoril onion adresu. Skontroluj Tor log.' }; }
   const onion = fs.readFileSync(hostnamePath, 'utf8').trim();
-  publishTorState({ status: 'running', onion: `${onion}`, folder: root, message: `Hosting beží na ${onion}` });
+  publishTorState({ status: 'starting', onion: `${onion}`, folder: root, message: 'Onion služba sa zverejňuje...' });
+  await new Promise((resolve) => setTimeout(resolve, 10000));
+  publishTorState({ status: 'running', onion: `http://${onion}/`, folder: root, message: `Hosting beží na http://${onion}/` });
   return { ok: true, ...torState };
 }
 
 ipcMain.handle('tor-status', () => torState);
+ipcMain.handle('tor-default-folder', () => {
+  const fs = require('node:fs');
+  const folder = path.join(writableDataPath, 'Tor Hosting');
+  fs.mkdirSync(folder, { recursive: true });
+  const indexPath = path.join(folder, 'index.html');
+  if (!fs.existsSync(indexPath)) fs.writeFileSync(indexPath, '<!doctype html><html lang="sk"><meta charset="utf-8"><title>Linsoft Tor Hosting</title><h1>Linsoft Tor Hosting funguje</h1><p>Toto je tvoja predvolená onion stránka.</p></html>', 'utf8');
+  return folder;
+});
 ipcMain.handle('tor-select-folder', async (event) => {
   const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender) || undefined, { properties: ['openDirectory'], title: 'Vybrať priečinok pre Tor hosting' });
   return result.canceled ? '' : result.filePaths[0];
@@ -918,6 +967,18 @@ ipcMain.handle('tor-start-hosting', (_event, folder) => startTorHosting(folder))
 ipcMain.handle('tor-stop-hosting', () => stopTorHosting());
 ipcMain.handle('tor-enable-proxy', () => enableTorProxy());
 ipcMain.handle('tor-disable-proxy', () => disableTorProxy());
+ipcMain.handle('set-manual-proxy', async (_event, { protocol = 'socks5', host = '', port = '' } = {}) => {
+  const normalizedHost = String(host).trim();
+  const normalizedPort = Number(port);
+  const normalizedProtocol = protocol === 'socks4' ? 'socks4' : 'socks5';
+  if (normalizedProtocol === 'socks5' && normalizedHost === '127.0.0.1' && normalizedPort === 9150) return enableTorProxy();
+  if (!normalizedHost && !port) { await session.defaultSession.setProxy({ mode: 'direct' }); await session.defaultSession.closeAllConnections(); publishTorState({ proxyEnabled: false, message: 'Proxy je vypnutá.' }); return { ok: true }; }
+  if (!/^(?:[a-z0-9.-]+|\[[0-9a-f:]+\])$/i.test(normalizedHost) || !Number.isInteger(normalizedPort) || normalizedPort < 1 || normalizedPort > 65535) return { ok: false, message: 'Zadaj platného hostiteľa a port 1-65535.' };
+  await session.defaultSession.setProxy({ proxyRules: `${normalizedProtocol}://${normalizedHost}:${normalizedPort}`, proxyBypassRules: '<local>' });
+  await session.defaultSession.closeAllConnections();
+  publishTorState({ proxyEnabled: true, message: `Manuálna ${normalizedProtocol.toUpperCase()} proxy je zapnutá: ${normalizedHost}:${normalizedPort}` });
+  return { ok: true, ...torState };
+});
 ipcMain.on('open-browser-window', (_event, url) => { if (!supportedWebUrl(url)) return; if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); dispatchExternalUrl(mainWindow, url); } else if (hasLock) createWindow(url); });
 ipcMain.on('open-detached-window', (_event, url) => { if (hasLock) createWindow(url || 'linsoft://start'); });
 ipcMain.on('open-guest-window', () => { if (hasLock) createWindow('linsoft://start', { guest: true }); });
