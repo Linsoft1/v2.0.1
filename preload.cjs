@@ -75,5 +75,7 @@ contextBridge.exposeInMainWorld('linsoftBrowser', {
   ,selectTorFolder: () => ipcRenderer.invoke('tor-select-folder')
   ,startTorHosting: (folder) => ipcRenderer.invoke('tor-start-hosting', folder)
   ,stopTorHosting: () => ipcRenderer.invoke('tor-stop-hosting')
+  ,enableTorProxy: () => ipcRenderer.invoke('tor-enable-proxy')
+  ,disableTorProxy: () => ipcRenderer.invoke('tor-disable-proxy')
   ,onTorStatus: (callback) => ipcRenderer.on('tor-status', (_event, status) => callback(status))
 });

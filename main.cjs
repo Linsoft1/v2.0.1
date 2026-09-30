@@ -1,6 +1,7 @@
 const { app, BrowserWindow, WebContentsView, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
+const net = require('node:net');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
@@ -57,7 +58,7 @@ let openVpnProfile = '';
 const activeDownloads = new Map();
 let torProcess = null;
 let torServer = null;
-let torState = { status: 'stopped', onion: '', folder: '', message: 'Tor hosting je vypnutý.' };
+let torState = { status: 'stopped', onion: '', folder: '', proxyEnabled: false, message: 'Tor hosting je vypnutý.' };
 let downloadHistory = [];
 let passwordVault = [];
 let sitePermissions = {};
@@ -827,6 +828,45 @@ function stopTorHosting() {
   return { ok: true };
 }
 
+function waitForTcpPort(port, timeout = 30000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const probe = () => {
+      const socket = net.createConnection({ host: '127.0.0.1', port });
+      socket.once('connect', () => { socket.destroy(); resolve(true); });
+      socket.once('error', () => { socket.destroy(); if (Date.now() - startedAt >= timeout) resolve(false); else setTimeout(probe, 250); });
+    };
+    probe();
+  });
+}
+
+async function enableTorProxy() {
+  const fs = require('node:fs');
+  const executable = torExecutable();
+  if (!executable) return { ok: false, message: 'Pribalený Tor sa nenašiel.' };
+  if (!torProcess) {
+    const proxyDir = path.join(writableDataPath, 'tor-proxy');
+    const dataDir = path.join(proxyDir, 'data');
+    fs.mkdirSync(dataDir, { recursive: true });
+    const configPath = path.join(proxyDir, 'torrc');
+    fs.writeFileSync(configPath, `DataDirectory ${dataDir}\nSocksPort 127.0.0.1:9150\n`, 'utf8');
+    torProcess = spawn(executable, ['-f', configPath], { windowsHide: true });
+    torProcess.once('error', (error) => publishTorState({ status: 'error', message: `Tor proxy sa nespustila: ${error.message}` }));
+  }
+  if (!(await waitForTcpPort(9150))) return { ok: false, message: 'Tor SOCKS proxy sa nespustila.' };
+  await session.defaultSession.setProxy({ proxyRules: 'socks5://127.0.0.1:9150', proxyBypassRules: '<local>' });
+  publishTorState({ proxyEnabled: true, message: 'Prehliadanie cez Tor je zapnuté.' });
+  return { ok: true, ...torState };
+}
+
+async function disableTorProxy() {
+  await session.defaultSession.setProxy({ mode: 'direct' });
+  torState.proxyEnabled = false;
+  if (!torState.onion) stopTorHosting();
+  publishTorState({ proxyEnabled: false, message: 'Prehliadanie cez Tor je vypnuté.' });
+  return { ok: true, ...torState };
+}
+
 async function startTorHosting(folder) {
   const fs = require('node:fs');
   const root = path.resolve(String(folder || ''));
@@ -850,7 +890,7 @@ async function startTorHosting(folder) {
   await new Promise((resolve, reject) => { torServer.once('error', reject); torServer.listen(0, '127.0.0.1', resolve); });
   const port = torServer.address().port;
   const configPath = path.join(hostDir, 'torrc');
-  fs.writeFileSync(configPath, `DataDirectory ${path.join(hostDir, 'data')}\nHiddenServiceDir ${serviceDir}\nHiddenServicePort 80 127.0.0.1:${port}\n`, 'utf8');
+  fs.writeFileSync(configPath, `DataDirectory ${path.join(hostDir, 'data')}\nSocksPort 127.0.0.1:9150\nHiddenServiceDir ${serviceDir}\nHiddenServicePort 80 127.0.0.1:${port}\n`, 'utf8');
   fs.mkdirSync(path.join(hostDir, 'data'), { recursive: true });
   publishTorState({ status: 'starting', folder: root, message: 'Tor sa pripája...' });
   torProcess = spawn(executable, ['-f', configPath], { windowsHide: true });
@@ -876,6 +916,8 @@ ipcMain.handle('tor-select-folder', async (event) => {
 });
 ipcMain.handle('tor-start-hosting', (_event, folder) => startTorHosting(folder));
 ipcMain.handle('tor-stop-hosting', () => stopTorHosting());
+ipcMain.handle('tor-enable-proxy', () => enableTorProxy());
+ipcMain.handle('tor-disable-proxy', () => disableTorProxy());
 ipcMain.on('open-browser-window', (_event, url) => { if (!supportedWebUrl(url)) return; if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); dispatchExternalUrl(mainWindow, url); } else if (hasLock) createWindow(url); });
 ipcMain.on('open-detached-window', (_event, url) => { if (hasLock) createWindow(url || 'linsoft://start'); });
 ipcMain.on('open-guest-window', () => { if (hasLock) createWindow('linsoft://start', { guest: true }); });

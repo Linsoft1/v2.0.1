@@ -1,6 +1,6 @@
 {
   "name": "linsoft-browser",
-  "version": "2.0.15",
+  "version": "2.0.16",
   "description": "Linsoft Browser 2.0 — cross-platform web browser for Windows and Debian Linux",
   "main": "main.cjs",
   "productName": "Linsoft Browser",
