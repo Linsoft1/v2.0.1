@@ -1547,67 +1547,6 @@ ipcMain.handle('tor-chat-send', async (_event, envelope) => {
     return { ok: false, message: `Správu sa nepodarilo odoslať cez Tor: ${error instanceof Error ? error.message : String(error)}` };
   }
 });
-ipcMain.handle('tor-chat-host-start', async (event) => {
-  if (torChatSession || torChatStartPromise) return { ok: false, message: 'Najprv ukonči aktívny alebo práve spúšťaný chat.' };
-  const warning = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender) || undefined, {
-    type: 'warning',
-    title: 'Onion chat 1:1',
-    message: 'Chat bude dostupný cez Tor. Pozvánku zdieľaj iba s druhým účastníkom.',
-    detail: 'Správy sú šifrované medzi aplikáciami a neukladajú sa na disk. Hostiteľ musí zostať online.',
-    buttons: ['Zrušiť', 'Vytvoriť onion pozvánku'],
-    defaultId: 0,
-    cancelId: 0,
-    noLink: true
-  });
-  if (warning.response !== 1) return { ok: false, cancelled: true };
-  return startTorChatHost();
-});
-ipcMain.handle('tor-chat-join', (_event, { address, token } = {}) => joinTorChat(address, token));
-ipcMain.handle('tor-chat-stop', () => stopTorChat());
-ipcMain.handle('tor-chat-poll', async (_event, afterId = 0) => {
-  const after = Number(afterId);
-  if (!torChatSession || !Number.isSafeInteger(after) || after < 0) return { ok: false, message: 'Onion chat nie je pripojený.' };
-  if (torChatSession.role === 'host') {
-    if (!torChatRoom) return { ok: false, message: 'Onion chat host sa odpojil.' };
-    return { ok: true, messages: torChatRoom.messages.filter((message) => message.id > after) };
-  }
-  try {
-    const url = new URL(`${torChatApiPrefix}/messages`, torChatSession.onion);
-    url.searchParams.set('after', String(after));
-    const response = await requestOnionService(url.href, torChatClientSocksPort, {
-      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId },
-      timeoutMs: 15000,
-      maxResponseBytes: 65536
-    });
-    const result = JSON.parse(response.body);
-    if (response.statusCode !== 200 || !result.ok || !Array.isArray(result.messages)) throw new Error(result.message || `HTTP ${response.statusCode}`);
-    return { ok: true, messages: result.messages };
-  } catch (error) {
-    return { ok: false, message: `Spojenie s onion chatom zlyhalo: ${error instanceof Error ? error.message : String(error)}` };
-  }
-});
-ipcMain.handle('tor-chat-send', async (_event, envelope) => {
-  if (!torChatSession || !isValidTorChatEnvelope(envelope)) return { ok: false, message: 'Chat nie je pripojený alebo správa nie je platná.' };
-  if (torChatSession.role === 'host') {
-    const message = enqueueTorChatMessage(torChatRoom, 'host', envelope);
-    return message ? { ok: true, id: message.id } : { ok: false, message: 'Chat sa ukončil.' };
-  }
-  try {
-    const url = new URL(`${torChatApiPrefix}/messages`, torChatSession.onion);
-    const response = await requestOnionService(url.href, torChatClientSocksPort, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
-      body: JSON.stringify(envelope),
-      timeoutMs: 30000,
-      maxResponseBytes: 65536
-    });
-    const result = JSON.parse(response.body);
-    if (response.statusCode !== 201 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
-    return { ok: true, id: result.id };
-  } catch (error) {
-    return { ok: false, message: `Správu sa nepodarilo odoslať cez Tor: ${error instanceof Error ? error.message : String(error)}` };
-  }
-});
 ipcMain.handle('tor-default-folder', () => {
   const fs = require('node:fs');
   const folder = path.join(writableDataPath, 'Tor Hosting');

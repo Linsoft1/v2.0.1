@@ -8,6 +8,10 @@ for (const file of files) {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`Syntax error in ${file}: ${result.stderr || result.stdout}`);
 }
+const mainSource = fs.readFileSync(path.join(root, 'main.cjs'), 'utf8');
+const ipcHandlers = [...mainSource.matchAll(/\bipcMain\.handle\(\s*['"]([^'"]+)['"]/g)].map((match) => match[1]);
+const duplicateIpcHandlers = [...new Set(ipcHandlers.filter((channel, index) => ipcHandlers.indexOf(channel) !== index))];
+if (duplicateIpcHandlers.length) throw new Error(`Duplicate IPC handlers in main.cjs: ${duplicateIpcHandlers.join(', ')}`);
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const protocols = packageJson.build?.protocols || [];
 const hasLinsoftProtocol = protocols.some((entry) => entry.schemes?.includes('linsoft'));
