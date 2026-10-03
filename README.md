@@ -38,6 +38,16 @@ npm start
 & "C:\Users\Martin\AppData\Local\Microsoft\WinGet\Packages\OpenJS.NodeJS.LTS_Microsoft.Winget.Source_8wekyb3d8bbwe\node-v24.19.0-win-x64\npm.cmd" test
 ```
 
+The live Tor hosting smoke test is separate because it requires a working Tor network connection:
+
+```powershell
+npm run test:tor
+```
+
+## Onion chat 1:1
+
+Open Settings > Advanced > Tor Hosting > Onion Chat. One person creates an invitation and shares it privately; the other pastes it and connects. The invitation accepts one guest, and both participants must keep Linsoft Browser running. Chat messages are end-to-end encrypted and held in memory only; stopping the chat or closing the app clears them. The invitation contains the room access token and encryption key, so treat it like a password. A new invitation is required after the host restarts the app.
+
 ## Build Debian package
 
 ```powershell

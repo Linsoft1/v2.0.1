@@ -83,4 +83,9 @@ contextBridge.exposeInMainWorld('linsoftBrowser', {
   ,setManualProxy: (settings) => ipcRenderer.invoke('set-manual-proxy', settings)
   ,onTorStatus: (callback) => ipcRenderer.on('tor-status', (_event, status) => callback(status))
   ,getTorDefaultFolder: () => ipcRenderer.invoke('tor-default-folder')
+  ,startTorChatHost: () => ipcRenderer.invoke('tor-chat-host-start')
+  ,joinTorChat: (invite) => ipcRenderer.invoke('tor-chat-join', invite)
+  ,pollTorChat: (afterId) => ipcRenderer.invoke('tor-chat-poll', afterId)
+  ,sendTorChat: (envelope) => ipcRenderer.invoke('tor-chat-send', envelope)
+  ,stopTorChat: () => ipcRenderer.invoke('tor-chat-stop')
 });

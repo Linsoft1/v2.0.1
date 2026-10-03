@@ -1,25 +1,27 @@
 # Linsoft Browser Release Checklist
 
-## Current Release: 2.0.21
+## Current Release: 2.0.22
 
 - Electron is upgraded to `44.4.5` and Electron Builder to `26.15.3` to address the audited advisories.
 - `npm ci` succeeds locally with the updated lockfile.
 - `npm test` passes locally.
 - `npm audit` reports zero vulnerabilities.
 - Windows installer builds locally with the current Electron version.
-- For `2.0.21`, the Windows installer is intentionally unsigned with explicit release approval; the signing gate below is not satisfied for this release.
-- Publish tag `v2.0.21`; Linux CI stages the custom Debian package in a flat folder for release upload. Build jobs use `--publish never`; the dedicated release job uploads assets using `GITHUB_TOKEN`.
+- For this explicitly requested `2.0.22` release, the Windows installer is intentionally unsigned; the signing gate below remains unsatisfied.
+- Publish tag `v2.0.22`; Linux CI stages the custom Debian package in a flat folder for release upload. Build jobs use `--publish never`; the dedicated release job uploads assets using `GITHUB_TOKEN`.
 - Wait for both build jobs and the release upload to complete before calling this release complete.
 
 ## Release Gate
 
 - [ ] `npm ci` succeeds on both Windows and Linux runners.
-- [ ] `npm test` passes.
+- [x] `npm test` passes, including Tor chat protocol and AES-GCM tests.
+- [x] `npm run test:tor` reaches the onion service, relays encrypted chat data, and rejects a second guest.
 - [ ] Windows installer builds and uploads.
 - [ ] Windows installer is signed with the release code-signing certificate; verify its publisher in the file properties before publishing.
 - [ ] Debian package builds and passes `node tools/verify-deb.cjs`.
 - [ ] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
 - [ ] Install the Windows package and verify Settings > Updates, manual check, download progress, and restart/install behavior.
+- [ ] Install two copies, create and join a chat invitation, exchange messages, then verify stopping the host disconnects the guest.
 - [x] Review and update vulnerable Electron/build dependencies.
 
 ## Local Commands

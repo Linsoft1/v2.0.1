@@ -4,6 +4,97 @@ const tabTitle = document.getElementById('tabTitle');
 const isGuestWindow = new URLSearchParams(window.location.search).has('guest');
 const isNativeTabs = new URLSearchParams(window.location.search).has('nativeTabs');
 document.getElementById('guestIndicator').hidden = !isGuestWindow;
+const torChatUi = { role: '', onion: '', invite: '', key: null, lastId: 0, messages: [], pollTimer: null, polling: false, busy: false, generation: 0, status: 'stopped', statusMessage: 'Onion chat je vypnutý.' };
+async function importTorChatKey(encodedKey) { return window.linsoftTorChatCrypto.importKey(encodedKey); }
+async function encryptTorChatMessage(text) { return window.linsoftTorChatCrypto.encrypt(torChatUi.key, text); }
+async function decryptTorChatMessage(message) { return window.linsoftTorChatCrypto.decrypt(torChatUi.key, message); }
+function renderTorChatMessages() {
+  for (const list of document.querySelectorAll('.tor-chat-messages')) {
+    list.replaceChildren();
+    for (const message of torChatUi.messages) {
+      const bubble = document.createElement('article');
+      bubble.className = `tor-chat-message${message.sender === torChatUi.role ? ' own' : ''}`;
+      const meta = document.createElement('small');
+      meta.textContent = `${message.sender === torChatUi.role ? 'Ty' : 'Kontakt'} · ${new Date(message.sentAt).toLocaleTimeString()}`;
+      const content = document.createElement('p');
+      content.textContent = message.text;
+      bubble.append(meta, content);
+      list.appendChild(bubble);
+    }
+    list.scrollTop = list.scrollHeight;
+  }
+}
+function renderTorChatState() {
+  const active = Boolean(torChatUi.role);
+  for (const panel of document.querySelectorAll('.tor-chat-section')) {
+    const query = (selector) => panel.querySelector(selector);
+    const status = query('#torChatStatus');
+    if (!status) continue;
+    status.textContent = torChatUi.statusMessage;
+    query('#torChatDot').dataset.status = torChatUi.status;
+    query('#torChatHost').disabled = torChatUi.busy || active;
+    query('#torChatJoin').disabled = torChatUi.busy || active;
+    query('#torChatEnd').disabled = !active && !torChatUi.busy;
+    query('#torChatInvitePanel').hidden = torChatUi.role !== 'host';
+    query('#torChatInviteValue').value = torChatUi.invite;
+    query('#torChatJoinPanel').hidden = active;
+    query('#torChatConversation').hidden = !active;
+    query('#torChatMessage').disabled = !active;
+    query('#torChatSend').disabled = !active;
+  }
+  renderTorChatMessages();
+}
+function stopTorChatPolling() {
+  if (torChatUi.pollTimer) clearTimeout(torChatUi.pollTimer);
+  torChatUi.pollTimer = null;
+}
+function scheduleTorChatPoll(delay = 2500) {
+  stopTorChatPolling();
+  if (torChatUi.role) torChatUi.pollTimer = setTimeout(pollTorChatMessages, delay);
+}
+async function pollTorChatMessages() {
+  if (!torChatUi.role || torChatUi.polling) return;
+  torChatUi.polling = true;
+  try {
+    const result = await window.linsoftBrowser?.pollTorChat?.(torChatUi.lastId);
+    if (!result?.ok) throw new Error(result?.message || 'Tor chat sa odpojil.');
+    for (const message of result.messages || []) {
+      if (message.id <= torChatUi.lastId) continue;
+      torChatUi.lastId = message.id;
+      try {
+        const text = await decryptTorChatMessage(message);
+        torChatUi.messages.push({ sender: message.sender, sentAt: message.sentAt, text });
+        if (torChatUi.messages.length > 200) torChatUi.messages.shift();
+      } catch {
+        torChatUi.messages.push({ sender: message.sender, sentAt: message.sentAt, text: '[Správu sa nepodarilo dešifrovať.]' });
+      }
+    }
+    torChatUi.status = 'running';
+    torChatUi.statusMessage = `Šifrovaný onion chat je pripojený${torChatUi.role === 'host' ? ' · Čaká sa na účastníka' : ''}.`;
+    renderTorChatState();
+  } catch (error) {
+    torChatUi.status = 'error';
+    torChatUi.statusMessage = error instanceof Error ? error.message : 'Spojenie s onion chatom zlyhalo.';
+    renderTorChatState();
+  } finally {
+    torChatUi.polling = false;
+    scheduleTorChatPoll(torChatUi.status === 'error' ? 5000 : 2500);
+  }
+}
+function clearTorChatUi() {
+  stopTorChatPolling();
+  torChatUi.role = '';
+  torChatUi.onion = '';
+  torChatUi.invite = '';
+  torChatUi.key = null;
+  torChatUi.lastId = 0;
+  torChatUi.messages = [];
+  torChatUi.polling = false;
+  torChatUi.busy = false;
+  torChatUi.status = 'stopped';
+  torChatUi.statusMessage = 'Onion chat je vypnutý.';
+  renderTorChatMessages();
+}
 const historyStack = ['linsoft://start'];
 let historyIndex = 0;
 let activeTabId = 1;
@@ -274,6 +365,7 @@ function showTabContextMenu(x, y, id) {
 }
 
 function showInputContextMenu(input, x, y) {
+  if (input === addressInput) closeAddressSuggestions();
   document.querySelector('.input-context-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'tab-context-menu input-context-menu';
@@ -1112,17 +1204,128 @@ function addAdvancedSettings() {
   advancedPanel.insertAdjacentHTML('beforeend', '<div class="security-subsection tor-hosting-section"><p class="settings-label">TOR HOSTING</p><div class="setting-card"><div><strong>Hostovať web cez Tor</strong><small id="torHostingStatus">Tor hosting je vypnutý.</small></div><span class="vpn-status-dot" id="torHostingDot"></span></div><div class="setting-card"><div><strong>Priečinok webu</strong><small id="torHostingFolder">Nie je vybraný priečinok.</small></div><button class="settings-control" id="chooseTorFolder">Vybrať priečinok</button></div><div class="vpn-actions"><button class="save-settings" id="startTorHosting">Spustiť hosting</button><button class="settings-reset" id="stopTorHosting">Zastaviť</button></div><div class="vpn-log-wrap"><div class="vpn-log-title">Onion adresa</div><pre id="torHostingAddress">Zatiaľ nie je vytvorená.</pre><button class="settings-control" id="copyTorAddress" disabled>Kopírovať adresu</button></div></div>');
   advancedPanel.querySelector('.tor-hosting-section').insertAdjacentHTML('afterbegin', '<div class="setting-card"><div><strong>Prehliadať cez Tor</strong><small id="torProxyStatus">Tor proxy je vypnutá.</small></div><button class="settings-control" id="toggleTorProxy">Zapnúť Tor</button></div>');
   advancedPanel.querySelector('.tor-hosting-section').insertAdjacentHTML('afterbegin', '<div class="setting-card manual-proxy-card"><div><strong>Manuálna proxy</strong><small>Vyber SOCKS4 alebo SOCKS5 a zadaj hostiteľa s portom.</small></div><select class="settings-input" id="manualProxyProtocol"><option value="socks5">SOCKS5</option><option value="socks4">SOCKS4</option></select><input class="settings-input" id="manualProxyHost" placeholder="Hostiteľ" value="127.0.0.1"><input class="settings-input" id="manualProxyPort" placeholder="Port" value="9150" inputmode="numeric"><button class="settings-control" id="applyManualProxy">Použiť proxy</button><button class="settings-reset" id="disableManualProxy">Vypnúť proxy</button></div>');
+  advancedPanel.querySelector('.tor-hosting-section').insertAdjacentHTML('beforeend', '<div class="security-subsection tor-chat-section"><p class="settings-label">ONION CHAT 1:1</p><div class="setting-card"><div><strong>Šifrovaný chat cez Tor</strong><small id="torChatStatus">Onion chat je vypnutý.</small></div><span class="vpn-status-dot" id="torChatDot" data-status="stopped"></span></div><div class="vpn-actions"><button class="save-settings" id="torChatHost" type="button">Vytvoriť pozvánku</button><button class="settings-reset" id="torChatEnd" type="button" disabled>Ukončiť chat</button></div><div class="tor-chat-invite" id="torChatInvitePanel" hidden><label for="torChatInviteValue">Pozvánka pre druhého účastníka</label><textarea class="settings-input" id="torChatInviteValue" rows="2" readonly></textarea><button class="settings-control" id="copyTorChatInvite" type="button">Kopírovať pozvánku</button></div><div class="tor-chat-join-row" id="torChatJoinPanel"><input class="settings-input" id="torChatInviteInput" type="text" placeholder="Vlož onion pozvánku" autocomplete="off"><button class="settings-control" id="torChatJoin" type="button">Pripojiť</button></div><div class="tor-chat-conversation" id="torChatConversation" hidden><div class="tor-chat-messages" id="torChatMessages" role="log" aria-live="polite" aria-label="Správy onion chatu"></div><form class="tor-chat-compose" id="torChatForm"><textarea class="settings-input" id="torChatMessage" rows="2" maxlength="2000" placeholder="Napíš správu..." disabled></textarea><button class="save-settings" id="torChatSend" type="submit" disabled>Odoslať</button></form></div></div>');
   let torFolder = '';
-  const renderTorStatus = (status) => { const label = surface.querySelector('#torHostingStatus'); const proxyLabel = surface.querySelector('#torProxyStatus'); const proxyButton = surface.querySelector('#toggleTorProxy'); const folderLabel = surface.querySelector('#torHostingFolder'); const dot = surface.querySelector('#torHostingDot'); const address = surface.querySelector('#torHostingAddress'); const start = surface.querySelector('#startTorHosting'); const copy = surface.querySelector('#copyTorAddress'); if (!label) return; const requestInfo = Number(status?.requestCount) > 0 ? ` · Požiadavky: ${status.requestCount}` : ''; label.textContent = `${status?.message || 'Tor hosting je vypnutý.'}${requestInfo}`; proxyLabel.textContent = status?.proxyEnabled ? 'Tor proxy je pripojená.' : status?.status === 'connecting' ? 'Tor sa pripája...' : 'Tor proxy je vypnutá.'; proxyButton.textContent = status?.proxyEnabled ? 'Vypnúť Tor' : 'Zapnúť Tor'; proxyButton.disabled = status?.status === 'connecting'; folderLabel.textContent = status?.folder || torFolder || 'Nie je vybraný priečinok.'; dot.dataset.status = status?.proxyEnabled ? 'connected' : status?.status || 'stopped'; address.textContent = status?.onion || 'Zatiaľ nie je vytvorená.'; start.disabled = status?.status === 'starting' || status?.status === 'running'; copy.disabled = !status?.onion; };
-  surface.querySelector('#toggleTorProxy').addEventListener('click', async () => { const current = await window.linsoftBrowser?.getTorStatus?.(); const result = current?.proxyEnabled ? await window.linsoftBrowser?.disableTorProxy?.() : await window.linsoftBrowser?.enableTorProxy?.(); renderTorStatus(result || { status: 'error', message: 'Tor proxy sa nepodarilo prepnúť.' }); });
-  surface.querySelector('#applyManualProxy').addEventListener('click', async () => { const result = await window.linsoftBrowser?.setManualProxy?.({ protocol: surface.querySelector('#manualProxyProtocol').value, host: surface.querySelector('#manualProxyHost').value, port: surface.querySelector('#manualProxyPort').value }); renderTorStatus(result || { status: 'error', message: 'Proxy sa nepodarilo nastaviť.' }); });
-  surface.querySelector('#disableManualProxy').addEventListener('click', async () => { const result = await window.linsoftBrowser?.setManualProxy?.({ host: '', port: '' }); renderTorStatus(result || { status: 'stopped', message: 'Proxy je vypnutá.' }); });
-  window.linsoftBrowser?.getTorDefaultFolder?.().then((folder) => { torFolder = folder || ''; renderTorStatus({ folder: torFolder, status: 'stopped', message: 'Predvolený Tor Hosting priečinok je pripravený.' }); }).catch(() => {});
-  surface.querySelector('#chooseTorFolder').addEventListener('click', async () => { torFolder = await window.linsoftBrowser?.selectTorFolder?.() || ''; renderTorStatus({ folder: torFolder, status: 'stopped', message: torFolder ? 'Priečinok je pripravený.' : 'Tor hosting je vypnutý.' }); });
-  surface.querySelector('#startTorHosting').addEventListener('click', async () => { if (!torFolder) torFolder = await window.linsoftBrowser?.getTorDefaultFolder?.() || ''; if (!torFolder) return; renderTorStatus({ folder: torFolder, status: 'starting', message: 'Tor sa pripája...' }); const result = await window.linsoftBrowser?.startTorHosting?.(torFolder); renderTorStatus(result || { status: 'error', message: 'Tor hosting sa nepodarilo spustiť.' }); });
+  let currentTorStatus = { status: 'stopped', proxyStatus: 'stopped', proxyEnabled: false };
+  const renderTorStatus = (update) => { currentTorStatus = { ...currentTorStatus, ...update }; const status = currentTorStatus; if (typeof status.folder === 'string' && status.folder) torFolder = status.folder; const label = surface.querySelector('#torHostingStatus'); const proxyLabel = surface.querySelector('#torProxyStatus'); const proxyButton = surface.querySelector('#toggleTorProxy'); const folderLabel = surface.querySelector('#torHostingFolder'); const dot = surface.querySelector('#torHostingDot'); const address = surface.querySelector('#torHostingAddress'); const start = surface.querySelector('#startTorHosting'); const stop = surface.querySelector('#stopTorHosting'); const copy = surface.querySelector('#copyTorAddress'); if (!label) return; const requestInfo = Number(status.requestCount) > 0 ? ` · Požiadavky: ${status.requestCount}` : ''; label.textContent = `${status.message || 'Tor hosting je vypnutý.'}${requestInfo}`; proxyLabel.textContent = status.proxyMessage || (status.proxyEnabled ? 'Tor proxy je pripojená.' : 'Tor proxy je vypnutá.'); proxyButton.textContent = status.proxyStatus === 'manual' ? 'Vypnúť proxy' : status.proxyEnabled ? 'Vypnúť Tor' : 'Zapnúť Tor'; proxyButton.disabled = status.proxyStatus === 'connecting'; folderLabel.textContent = status.folder || torFolder || 'Nie je vybraný priečinok.'; dot.dataset.status = status.status || 'stopped'; address.textContent = status.onion || 'Zatiaľ nie je vytvorená.'; start.disabled = status.status === 'starting' || status.status === 'running'; stop.disabled = status.status !== 'starting' && status.status !== 'running'; copy.disabled = !status.onion; };
+  surface.querySelector('#toggleTorProxy').addEventListener('click', async () => { const current = await window.linsoftBrowser?.getTorStatus?.(); const result = current?.proxyEnabled ? await window.linsoftBrowser?.disableTorProxy?.() : await window.linsoftBrowser?.enableTorProxy?.(); renderTorStatus(result?.ok ? result : { proxyStatus: 'error', proxyMessage: result?.message || 'Tor proxy sa nepodarilo prepnúť.' }); });
+  surface.querySelector('#applyManualProxy').addEventListener('click', async () => { const result = await window.linsoftBrowser?.setManualProxy?.({ protocol: surface.querySelector('#manualProxyProtocol').value, host: surface.querySelector('#manualProxyHost').value, port: surface.querySelector('#manualProxyPort').value }); renderTorStatus(result?.ok ? result : { proxyStatus: 'error', proxyMessage: result?.message || 'Manuálnu proxy sa nepodarilo zapnúť.' }); });
+  surface.querySelector('#disableManualProxy').addEventListener('click', async () => { const result = await window.linsoftBrowser?.setManualProxy?.({ host: '', port: '' }); renderTorStatus(result || { proxyStatus: 'stopped', proxyEnabled: false, proxyMessage: 'Proxy je vypnutá.' }); });
+  surface.querySelector('#chooseTorFolder').addEventListener('click', async () => { torFolder = await window.linsoftBrowser?.selectTorFolder?.() || ''; renderTorStatus({ folder: torFolder }); });
+  surface.querySelector('#startTorHosting').addEventListener('click', async () => { if (!torFolder) torFolder = await window.linsoftBrowser?.getTorDefaultFolder?.() || ''; if (!torFolder) return; const result = await window.linsoftBrowser?.startTorHosting?.(torFolder); renderTorStatus(result || { status: 'error', message: 'Tor hosting sa nepodarilo spustiť.' }); });
   surface.querySelector('#stopTorHosting').addEventListener('click', async () => { const result = await window.linsoftBrowser?.stopTorHosting?.(); renderTorStatus(result || { status: 'stopped', message: 'Tor hosting je vypnutý.' }); });
   surface.querySelector('#copyTorAddress').addEventListener('click', async () => { const address = surface.querySelector('#torHostingAddress').textContent; await window.linsoftBrowser?.writeClipboardText?.(address); showToast('Onion adresa bola skopírovaná.'); });
   window.linsoftBrowser?.onTorStatus?.(renderTorStatus); window.linsoftBrowser?.getTorStatus?.().then(renderTorStatus).catch(() => {});
+  renderTorChatState();
+  surface.querySelector('#torChatHost').addEventListener('click', async () => {
+    if (torChatUi.busy || torChatUi.role) return;
+    const generation = ++torChatUi.generation;
+    torChatUi.busy = true;
+    torChatUi.status = 'starting';
+    torChatUi.statusMessage = 'Vytváram onion chat...';
+    renderTorChatState();
+    try {
+      const generatedKey = await window.linsoftTorChatCrypto.generateKey();
+      const encodedKey = generatedKey.encoded;
+      const key = generatedKey.key;
+      const result = await window.linsoftBrowser?.startTorChatHost?.();
+      if (generation !== torChatUi.generation) return;
+      if (!result?.ok) {
+        torChatUi.busy = false;
+        torChatUi.status = result?.cancelled ? 'stopped' : 'error';
+        torChatUi.statusMessage = result?.message || (result?.cancelled ? 'Vytváranie chatu bolo zrušené.' : 'Onion chat sa nepodarilo spustiť.');
+        renderTorChatState();
+        return;
+      }
+      torChatUi.role = 'host';
+      torChatUi.onion = result.onion;
+      torChatUi.key = key;
+      torChatUi.invite = `${result.onion}#${result.token}.${encodedKey}`;
+      torChatUi.lastId = 0;
+      torChatUi.messages = [];
+      torChatUi.busy = false;
+      torChatUi.status = 'running';
+      torChatUi.statusMessage = 'Chat čaká na druhého účastníka. Zdieľaj pozvánku súkromne.';
+      renderTorChatState();
+      scheduleTorChatPoll(0);
+    } catch (error) {
+      if (generation !== torChatUi.generation) return;
+      torChatUi.busy = false;
+      torChatUi.status = 'error';
+      torChatUi.statusMessage = error instanceof Error ? error.message : 'Onion chat sa nepodarilo spustiť.';
+      renderTorChatState();
+    }
+  });
+  surface.querySelector('#torChatJoin').addEventListener('click', async () => {
+    if (torChatUi.busy || torChatUi.role) return;
+    const inviteText = surface.querySelector('#torChatInviteInput').value.trim();
+    const generation = ++torChatUi.generation;
+    torChatUi.busy = true;
+    torChatUi.status = 'starting';
+    torChatUi.statusMessage = 'Pripájam sa k onion chatu cez Tor...';
+    renderTorChatState();
+    try {
+      const invite = new URL(inviteText);
+      const [token, encodedKey, extra] = invite.hash.slice(1).split('.');
+      if (invite.protocol !== 'http:' || !/^[a-z2-7]{56}\.onion$/i.test(invite.hostname) || invite.username || invite.password || invite.pathname !== '/' || invite.search || extra !== undefined || !/^[A-Za-z0-9_-]{32}$/.test(token || '')) throw new Error('Vlož platnú onion pozvánku od druhého účastníka.');
+      const key = await importTorChatKey(encodedKey || '');
+      const result = await window.linsoftBrowser?.joinTorChat?.({ address: `${invite.origin}/`, token });
+      if (generation !== torChatUi.generation) return;
+      if (!result?.ok) throw new Error(result?.message || 'K onion chatu sa nepodarilo pripojiť.');
+      torChatUi.role = 'guest';
+      torChatUi.onion = result.onion;
+      torChatUi.invite = '';
+      torChatUi.key = key;
+      torChatUi.lastId = 0;
+      torChatUi.messages = [];
+      torChatUi.busy = false;
+      torChatUi.status = 'running';
+      torChatUi.statusMessage = 'Pripojené k onion chatu. Správy sú šifrované.';
+      renderTorChatState();
+      scheduleTorChatPoll(0);
+    } catch (error) {
+      if (generation !== torChatUi.generation) return;
+      torChatUi.busy = false;
+      torChatUi.status = 'error';
+      torChatUi.statusMessage = error instanceof Error ? error.message : 'K onion chatu sa nepodarilo pripojiť.';
+      renderTorChatState();
+    }
+  });
+  surface.querySelector('#torChatEnd').addEventListener('click', async () => {
+    torChatUi.generation += 1;
+    torChatUi.busy = true;
+    torChatUi.statusMessage = 'Ukončujem onion chat...';
+    renderTorChatState();
+    await window.linsoftBrowser?.stopTorChat?.();
+    clearTorChatUi();
+    renderTorChatState();
+  });
+  surface.querySelector('#copyTorChatInvite').addEventListener('click', async () => {
+    const result = await window.linsoftBrowser?.writeClipboardText?.(torChatUi.invite);
+    showToast(result?.ok ? 'Onion pozvánka bola skopírovaná.' : (result?.message || 'Pozvánku sa nepodarilo skopírovať.'));
+  });
+  surface.querySelector('#torChatForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const input = surface.querySelector('#torChatMessage');
+    const text = input.value.trim();
+    if (!text || text.length > 2000 || !torChatUi.role || !torChatUi.key) return;
+    const send = surface.querySelector('#torChatSend');
+    send.disabled = true;
+    try {
+      const envelope = await encryptTorChatMessage(text);
+      const result = await window.linsoftBrowser?.sendTorChat?.(envelope);
+      if (!result?.ok) throw new Error(result?.message || 'Správu sa nepodarilo odoslať cez Tor.');
+      input.value = '';
+      await pollTorChatMessages();
+    } catch (error) {
+      torChatUi.status = 'error';
+      torChatUi.statusMessage = error instanceof Error ? error.message : 'Správu sa nepodarilo odoslať.';
+      renderTorChatState();
+    } finally {
+      send.disabled = !torChatUi.role;
+      input.focus();
+    }
+  });
   const downloadFolderRow = downloads.closest('.setting-card'); downloadFolderRow.insertAdjacentHTML('beforeend', `<button class="settings-control" id="chooseDownloadFolder">${settingsState.downloadFolderPath ? 'Zmeniť vlastný priečinok' : 'Vybrať vlastný priečinok'}</button><small class="download-folder-name" id="downloadFolderName">${settingsState.downloadFolderPath ? escapeHtml(settingsState.downloadFolderPath) : 'Používa sa predvolený systémový priečinok.'}</small>`);
   downloads.addEventListener('change', () => { settingsState.downloadFolderPath = ''; surface.querySelector('#downloadFolderName').textContent = 'Používa sa predvolený systémový priečinok.'; surface.querySelector('#chooseDownloadFolder').textContent = 'Vybrať vlastný priečinok'; });
   surface.querySelector('#chooseDownloadFolder').addEventListener('click', async () => { const folder = await window.linsoftBrowser?.selectDownloadFolder?.(); if (!folder) return; settingsState.downloadFolderPath = folder; surface.querySelector('#downloadFolderName').textContent = folder; surface.querySelector('#chooseDownloadFolder').textContent = 'Zmeniť vlastný priečinok'; saveSettings(); });
@@ -1141,6 +1344,18 @@ function addAdvancedSettings() {
 
 function navigate(value, addHistory = true, skipTorProxy = false) {
   const input = value.trim();
+  const explicitFile = /^file:\/\//i.test(input);
+  let localFileUrl = '';
+  if (explicitFile) {
+    try {
+      const parsedFileUrl = new URL(input);
+      if (!/\.html?$/i.test(decodeURIComponent(parsedFileUrl.pathname))) throw new Error('Unsupported local file type');
+      localFileUrl = parsedFileUrl.href;
+    } catch {
+      showToast('Otvoriť možno iba platný HTML dokument.');
+      return;
+    }
+  }
   if (!skipTorProxy && /^https?:\/\/[^/]+\.onion(?:\/|$)/i.test(input)) {
     window.linsoftBrowser?.enableTorProxy?.().then((result) => { if (result?.ok) navigate(input, addHistory, true); else showToast(result?.message || 'Tor proxy sa nepodarilo spustiť.'); }).catch(() => showToast('Tor proxy sa nepodarilo spustiť.'));
     return;
@@ -1153,8 +1368,8 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
   if (/^(javascript|data|vbscript):/i.test(input)) { showToast('Tento typ adresy je z bezpečnostných dôvodov zablokovaný.'); return; }
   const explicitHttp = /^https?:\/\//i.test(input);
   const networkAddress = normalizeNetworkAddress(input);
-  const looksLikeUrl = explicitHttp || networkAddress.isIp || /^[^\s]+\.[^\s]+$/.test(input);
-  const requestedUrl = looksLikeUrl ? (explicitHttp ? input : networkAddress.isIp ? networkAddress.value : `https://${input}`) : searchUrl(input);
+  const looksLikeUrl = explicitHttp || explicitFile || networkAddress.isIp || /^[^\s]+\.[^\s]+$/.test(input);
+  const requestedUrl = explicitFile ? localFileUrl : looksLikeUrl ? (explicitHttp ? input : networkAddress.isIp ? networkAddress.value : `https://${input}`) : searchUrl(input);
   const url = requestedUrl;
   const currentTab = tabs.get(activeTabId);
   if (addHistory && currentTab) { currentTab.history = currentTab.history || [currentTab.url]; currentTab.history.splice(currentTab.historyIndex + 1); currentTab.history.push(url); currentTab.historyIndex = currentTab.history.length - 1; }

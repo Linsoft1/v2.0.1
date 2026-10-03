@@ -6,7 +6,9 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
+const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeLocalHtmlUrl, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
+const { loadSavedTorHostingState, requestOnionService, resolveHostedFile, saveTorHostingFolder, waitForOnionService } = require('./lib/tor-hosting.cjs');
+const { createTorChatRoom, createTorChatServer, enqueueTorChatMessage, isValidTorChatEnvelope } = require('./lib/tor-chat-protocol.cjs');
 const { createPermissionCheckHandler, createPermissionRequestHandler } = require('./lib/permission-handlers.cjs');
 const { NativeTabManager } = require('./lib/native-tab-manager.cjs');
 app.setName('Linsoft Browser');
@@ -25,6 +27,8 @@ const windowStatePath = path.join(writableDataPath, 'window-state.json');
 const passwordVaultPath = path.join(writableDataPath, 'password-vault.json');
 const downloadHistoryPath = path.join(writableDataPath, 'download-history.json');
 const sitePermissionsPath = path.join(writableDataPath, 'site-permissions.json');
+const torHostingStatePath = path.join(writableDataPath, 'tor-hosting-state.json');
+const torHostingHostnamePath = path.join(writableDataPath, 'tor-hosting', 'hidden-service', 'hostname');
 /** @type {Set<import('electron').BrowserWindow>} */
 const browserWindows = new Set();
 let certificateErrorHandlerRegistered = false;
@@ -60,10 +64,26 @@ let mainWindow = null;
 let openVpnProcess = null;
 let openVpnProfile = '';
 const activeDownloads = new Map();
-let torProcess = null;
+let torProxyProcess = null;
+let torHostingProcess = null;
 let torServer = null;
-let torReadyPromise = Promise.resolve(false);
-let torState = { status: 'stopped', onion: '', folder: '', proxyEnabled: false, requestCount: 0, lastRequest: '', message: 'Tor hosting je vypnutý.' };
+let torChatProcess = null;
+let torChatServer = null;
+let torChatReadyPromise = Promise.resolve(false);
+let torChatSession = null;
+let torChatRoom = null;
+let torChatStartPromise = null;
+let torChatStartController = null;
+let torChatGeneration = 0;
+let torProxyGeneration = 0;
+let torProxyReadyPromise = Promise.resolve(false);
+let torHostingReadyPromise = Promise.resolve(false);
+let torStartPromise = null;
+let torHostingStartPromise = null;
+let torHostingStartController = null;
+let torHostingGeneration = 0;
+let torShutdownPromise = null;
+let torState = { ...loadSavedTorHostingState(torHostingStatePath, torHostingHostnamePath), proxyEnabled: false, proxyStatus: 'stopped', proxyMessage: 'Tor proxy je vypnutá.', requestCount: 0, lastRequest: '' };
 let downloadHistory = [];
 let passwordVault = [];
 let sitePermissions = {};
@@ -505,6 +525,7 @@ function showMouseEditContextMenu(window, contents, params, menuData) {
 
 function dispatchExternalUrl(window, url) {
   if (!window || !url) return;
+  if (/^file:\/\//i.test(url) && !isSafeLocalHtmlUrl(url)) return;
   if (/^linsoft:\/\/install\?/i.test(url)) {
     try {
       const parsed = new URL(url);
@@ -979,13 +1000,66 @@ function publishTorState(state) {
   for (const window of browserWindows) if (!window.isDestroyed()) window.webContents.send('tor-status', torState);
 }
 
-function stopTorHosting() {
-  if (torProcess && !torProcess.killed) torProcess.kill();
-  torProcess = null;
-  if (torServer) torServer.close();
+function closeTorServer(server) {
+  if (!server?.listening) return Promise.resolve();
+  return new Promise((resolve) => {
+    try {
+      server.close(() => resolve());
+      server.closeAllConnections?.();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+function terminateTorProcess(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener('exit', finish);
+      resolve();
+    };
+    const timeout = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch {}
+      finish();
+    }, 5000);
+    child.once('exit', finish);
+    try { if (!child.kill()) finish(); } catch { finish(); }
+  });
+}
+
+async function stopTorHostingResources() {
+  torHostingStartController?.abort();
+  torHostingStartController = null;
+  const child = torHostingProcess;
+  torHostingProcess = null;
+  torHostingReadyPromise = Promise.resolve(false);
+  const server = torServer;
   torServer = null;
-  publishTorState({ status: 'stopped', onion: '', folder: '', message: 'Tor hosting je vypnutý.' });
-  return { ok: true };
+  await Promise.all([terminateTorProcess(child), closeTorServer(server)]);
+}
+
+async function stopTorProxyProcess(invalidateStart = true) {
+  if (invalidateStart) torProxyGeneration += 1;
+  const child = torProxyProcess;
+  torProxyProcess = null;
+  torProxyReadyPromise = Promise.resolve(false);
+  await terminateTorProcess(child);
+}
+
+async function stopTorHosting() {
+  torHostingGeneration += 1;
+  await stopTorHostingResources();
+  const hasSavedAddress = Boolean(torState.onion);
+  publishTorState({
+    status: 'stopped',
+    message: hasSavedAddress ? 'Hosting je vypnutý. Onion adresa zostáva uložená a čaká na ručné spustenie.' : 'Tor hosting je vypnutý.'
+  });
+  return { ok: true, ...torState };
 }
 
 function waitForTcpPort(port, timeout = 30000) {
@@ -1002,23 +1076,72 @@ function waitForTcpPort(port, timeout = 30000) {
 
 function launchTorProcess(executable, args) {
   let resolveReady;
-  torReadyPromise = new Promise((resolve) => { resolveReady = resolve; });
-  const process = spawn(executable, [...args, '--Log', 'notice stdout'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  const observe = (chunk) => { if (/Bootstrapped 100% \(done\)/i.test(String(chunk))) resolveReady(true); };
-  process.stdout?.on('data', observe);
-  process.stderr?.on('data', (chunk) => { console.error('Tor stderr:', String(chunk)); observe(chunk); });
-  process.once('exit', () => resolveReady(false));
-  return process;
+  let readyResolved = false;
+  let logBuffer = '';
+  const ready = new Promise((resolve) => { resolveReady = resolve; });
+  const markReady = (value) => {
+    if (readyResolved) return;
+    readyResolved = true;
+    resolveReady(value);
+  };
+  const child = spawn(executable, [...args, '--Log', 'notice stdout'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const observe = (chunk) => {
+    logBuffer = `${logBuffer}${String(chunk)}`.slice(-4096);
+    if (/Bootstrapped 100% \(done\)/i.test(logBuffer)) markReady(true);
+  };
+  child.stdout?.on('data', observe);
+  child.stderr?.on('data', (chunk) => { console.error('Tor stderr:', String(chunk)); observe(chunk); });
+  child.once('error', () => markReady(false));
+  child.once('exit', () => markReady(false));
+  return { child, ready };
 }
 
-let torStartPromise = null;
+function waitForTorHostingReady(hostnamePath, readyPromise, signal, timeoutMs = 180000) {
+  return new Promise((resolve, reject) => {
+    let bootstrapped = false;
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve(true);
+    };
+    const onAbort = () => {
+      const error = new Error('Tor hosting was stopped while starting.');
+      error.name = 'AbortError';
+      finish(error);
+    };
+    const check = () => {
+      if (signal.aborted) return onAbort();
+      if (bootstrapped && require('node:fs').existsSync(hostnamePath)) finish();
+    };
+    const poll = setInterval(check, 250);
+    const timeout = setTimeout(() => finish(new Error('Tor did not bootstrap and create an onion address in time.')), timeoutMs);
+    signal.addEventListener('abort', onAbort, { once: true });
+    readyPromise.then((ready) => {
+      if (!ready) return finish(new Error('Tor exited before completing bootstrap.'));
+      bootstrapped = true;
+      check();
+    }, finish);
+    check();
+  });
+}
 
 async function enableTorProxyInternal() {
   const fs = require('node:fs');
   const executable = torExecutable();
-  if (!executable) return { ok: false, message: 'Pribalený Tor sa nenašiel.' };
-  publishTorState({ status: 'connecting', proxyEnabled: false, message: 'Tor sa pripája...' });
-  if (!torProcess) {
+  if (!executable) {
+    const message = 'Pribalený Tor sa nenašiel.';
+    publishTorState({ proxyEnabled: false, proxyStatus: 'error', proxyMessage: message });
+    return { ok: false, ...torState, message };
+  }
+  if (torState.proxyEnabled) return { ok: true, ...torState };
+  const generation = ++torProxyGeneration;
+  publishTorState({ proxyStatus: 'connecting', proxyEnabled: false, proxyMessage: 'Tor sa pripája...' });
+  if (!torProxyProcess || torProxyProcess.exitCode !== null || torProxyProcess.signalCode !== null) {
     const proxyDir = path.join(writableDataPath, 'tor-proxy');
     const dataDir = path.join(proxyDir, 'data');
     fs.mkdirSync(dataDir, { recursive: true });
@@ -1026,15 +1149,48 @@ async function enableTorProxyInternal() {
     const configPath = path.join(proxyDir, 'torrc');
     const torDataPath = dataDir.replace(/\\/g, '/');
     fs.writeFileSync(configPath, `DataDirectory "${torDataPath}"\nSocksPort 127.0.0.1:9150\n`, 'utf8');
-    torProcess = launchTorProcess(executable, ['-f', configPath]);
-    torProcess.once('error', (error) => { console.error('Tor proxy error:', error); publishTorState({ status: 'error', message: `Tor proxy sa nespustila: ${error.message}` }); });
-    torProcess.once('exit', (code) => { if (code !== 0) publishTorState({ status: 'error', proxyEnabled: false, message: `Tor proxy skončila s kódom ${code}.` }); });
+    const launched = launchTorProcess(executable, ['-f', configPath]);
+    torProxyProcess = launched.child;
+    torProxyReadyPromise = launched.ready;
+    const proxyChild = launched.child;
+    const handleProxyExit = (code, error) => {
+      if (torProxyProcess !== proxyChild) return;
+      torProxyProcess = null;
+      const message = error ? `Tor proxy sa nespustila: ${error.message}` : `Tor proxy skončila s kódom ${code}.`;
+      if (torState.proxyEnabled) {
+        session.defaultSession.setProxy({ mode: 'direct' })
+          .then(() => session.defaultSession.closeAllConnections())
+          .catch(() => {});
+      }
+      publishTorState({ proxyEnabled: false, proxyStatus: 'error', proxyMessage: message });
+    };
+    proxyChild.once('error', (error) => handleProxyExit(null, error));
+    proxyChild.once('exit', (code) => handleProxyExit(code));
   }
-  if (!(await waitForTcpPort(9150))) return { ok: false, message: 'Tor SOCKS proxy sa nespustila.' };
-  if (!(await Promise.race([torReadyPromise, new Promise((resolve) => setTimeout(() => resolve(false), 30000))]))) return { ok: false, message: 'Tor ešte nie je pripojený do siete. Skús to znova o chvíľu.' };
+  const proxyChild = torProxyProcess;
+  const bootstrapped = await new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 180000);
+    torProxyReadyPromise.then((ready) => { clearTimeout(timeout); resolve(ready); }, () => { clearTimeout(timeout); resolve(false); });
+  });
+  if (generation !== torProxyGeneration) return { ok: false, cancelled: true, ...torState };
+  if (!bootstrapped || !proxyChild || torProxyProcess !== proxyChild) {
+    await stopTorProxyProcess(false);
+    const message = 'Tor sa nepripojil do siete. Skontroluj pripojenie a skús to znova.';
+    publishTorState({ proxyEnabled: false, proxyStatus: 'error', proxyMessage: message });
+    return { ok: false, ...torState, message };
+  }
+  const proxyReady = await waitForTcpPort(9150, 5000);
+  if (generation !== torProxyGeneration) return { ok: false, cancelled: true, ...torState };
+  if (!proxyReady || torProxyProcess !== proxyChild) {
+    await stopTorProxyProcess(false);
+    const message = 'Tor SOCKS proxy sa nespustila.';
+    publishTorState({ proxyEnabled: false, proxyStatus: 'error', proxyMessage: message });
+    return { ok: false, ...torState, message };
+  }
+  if (generation !== torProxyGeneration) return { ok: false, cancelled: true, ...torState };
   await session.defaultSession.setProxy({ proxyRules: 'socks5://127.0.0.1:9150', proxyBypassRules: '<local>' });
   await session.defaultSession.closeAllConnections();
-  publishTorState({ proxyEnabled: true, message: 'Prehliadanie cez Tor je zapnuté.' });
+  publishTorState({ proxyEnabled: true, proxyStatus: 'running', proxyMessage: 'Prehliadanie cez Tor je zapnuté.' });
   return { ok: true, ...torState };
 }
 
@@ -1046,70 +1202,412 @@ async function enableTorProxy() {
 
 async function disableTorProxy() {
   await session.defaultSession.setProxy({ mode: 'direct' });
-  torState.proxyEnabled = false;
-  if (!torState.onion) stopTorHosting();
-  publishTorState({ proxyEnabled: false, message: 'Prehliadanie cez Tor je vypnuté.' });
+  await session.defaultSession.closeAllConnections();
+  await stopTorProxyProcess();
+  publishTorState({ proxyEnabled: false, proxyStatus: 'stopped', proxyMessage: 'Prehliadanie cez Tor je vypnuté.' });
   return { ok: true, ...torState };
 }
 
 async function startTorHosting(folder) {
   const fs = require('node:fs');
-  const root = path.resolve(String(folder || ''));
-  if (!root || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) return { ok: false, message: 'Vybraný priečinok neexistuje.' };
-  if (!fs.existsSync(path.join(root, 'index.html'))) return { ok: false, message: 'Vybraný priečinok neobsahuje index.html.' };
+  const requestedFolder = String(folder || '').trim();
+  if (!requestedFolder) return { ok: false, message: 'Najprv vyber priečinok pre hosting.' };
+  let root;
+  try { root = fs.realpathSync(path.resolve(requestedFolder)); } catch { return { ok: false, message: 'Vybraný priečinok neexistuje.' }; }
+  if (!fs.statSync(root).isDirectory()) return { ok: false, message: 'Vybraný priečinok neexistuje.' };
+  const indexPath = resolveHostedFile(root, 'index.html');
+  if (!indexPath || !fs.statSync(indexPath).isFile()) return { ok: false, message: 'Vybraný priečinok neobsahuje index.html.' };
+  if (torState.status === 'running') {
+    if (torState.folder === root) return { ok: true, ...torState };
+    return { ok: false, message: 'Najprv zastav aktuálny hosting a potom vyber iný priečinok.' };
+  }
   const executable = torExecutable();
   if (!executable) return { ok: false, message: 'Tor sa nenašiel. Nainštaluj Tor a nastav TOR_PATH.' };
-  stopTorHosting();
+  const generation = ++torHostingGeneration;
+  await stopTorHostingResources();
+  if (generation !== torHostingGeneration) return { ok: false, cancelled: true, ...torState };
+  const controller = new AbortController();
+  const { signal } = controller;
+  torHostingStartController = controller;
   const hostDir = path.join(writableDataPath, 'tor-hosting');
   const serviceDir = path.join(hostDir, 'hidden-service');
-  fs.mkdirSync(serviceDir, { recursive: true });
+  const hostingDataDir = path.join(hostDir, 'data');
   const mimeTypes = { '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8' };
   torState.requestCount = 0;
   torState.lastRequest = '';
-  torServer = http.createServer((request, response) => {
-    let requested;
-    try { requested = decodeURIComponent((request.url || '/').split('?')[0]); } catch { response.writeHead(400); response.end('Bad request'); return; }
-    const relative = requested === '/' ? 'index.html' : requested.replace(/^\/+/, '');
-    const filePath = path.resolve(root, relative);
-    if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) { response.writeHead(403); response.end('Forbidden'); return; }
-    torState.requestCount += 1;
-    torState.lastRequest = `${request.method || 'GET'} ${requested}`;
-    publishTorState({ requestCount: torState.requestCount, lastRequest: torState.lastRequest });
-    fs.stat(filePath, (error, stats) => {
-      if (error || !stats.isFile()) { response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }); response.end('Not found'); return; }
-      response.writeHead(200, { 'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
-      fs.createReadStream(filePath).on('error', () => { if (!response.headersSent) response.writeHead(500); response.end('Server error'); }).pipe(response);
+  try {
+    fs.mkdirSync(serviceDir, { recursive: true });
+    fs.mkdirSync(hostingDataDir, { recursive: true });
+    try { fs.unlinkSync(path.join(hostingDataDir, 'lock')); } catch {}
+    torServer = http.createServer((request, response) => {
+      let requested;
+      try { requested = decodeURIComponent((request.url || '/').split('?')[0]); } catch { response.writeHead(400); response.end('Bad request'); return; }
+      if (!['GET', 'HEAD'].includes(request.method || '')) {
+        response.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
+        response.end('Method not allowed');
+        return;
+      }
+      const relative = requested === '/' ? 'index.html' : requested.replace(/^\/+/, '');
+      const filePath = resolveHostedFile(root, relative);
+      torState.requestCount += 1;
+      torState.lastRequest = `${request.method || 'GET'} ${requested}`;
+      publishTorState({ requestCount: torState.requestCount, lastRequest: torState.lastRequest });
+      if (!filePath) { response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }); response.end('Not found'); return; }
+      fs.stat(filePath, (error, stats) => {
+        if (error || !stats.isFile()) { response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }); response.end('Not found'); return; }
+        response.writeHead(200, { 'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream', 'Content-Length': stats.size, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
+        if (request.method === 'HEAD') { response.end(); return; }
+        fs.createReadStream(filePath).on('error', () => { if (!response.headersSent) response.writeHead(500); response.end('Server error'); }).pipe(response);
+      });
     });
+    await new Promise((resolve, reject) => { torServer.once('error', reject); torServer.listen(0, '127.0.0.1', resolve); });
+    const port = torServer.address().port;
+    const configPath = path.join(hostDir, 'torrc');
+    const torHostDataPath = hostingDataDir.replace(/\\/g, '/');
+    const torServicePath = serviceDir.replace(/\\/g, '/');
+    fs.writeFileSync(configPath, `DataDirectory "${torHostDataPath}"\nSocksPort 127.0.0.1:9151\nHiddenServiceDir "${torServicePath}"\nHiddenServicePort 80 127.0.0.1:${port}\n`, 'utf8');
+    publishTorState({ status: 'starting', onion: '', folder: root, message: 'Tor sa pripája...' });
+    const launched = launchTorProcess(executable, ['-f', configPath]);
+    const hostingChild = launched.child;
+    torHostingProcess = hostingChild;
+    torHostingReadyPromise = launched.ready;
+    const handleHostingExit = (message) => {
+      if (torHostingProcess !== hostingChild) return;
+      torHostingProcess = null;
+      controller.abort();
+      const server = torServer;
+      torServer = null;
+      void closeTorServer(server);
+      publishTorState({ status: 'error', onion: '', folder: root, message });
+    };
+    hostingChild.once('error', (error) => handleHostingExit(`Tor sa nespustil: ${error.message}`));
+    hostingChild.once('exit', (code) => handleHostingExit(`Tor hosting sa neočakávane zastavil (kód ${code}).`));
+    const hostnamePath = path.join(serviceDir, 'hostname');
+    await waitForTorHostingReady(hostnamePath, launched.ready, signal);
+    if (generation !== torHostingGeneration || torHostingProcess !== hostingChild) throw new Error('Tor hosting was stopped while starting.');
+    const onion = fs.readFileSync(hostnamePath, 'utf8').trim();
+    if (!/^[a-z2-7]{56}\.onion$/i.test(onion)) throw new Error('Tor returned an invalid v3 onion address.');
+    const address = `http://${onion}/`;
+    publishTorState({ status: 'starting', onion: address, folder: root, message: 'Čakám na zverejnenie onion služby a overujem jej dostupnosť...' });
+    await waitForOnionService(address, 9151, { timeoutMs: 180000, attemptTimeoutMs: 15000, retryDelayMs: 5000, signal });
+    if (generation !== torHostingGeneration || torHostingProcess !== hostingChild) throw new Error('Tor hosting was stopped while starting.');
+    saveTorHostingFolder(torHostingStatePath, root);
+    torHostingStartController = null;
+    publishTorState({ status: 'running', onion: address, folder: root, message: `Hosting je dostupný na ${address}` });
+    return { ok: true, ...torState };
+  } catch (error) {
+    const cancelled = generation !== torHostingGeneration || (signal.aborted && torState.status === 'stopped');
+    await stopTorHostingResources();
+    if (cancelled) return { ok: false, cancelled: true, ...torState };
+    if (signal.aborted && torState.status === 'error') return { ok: false, ...torState };
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = `Tor hosting sa nepodarilo spustiť alebo overiť: ${detail}`;
+    publishTorState({ status: 'error', onion: '', folder: root, message });
+    return { ok: false, ...torState, message };
+  }
+}
+
+function startTorHosting(folder) {
+  if (torHostingStartPromise) return torHostingStartPromise;
+  const startPromise = startTorHostingInternal(folder);
+  torHostingStartPromise = startPromise;
+  return startPromise.finally(() => {
+    if (torHostingStartPromise === startPromise) torHostingStartPromise = null;
   });
-  await new Promise((resolve, reject) => { torServer.once('error', reject); torServer.listen(0, '127.0.0.1', resolve); });
-  const port = torServer.address().port;
-  const configPath = path.join(hostDir, 'torrc');
-  const torHostDataPath = path.join(hostDir, 'data').replace(/\\/g, '/');
-  const torServicePath = serviceDir.replace(/\\/g, '/');
-  fs.writeFileSync(configPath, `DataDirectory "${torHostDataPath}"\nSocksPort 127.0.0.1:9150\nHiddenServiceDir "${torServicePath}"\nHiddenServicePort 80 127.0.0.1:${port}\n`, 'utf8');
-  fs.mkdirSync(path.join(hostDir, 'data'), { recursive: true });
-  try { fs.unlinkSync(path.join(hostDir, 'data', 'lock')); } catch {}
-  publishTorState({ status: 'starting', folder: root, message: 'Tor sa pripája...' });
-  torProcess = launchTorProcess(executable, ['-f', configPath]);
-  torProcess.once('error', (error) => publishTorState({ status: 'error', message: `Tor sa nespustil: ${error.message}` }));
-  torProcess.once('exit', (code) => { if (code !== 0) publishTorState({ status: 'error', message: `Tor hosting skončil s kódom ${code}.` }); });
+}
+
+const torChatApiPrefix = '/_linsoft/chat/v1';
+const torChatHostSocksPort = 9152;
+const torChatClientSocksPort = 9153;
+
+async function clearTorChatResources() {
+  torChatStartController?.abort();
+  torChatStartController = null;
+  const child = torChatProcess;
+  torChatProcess = null;
+  torChatReadyPromise = Promise.resolve(false);
+  const server = torChatServer;
+  torChatServer = null;
+  torChatSession = null;
+  torChatRoom = null;
+  await Promise.all([terminateTorProcess(child), closeTorServer(server)]);
+}
+
+async function stopTorChat() {
+  torChatGeneration += 1;
+  await clearTorChatResources();
+  return { ok: true };
+}
+
+async function waitForTorChatClient(signal) {
+  if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
+    const executable = torExecutable();
+    if (!executable) throw new Error('Pribalený Tor sa nenašiel.');
+    const clientDir = path.join(writableDataPath, 'tor-chat-client');
+    const dataDir = path.join(clientDir, 'data');
+    require('node:fs').mkdirSync(dataDir, { recursive: true });
+    try { require('node:fs').unlinkSync(path.join(dataDir, 'lock')); } catch {}
+    const configPath = path.join(clientDir, 'torrc');
+    require('node:fs').writeFileSync(configPath, `DataDirectory "${dataDir.replace(/\\/g, '/')}"\nSocksPort 127.0.0.1:${torChatClientSocksPort}\n`, 'utf8');
+    const launched = launchTorProcess(executable, ['-f', configPath]);
+    torChatProcess = launched.child;
+    torChatReadyPromise = launched.ready;
+    const child = launched.child;
+    const cleanupUnexpectedExit = () => {
+      if (torChatProcess !== child) return;
+      torChatProcess = null;
+      torChatSession = null;
+      torChatRoom = null;
+      torChatStartController?.abort();
+    };
+    child.once('error', cleanupUnexpectedExit);
+    child.once('exit', cleanupUnexpectedExit);
+  }
+  const child = torChatProcess;
+  const ready = await Promise.race([
+    torChatReadyPromise,
+    new Promise((resolve) => { const timer = setTimeout(() => resolve(false), 180000); signal.addEventListener('abort', () => { clearTimeout(timer); resolve(false); }, { once: true }); })
+  ]);
+  if (signal.aborted || torChatProcess !== child) throw new Error('Chat connection was cancelled.');
+  if (!ready) throw new Error('Tor sa nepripojil do siete.');
+  if (!(await waitForTcpPort(torChatClientSocksPort, 5000))) throw new Error('Tor chat proxy sa nespustila.');
+}
+
+async function startTorChatHostInternal() {
+  if (torChatSession) return { ok: false, message: 'Najprv ukonči aktívny onion chat.' };
+  if (torChatProcess || torChatServer) return { ok: false, message: 'Tor chat už sa spúšťa alebo beží.' };
+  const executable = torExecutable();
+  if (!executable) return { ok: false, message: 'Pribalený Tor sa nenašiel.' };
+  const generation = ++torChatGeneration;
+  const controller = new AbortController();
+  torChatStartController = controller;
+  const { signal } = controller;
+  const chatDir = path.join(writableDataPath, 'tor-chat');
+  const dataDir = path.join(chatDir, 'data');
+  const serviceDir = path.join(chatDir, 'hidden-service');
   const hostnamePath = path.join(serviceDir, 'hostname');
-  const startedAt = Date.now();
-  await new Promise((resolve) => {
-    const timer = setInterval(() => {
-      if (fs.existsSync(hostnamePath)) { clearInterval(timer); resolve(); }
-      else if (Date.now() - startedAt > 30000) { clearInterval(timer); resolve(); }
-    }, 250);
-  });
-  if (!fs.existsSync(hostnamePath)) { stopTorHosting(); return { ok: false, message: 'Tor nevytvoril onion adresu. Skontroluj Tor log.' }; }
-  const onion = fs.readFileSync(hostnamePath, 'utf8').trim();
-  publishTorState({ status: 'starting', onion: `${onion}`, folder: root, message: 'Onion služba sa zverejňuje...' });
-  await new Promise((resolve) => setTimeout(resolve, 10000));
-  publishTorState({ status: 'running', onion: `http://${onion}/`, folder: root, message: `Hosting beží na http://${onion}/` });
-  return { ok: true, ...torState };
+  const token = crypto.randomBytes(24).toString('base64url');
+  torChatRoom = createTorChatRoom(token);
+  try {
+    require('node:fs').mkdirSync(dataDir, { recursive: true });
+    require('node:fs').mkdirSync(serviceDir, { recursive: true });
+    try { require('node:fs').unlinkSync(path.join(dataDir, 'lock')); } catch {}
+    torChatServer = createTorChatServer(torChatRoom);
+    await new Promise((resolve, reject) => { torChatServer.once('error', reject); torChatServer.listen(0, '127.0.0.1', resolve); });
+    const localPort = torChatServer.address().port;
+    const configPath = path.join(chatDir, 'torrc');
+    require('node:fs').writeFileSync(configPath, `DataDirectory "${dataDir.replace(/\\/g, '/')}"\nSocksPort 127.0.0.1:${torChatHostSocksPort}\nHiddenServiceDir "${serviceDir.replace(/\\/g, '/')}"\nHiddenServicePort 80 127.0.0.1:${localPort}\n`, 'utf8');
+    const launched = launchTorProcess(executable, ['-f', configPath]);
+    const child = launched.child;
+    torChatProcess = child;
+    torChatReadyPromise = launched.ready;
+    const handleExit = () => {
+      if (torChatProcess !== child) return;
+      torChatProcess = null;
+      torChatSession = null;
+      torChatRoom = null;
+      torChatStartController?.abort();
+      const server = torChatServer;
+      torChatServer = null;
+      void closeTorServer(server);
+    };
+    child.once('error', handleExit);
+    child.once('exit', handleExit);
+    await waitForTorHostingReady(hostnamePath, launched.ready, signal, 180000);
+    if (signal.aborted || generation !== torChatGeneration || torChatProcess !== child) throw new Error('Chat host was cancelled.');
+    const hostname = require('node:fs').readFileSync(hostnamePath, 'utf8').trim();
+    if (!/^[a-z2-7]{56}\.onion$/i.test(hostname)) throw new Error('Tor returned an invalid onion address.');
+    const onion = `http://${hostname}/`;
+    const healthUrl = new URL(`${torChatApiPrefix}/health`, onion).href;
+    await waitForOnionService(healthUrl, torChatHostSocksPort, {
+      timeoutMs: 180000,
+      attemptTimeoutMs: 15000,
+      retryDelayMs: 5000,
+      headers: { Authorization: `Bearer ${token}` },
+      signal
+    });
+    if (signal.aborted || generation !== torChatGeneration || torChatProcess !== child) throw new Error('Chat host was cancelled.');
+    torChatSession = { role: 'host', onion, token };
+    torChatStartController = null;
+    return { ok: true, onion, token };
+  } catch (error) {
+    const cancelled = signal.aborted || generation !== torChatGeneration;
+    await clearTorChatResources();
+    if (cancelled) return { ok: false, cancelled: true, message: 'Spúšťanie chatu bolo zrušené.' };
+    return { ok: false, message: `Onion chat sa nepodarilo spustiť: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+function startTorChatHost() {
+  if (torChatStartPromise) return torChatStartPromise;
+  const promise = startTorChatHostInternal();
+  torChatStartPromise = promise;
+  return promise.finally(() => { if (torChatStartPromise === promise) torChatStartPromise = null; });
+}
+
+function startTorChatJoin(address, token) {
+  if (torChatStartPromise) return torChatStartPromise;
+  const promise = joinTorChat(address, token);
+  torChatStartPromise = promise;
+  return promise.finally(() => { if (torChatStartPromise === promise) torChatStartPromise = null; });
+}
+
+function validTorChatInvite(address, token) {
+  try {
+    const url = new URL(String(address || ''));
+    return url.protocol === 'http:' && /^[a-z2-7]{56}\.onion$/i.test(url.hostname) && !url.username && !url.password && /^[A-Za-z0-9_-]{32}$/.test(String(token || ''))
+      ? `${url.origin}/`
+      : '';
+  } catch { return ''; }
+}
+
+async function joinTorChat(address, token) {
+  if (torChatSession || torChatStartPromise) return { ok: false, message: 'Najprv ukonči aktívny chat.' };
+  const onion = validTorChatInvite(address, token);
+  if (!onion) return { ok: false, message: 'Pozvánka musí obsahovať platnú v3 onion adresu a kľúč miestnosti.' };
+  const controller = new AbortController();
+  const { signal } = controller;
+  torChatStartController = controller;
+  const generation = ++torChatGeneration;
+  try {
+    await waitForTorChatClient(signal);
+    const healthUrl = new URL(`${torChatApiPrefix}/health`, onion).href;
+    const health = await requestOnionService(healthUrl, torChatClientSocksPort, { headers: { Authorization: `Bearer ${token}` }, timeoutMs: 30000, signal });
+    if (health.statusCode !== 200 || JSON.parse(health.body).ok !== true) throw new Error('Onion chat rejected the invitation.');
+    if (signal.aborted || generation !== torChatGeneration || !torChatProcess) throw new Error('Chat connection was cancelled.');
+    torChatSession = { role: 'guest', onion, token, clientId: crypto.randomBytes(18).toString('base64url') };
+    torChatStartController = null;
+    return { ok: true, onion };
+  } catch (error) {
+    const cancelled = signal.aborted || generation !== torChatGeneration;
+    await clearTorChatResources();
+    return { ok: false, cancelled, message: cancelled ? 'Pripojenie bolo zrušené.' : `K onion chatu sa nepodarilo pripojiť: ${error instanceof Error ? error.message : String(error)}` };
+  }
 }
 
 ipcMain.handle('tor-status', () => torState);
+ipcMain.handle('tor-chat-host-start', async (event) => {
+  if (torChatSession || torChatStartPromise) return { ok: false, message: 'Najprv ukonči aktívny alebo práve spúšťaný chat.' };
+  const warning = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender) || undefined, {
+    type: 'warning',
+    title: 'Onion chat 1:1',
+    message: 'Chat bude dostupný cez Tor. Pozvánku zdieľaj iba s druhým účastníkom.',
+    detail: 'Správy sú šifrované medzi aplikáciami a neukladajú sa na disk. Hostiteľ musí zostať online.',
+    buttons: ['Zrušiť', 'Vytvoriť onion pozvánku'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  if (warning.response !== 1) return { ok: false, cancelled: true };
+  return startTorChatHost();
+});
+ipcMain.handle('tor-chat-join', (_event, { address, token } = {}) => startTorChatJoin(address, token));
+ipcMain.handle('tor-chat-stop', () => stopTorChat());
+ipcMain.handle('tor-chat-poll', async (_event, afterId = 0) => {
+  const after = Number(afterId);
+  if (!torChatSession || !Number.isSafeInteger(after) || after < 0) return { ok: false, message: 'Onion chat nie je pripojený.' };
+  if (torChatSession.role === 'host') {
+    if (!torChatRoom) return { ok: false, message: 'Onion chat host sa odpojil.' };
+    return { ok: true, messages: torChatRoom.messages.filter((message) => message.id > after) };
+  }
+  try {
+    const url = new URL(`${torChatApiPrefix}/messages`, torChatSession.onion);
+    url.searchParams.set('after', String(after));
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId },
+      timeoutMs: 15000,
+      maxResponseBytes: 65536
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 200 || !result.ok || !Array.isArray(result.messages)) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true, messages: result.messages };
+  } catch (error) {
+    return { ok: false, message: `Spojenie s onion chatom zlyhalo: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-send', async (_event, envelope) => {
+  if (!torChatSession || !isValidTorChatEnvelope(envelope)) return { ok: false, message: 'Chat nie je pripojený alebo správa nie je platná.' };
+  if (torChatSession.role === 'host') {
+    const message = enqueueTorChatMessage(torChatRoom, 'host', envelope);
+    return message ? { ok: true, id: message.id } : { ok: false, message: 'Chat sa ukončil.' };
+  }
+  try {
+    const url = new URL(`${torChatApiPrefix}/messages`, torChatSession.onion);
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope),
+      timeoutMs: 30000,
+      maxResponseBytes: 65536
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 201 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true, id: result.id };
+  } catch (error) {
+    return { ok: false, message: `Správu sa nepodarilo odoslať cez Tor: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-host-start', async (event) => {
+  if (torChatSession || torChatStartPromise) return { ok: false, message: 'Najprv ukonči aktívny alebo práve spúšťaný chat.' };
+  const warning = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender) || undefined, {
+    type: 'warning',
+    title: 'Onion chat 1:1',
+    message: 'Chat bude dostupný cez Tor. Pozvánku zdieľaj iba s druhým účastníkom.',
+    detail: 'Správy sú šifrované medzi aplikáciami a neukladajú sa na disk. Hostiteľ musí zostať online.',
+    buttons: ['Zrušiť', 'Vytvoriť onion pozvánku'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  if (warning.response !== 1) return { ok: false, cancelled: true };
+  return startTorChatHost();
+});
+ipcMain.handle('tor-chat-join', (_event, { address, token } = {}) => joinTorChat(address, token));
+ipcMain.handle('tor-chat-stop', () => stopTorChat());
+ipcMain.handle('tor-chat-poll', async (_event, afterId = 0) => {
+  const after = Number(afterId);
+  if (!torChatSession || !Number.isSafeInteger(after) || after < 0) return { ok: false, message: 'Onion chat nie je pripojený.' };
+  if (torChatSession.role === 'host') {
+    if (!torChatRoom) return { ok: false, message: 'Onion chat host sa odpojil.' };
+    return { ok: true, messages: torChatRoom.messages.filter((message) => message.id > after) };
+  }
+  try {
+    const url = new URL(`${torChatApiPrefix}/messages`, torChatSession.onion);
+    url.searchParams.set('after', String(after));
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId },
+      timeoutMs: 15000,
+      maxResponseBytes: 65536
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 200 || !result.ok || !Array.isArray(result.messages)) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true, messages: result.messages };
+  } catch (error) {
+    return { ok: false, message: `Spojenie s onion chatom zlyhalo: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-send', async (_event, envelope) => {
+  if (!torChatSession || !isValidTorChatEnvelope(envelope)) return { ok: false, message: 'Chat nie je pripojený alebo správa nie je platná.' };
+  if (torChatSession.role === 'host') {
+    const message = enqueueTorChatMessage(torChatRoom, 'host', envelope);
+    return message ? { ok: true, id: message.id } : { ok: false, message: 'Chat sa ukončil.' };
+  }
+  try {
+    const url = new URL(`${torChatApiPrefix}/messages`, torChatSession.onion);
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope),
+      timeoutMs: 30000,
+      maxResponseBytes: 65536
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 201 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true, id: result.id };
+  } catch (error) {
+    return { ok: false, message: `Správu sa nepodarilo odoslať cez Tor: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
 ipcMain.handle('tor-default-folder', () => {
   const fs = require('node:fs');
   const folder = path.join(writableDataPath, 'Tor Hosting');
@@ -1122,7 +1620,21 @@ ipcMain.handle('tor-select-folder', async (event) => {
   const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender) || undefined, { properties: ['openDirectory'], title: 'Vybrať priečinok pre Tor hosting' });
   return result.canceled ? '' : result.filePaths[0];
 });
-ipcMain.handle('tor-start-hosting', (_event, folder) => startTorHosting(folder));
+ipcMain.handle('tor-start-hosting', async (event, folder) => {
+  const root = path.resolve(String(folder || ''));
+  const warning = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender) || undefined, {
+    type: 'warning',
+    title: 'Verejný Tor hosting',
+    message: 'Obsah vybraného priečinka bude dostupný každému, kto pozná onion adresu.',
+    detail: `Zdieľaný priečinok: ${root}\n\nNezdieľaj priečinky s osobnými alebo citlivými súbormi.`,
+    buttons: ['Zrušiť', 'Zverejniť web'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  if (warning.response !== 1) return { ok: false, cancelled: true, ...torState };
+  return startTorHosting(folder);
+});
 ipcMain.handle('tor-stop-hosting', () => stopTorHosting());
 ipcMain.handle('tor-enable-proxy', () => enableTorProxy());
 ipcMain.handle('tor-disable-proxy', () => disableTorProxy());
@@ -1131,11 +1643,12 @@ ipcMain.handle('set-manual-proxy', async (_event, { protocol = 'socks5', host = 
   const normalizedPort = Number(port);
   const normalizedProtocol = protocol === 'socks4' ? 'socks4' : 'socks5';
   if (normalizedProtocol === 'socks5' && normalizedHost === '127.0.0.1' && normalizedPort === 9150) return enableTorProxy();
-  if (!normalizedHost && !port) { await session.defaultSession.setProxy({ mode: 'direct' }); await session.defaultSession.closeAllConnections(); publishTorState({ proxyEnabled: false, message: 'Proxy je vypnutá.' }); return { ok: true }; }
+  if (!normalizedHost && !port) { await session.defaultSession.setProxy({ mode: 'direct' }); await session.defaultSession.closeAllConnections(); await stopTorProxyProcess(); publishTorState({ proxyEnabled: false, proxyStatus: 'stopped', proxyMessage: 'Proxy je vypnutá.' }); return { ok: true, ...torState }; }
   if (!/^(?:[a-z0-9.-]+|\[[0-9a-f:]+\])$/i.test(normalizedHost) || !Number.isInteger(normalizedPort) || normalizedPort < 1 || normalizedPort > 65535) return { ok: false, message: 'Zadaj platného hostiteľa a port 1-65535.' };
+  await stopTorProxyProcess();
   await session.defaultSession.setProxy({ proxyRules: `${normalizedProtocol}://${normalizedHost}:${normalizedPort}`, proxyBypassRules: '<local>' });
   await session.defaultSession.closeAllConnections();
-  publishTorState({ proxyEnabled: true, message: `Manuálna ${normalizedProtocol.toUpperCase()} proxy je zapnutá: ${normalizedHost}:${normalizedPort}` });
+  publishTorState({ proxyEnabled: true, proxyStatus: 'manual', proxyMessage: `Manuálna ${normalizedProtocol.toUpperCase()} proxy je zapnutá: ${normalizedHost}:${normalizedPort}` });
   return { ok: true, ...torState };
 });
 ipcMain.on('open-browser-window', (_event, url) => { if (!supportedWebUrl(url)) return; if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); dispatchExternalUrl(mainWindow, url); } else if (hasLock) createWindow(url); });
@@ -1302,7 +1815,7 @@ app.whenReady().then(() => {
   }));
   configureCertificateErrorHandling(session.defaultSession);
   session.defaultSession.on('will-attach-webview', (event, webPreferences, params) => {
-    if (!supportedWebUrl(params.src)) {
+    if (!supportedWebUrl(params.src) && !isSafeLocalHtmlUrl(params.src)) {
       event.preventDefault();
       return;
     }
@@ -1432,6 +1945,15 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async (event) => {
   flushAdBlockLearning();
+  if (torShutdownPromise) { event.preventDefault(); return; }
+  if (torHostingProcess || torProxyProcess || torChatProcess || torHostingStartPromise || torStartPromise || torChatStartPromise) {
+    event.preventDefault();
+    torShutdownPromise = Promise.allSettled([stopTorHosting(), disableTorProxy(), stopTorChat()]).finally(() => {
+      torShutdownPromise = null;
+      app.quit();
+    });
+    return;
+  }
   if (!browserPreferences.clearExit || clearingExitData) return;
   event.preventDefault();
   clearingExitData = true;

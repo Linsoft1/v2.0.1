@@ -1,10 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const {
   canAutoCheckForUpdates,
   formatUpdateFailure,
   getPermissionDecision,
   getUpdateStatus,
+  isSafeLocalHtmlUrl,
   isSafeWebUrl,
   normalizePermissionOrigin
 } = require('../lib/browser-policies.cjs');
@@ -98,4 +103,20 @@ test('Electron permission request handler fails closed and responds once', async
   createPermissionRequestHandler(async () => { throw new Error('request failed'); })({}, 'notifications', (allowed) => denied.push(allowed));
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(denied, [false]);
+});
+
+test('local document URLs accept only existing HTML files', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'linsoft-html-'));
+  const htmlPath = path.join(directory, 'sample page.html');
+  const textPath = path.join(directory, 'notes.txt');
+  fs.writeFileSync(htmlPath, '<!doctype html><title>Local page</title>');
+  fs.writeFileSync(textPath, 'not HTML');
+  try {
+    assert.equal(isSafeLocalHtmlUrl(pathToFileURL(htmlPath).href), true);
+    assert.equal(isSafeLocalHtmlUrl(pathToFileURL(textPath).href), false);
+    assert.equal(isSafeLocalHtmlUrl(pathToFileURL(path.join(directory, 'missing.html')).href), false);
+    assert.equal(isSafeLocalHtmlUrl('https://example.com/index.html'), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
