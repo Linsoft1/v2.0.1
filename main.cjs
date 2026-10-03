@@ -5,11 +5,12 @@ const net = require('node:net');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const QRCode = require('qrcode');
 const { pathToFileURL } = require('node:url');
 const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeLocalHtmlUrl, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
 const { loadSavedTorHostingState, requestOnionService, resolveHostedFile, saveTorHostingFolder, waitForOnionService } = require('./lib/tor-hosting.cjs');
-const { createTorChatRoom, createTorChatServer, enqueueTorChatMessage, isValidTorChatEnvelope } = require('./lib/tor-chat-protocol.cjs');
-const { createPermissionCheckHandler, createPermissionRequestHandler } = require('./lib/permission-handlers.cjs');
+const { clearTorChatFileTransfer, createTorChatRoom, createTorChatServer, enqueueTorChatFileChunk, enqueueTorChatMessage, enqueueTorChatVideoFrame, getTorChatFileChunks, getTorChatFileTransfer, getTorChatReceipts, getTorChatVideoState, isValidTorChatEnvelope, isValidTorChatFileChunk, markTorChatMessagesDelivered, markTorChatMessagesRead, stopTorChatVideo } = require('./lib/tor-chat-protocol.cjs');
+const { createPermissionCheckHandler, createPermissionRequestHandler, mediaTypesFromDetails } = require('./lib/permission-handlers.cjs');
 const { NativeTabManager } = require('./lib/native-tab-manager.cjs');
 app.setName('Linsoft Browser');
 const isPackagedBuild = app.isPackaged && process.env.LINSOFT_DEV_LAUNCH !== '1';
@@ -72,7 +73,10 @@ let torChatServer = null;
 let torChatReadyPromise = Promise.resolve(false);
 let torChatSession = null;
 let torChatRoom = null;
+const torChatCameraGrants = new Set();
+const torChatCameraGrantCleanups = new Map();
 let torChatStartPromise = null;
+let torChatRecoveryPromise = null;
 let torChatStartController = null;
 let torChatGeneration = 0;
 let torProxyGeneration = 0;
@@ -159,8 +163,10 @@ function configureCertificateErrorHandling() {
 }
 
 async function requestSitePermission(webContents, permission, callback, details = {}) {
+  const mediaTypes = mediaTypesFromDetails(details);
+  if (isTorChatCameraGrant(webContents, permission, details.requestingUrl, mediaTypes)) return callback(true);
   const guest = isGuestWebContents(webContents);
-  const request = getPermissionDecision({ permission, mediaTypes: details.mediaTypes, requestingUrl: details.requestingUrl, preferences: browserPreferences, decisions: guest ? {} : sitePermissions });
+  const request = getPermissionDecision({ permission, mediaTypes, requestingUrl: details.requestingUrl, preferences: browserPreferences, decisions: guest ? {} : sitePermissions });
   if (request.decision === 'deny') return callback(false);
   if (request.decision === 'allow') return callback(true);
 
@@ -170,7 +176,7 @@ async function requestSitePermission(webContents, permission, callback, details 
     const result = await dialog.showMessageBox(parentWindow, {
       type: 'question',
       title: 'Povolenie webovej stránky',
-      message: `${request.origin} žiada o prístup ku ${permissionLabel(permission, details.mediaTypes)}.`,
+      message: `${request.origin} žiada o prístup ku ${permissionLabel(permission, mediaTypes)}.`,
       detail: 'Povoliť prístup iba tejto stránke?',
       buttons: ['Blokovať', 'Povoliť teraz', 'Vždy povoliť'],
       defaultId: 0,
@@ -186,6 +192,25 @@ async function requestSitePermission(webContents, permission, callback, details 
   } catch {
     callback(false);
   }
+}
+
+function isTorChatCameraGrant(webContents, permission, requestingUrl, mediaTypes = []) {
+  const appUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
+  const sourceUrl = String(requestingUrl || webContents?.getURL?.() || '');
+  const internalAppRequest = sourceUrl === appUrl || sourceUrl === 'file://' || sourceUrl === 'file:///';
+  return permission === 'media' && mediaTypes.length === 1 && mediaTypes[0] === 'video'
+    && torChatCameraGrants.has(webContents?.id) && webContents?.getURL?.() === appUrl && internalAppRequest;
+}
+
+function revokeTorChatCameraGrant(webContents) {
+  if (!webContents) return false;
+  const cleanup = torChatCameraGrantCleanups.get(webContents.id);
+  if (cleanup) {
+    webContents.removeListener('destroyed', cleanup);
+    webContents.removeListener('did-navigate', cleanup);
+    torChatCameraGrantCleanups.delete(webContents.id);
+  }
+  return torChatCameraGrants.delete(webContents.id);
 }
 
 function saveDownloadHistory() {
@@ -1319,6 +1344,7 @@ function startTorHosting(folder) {
 const torChatApiPrefix = '/_linsoft/chat/v1';
 const torChatHostSocksPort = 9152;
 const torChatClientSocksPort = 9153;
+const maxTorChatFileBytes = 2 * 1024 * 1024;
 
 async function clearTorChatResources() {
   torChatStartController?.abort();
@@ -1339,6 +1365,22 @@ async function stopTorChat() {
   return { ok: true };
 }
 
+function watchTorChatProcess(child) {
+  const cleanup = () => {
+    if (torChatProcess !== child) return;
+    torChatProcess = null;
+    torChatReadyPromise = Promise.resolve(false);
+    if (torChatSession) return;
+    torChatRoom = null;
+    torChatStartController?.abort();
+    const server = torChatServer;
+    torChatServer = null;
+    void closeTorServer(server);
+  };
+  child.once('error', cleanup);
+  child.once('exit', cleanup);
+}
+
 async function waitForTorChatClient(signal) {
   if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
     const executable = torExecutable();
@@ -1352,16 +1394,7 @@ async function waitForTorChatClient(signal) {
     const launched = launchTorProcess(executable, ['-f', configPath]);
     torChatProcess = launched.child;
     torChatReadyPromise = launched.ready;
-    const child = launched.child;
-    const cleanupUnexpectedExit = () => {
-      if (torChatProcess !== child) return;
-      torChatProcess = null;
-      torChatSession = null;
-      torChatRoom = null;
-      torChatStartController?.abort();
-    };
-    child.once('error', cleanupUnexpectedExit);
-    child.once('exit', cleanupUnexpectedExit);
+    watchTorChatProcess(launched.child);
   }
   const child = torChatProcess;
   const ready = await Promise.race([
@@ -1401,18 +1434,7 @@ async function startTorChatHostInternal() {
     const child = launched.child;
     torChatProcess = child;
     torChatReadyPromise = launched.ready;
-    const handleExit = () => {
-      if (torChatProcess !== child) return;
-      torChatProcess = null;
-      torChatSession = null;
-      torChatRoom = null;
-      torChatStartController?.abort();
-      const server = torChatServer;
-      torChatServer = null;
-      void closeTorServer(server);
-    };
-    child.once('error', handleExit);
-    child.once('exit', handleExit);
+    watchTorChatProcess(child);
     await waitForTorHostingReady(hostnamePath, launched.ready, signal, 180000);
     if (signal.aborted || generation !== torChatGeneration || torChatProcess !== child) throw new Error('Chat host was cancelled.');
     const hostname = require('node:fs').readFileSync(hostnamePath, 'utf8').trim();
@@ -1427,9 +1449,10 @@ async function startTorChatHostInternal() {
       signal
     });
     if (signal.aborted || generation !== torChatGeneration || torChatProcess !== child) throw new Error('Chat host was cancelled.');
+    torChatRoom.inviteExpiresAt = Date.now() + 15 * 60 * 1000;
     torChatSession = { role: 'host', onion, token };
     torChatStartController = null;
-    return { ok: true, onion, token };
+    return { ok: true, onion, token, expiresAt: torChatRoom.inviteExpiresAt };
   } catch (error) {
     const cancelled = signal.aborted || generation !== torChatGeneration;
     await clearTorChatResources();
@@ -1485,6 +1508,79 @@ async function joinTorChat(address, token) {
   }
 }
 
+function recoverTorChatTransport() {
+  if (!torChatSession) return Promise.reject(new Error('Onion chat nie je pripojený.'));
+  if (torChatProcess && torChatProcess.exitCode === null && torChatProcess.signalCode === null) return Promise.resolve(true);
+  if (torChatRecoveryPromise) return torChatRecoveryPromise;
+  const session = torChatSession;
+  const generation = torChatGeneration;
+  const controller = new AbortController();
+  torChatStartController = controller;
+  let recoveredChild = null;
+  const recovery = (async () => {
+    try {
+      if (session.role === 'guest') {
+        await waitForTorChatClient(controller.signal);
+        recoveredChild = torChatProcess;
+        const healthUrl = new URL(`${torChatApiPrefix}/health`, session.onion).href;
+        const health = await requestOnionService(healthUrl, torChatClientSocksPort, {
+          headers: { Authorization: `Bearer ${session.token}` },
+          timeoutMs: 30000,
+          signal: controller.signal
+        });
+        if (health.statusCode !== 200 || JSON.parse(health.body).ok !== true) throw new Error('Onion host is unavailable.');
+      } else {
+        const executable = torExecutable();
+        if (!executable || !torChatRoom || !torChatServer) throw new Error('Onion chat host cannot be restarted.');
+        const chatDir = path.join(writableDataPath, 'tor-chat');
+        const dataDir = path.join(chatDir, 'data');
+        const serviceDir = path.join(chatDir, 'hidden-service');
+        const hostnamePath = path.join(serviceDir, 'hostname');
+        try { require('node:fs').unlinkSync(path.join(dataDir, 'lock')); } catch {}
+        const launched = launchTorProcess(executable, ['-f', path.join(chatDir, 'torrc')]);
+        recoveredChild = launched.child;
+        torChatProcess = recoveredChild;
+        torChatReadyPromise = launched.ready;
+        watchTorChatProcess(recoveredChild);
+        await waitForTorHostingReady(hostnamePath, launched.ready, controller.signal, 180000);
+        const hostname = require('node:fs').readFileSync(hostnamePath, 'utf8').trim();
+        if (`http://${hostname}/` !== session.onion) throw new Error('Tor returned a different onion address while reconnecting.');
+        const healthUrl = new URL(`${torChatApiPrefix}/health`, session.onion).href;
+        await waitForOnionService(healthUrl, torChatHostSocksPort, {
+          timeoutMs: 180000,
+          attemptTimeoutMs: 15000,
+          retryDelayMs: 5000,
+          headers: { Authorization: `Bearer ${session.token}` },
+          signal: controller.signal
+        });
+      }
+      if (controller.signal.aborted || generation !== torChatGeneration || session !== torChatSession) throw new Error('Reconnect was cancelled.');
+      return true;
+    } catch (error) {
+      if (recoveredChild && torChatProcess === recoveredChild) {
+        torChatProcess = null;
+        torChatReadyPromise = Promise.resolve(false);
+        await terminateTorProcess(recoveredChild);
+      }
+      throw error;
+    } finally {
+      if (torChatStartController === controller) torChatStartController = null;
+    }
+  })();
+  torChatRecoveryPromise = recovery;
+  return recovery.finally(() => {
+    if (torChatRecoveryPromise === recovery) torChatRecoveryPromise = null;
+  });
+}
+
+async function renewTorChatHost() {
+  if (torChatSession?.role !== 'host' || !torChatRoom || torChatRoom.guestClientId || Date.now() < torChatRoom.inviteExpiresAt) {
+    return { ok: false, message: 'Novú pozvánku možno vytvoriť až po expirácii nepoužitej pozvánky.' };
+  }
+  await stopTorChat();
+  return startTorChatHostInternal();
+}
+
 ipcMain.handle('tor-status', () => torState);
 ipcMain.handle('tor-chat-host-start', async (event) => {
   if (torChatSession || torChatStartPromise) return { ok: false, message: 'Najprv ukonči aktívny alebo práve spúšťaný chat.' };
@@ -1492,7 +1588,7 @@ ipcMain.handle('tor-chat-host-start', async (event) => {
     type: 'warning',
     title: 'Onion chat 1:1',
     message: 'Chat bude dostupný cez Tor. Pozvánku zdieľaj iba s druhým účastníkom.',
-    detail: 'Správy sú šifrované medzi aplikáciami a neukladajú sa na disk. Hostiteľ musí zostať online.',
+    detail: 'Správy sú šifrované medzi aplikáciami a neukladajú sa na disk. Pozvánka platí 15 minút, kým sa druhý účastník nepripojí. Hostiteľ musí zostať online.',
     buttons: ['Zrušiť', 'Vytvoriť onion pozvánku'],
     defaultId: 0,
     cancelId: 0,
@@ -1502,13 +1598,57 @@ ipcMain.handle('tor-chat-host-start', async (event) => {
   return startTorChatHost();
 });
 ipcMain.handle('tor-chat-join', (_event, { address, token } = {}) => startTorChatJoin(address, token));
+ipcMain.handle('tor-chat-host-renew', () => renewTorChatHost());
 ipcMain.handle('tor-chat-stop', () => stopTorChat());
+ipcMain.handle('tor-chat-camera-authorize', async (event, purpose = 'qr') => {
+  const sender = event.sender;
+  const appUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
+  if (sender.getURL() !== appUrl) return { ok: false, message: 'Kamera nie je dostupná na tejto stránke.' };
+  const forVideo = purpose === 'video';
+  const result = await dialog.showMessageBox(BrowserWindow.fromWebContents(sender) || undefined, {
+    type: 'question',
+    title: forVideo ? 'Kamera pre Onion video hovor' : 'Kamera pre QR skener',
+    message: forVideo ? 'Povoliť kameru pre šifrovaný video hovor cez Tor?' : 'Povoliť kamere načítať súkromnú Onion Chat pozvánku?',
+    detail: forVideo ? 'Video snímky sa posielajú šifrovane cez onion službu. Pri zatvorení hovoru sa kamera vypne.' : 'Kamera sa použije iba počas skenovania QR kódu a po zatvorení skenera sa vypne.',
+    buttons: ['Zrušiť', 'Povoliť kameru'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  });
+  if (result.response !== 1) return { ok: false, cancelled: true };
+  revokeTorChatCameraGrant(sender);
+  torChatCameraGrants.add(sender.id);
+  const revoke = () => revokeTorChatCameraGrant(sender);
+  torChatCameraGrantCleanups.set(sender.id, revoke);
+  sender.once('destroyed', revoke);
+  sender.once('did-navigate', revoke);
+  return { ok: true };
+});
+ipcMain.handle('tor-chat-camera-release', (event) => ({ ok: revokeTorChatCameraGrant(event.sender) }));
+ipcMain.handle('tor-chat-invite-qr', async (_event, invitation) => {
+  try {
+    if (typeof invitation !== 'string' || invitation.length > 512) throw new Error('Neplatná onion pozvánka.');
+    const url = new URL(invitation);
+    const [token, key, extra] = url.hash.slice(1).split('.');
+    if (url.protocol !== 'http:' || !/^[a-z2-7]{56}\.onion$/i.test(url.hostname) || url.username || url.password || url.pathname !== '/' || url.search || extra !== undefined || !/^[A-Za-z0-9_-]{32}$/.test(token || '') || !/^[A-Za-z0-9_-]{43}$/.test(key || '')) throw new Error('Neplatná onion pozvánka.');
+    const dataUrl = await QRCode.toDataURL(url.href, { errorCorrectionLevel: 'M', margin: 1, width: 224 });
+    return { ok: true, dataUrl };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : 'QR pozvánku sa nepodarilo vytvoriť.' };
+  }
+});
 ipcMain.handle('tor-chat-poll', async (_event, afterId = 0) => {
   const after = Number(afterId);
   if (!torChatSession || !Number.isSafeInteger(after) || after < 0) return { ok: false, message: 'Onion chat nie je pripojený.' };
+  if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
+    try { await recoverTorChatTransport(); }
+    catch (error) { return { ok: false, message: `Obnovujem Tor spojenie: ${error instanceof Error ? error.message : String(error)}` }; }
+  }
   if (torChatSession.role === 'host') {
     if (!torChatRoom) return { ok: false, message: 'Onion chat host sa odpojil.' };
-    return { ok: true, messages: torChatRoom.messages.filter((message) => message.id > after) };
+    const messages = torChatRoom.messages.filter((message) => message.id > after);
+    markTorChatMessagesDelivered(torChatRoom, 'host', messages);
+    return { ok: true, messages, receipts: getTorChatReceipts(torChatRoom, 'host'), guestConnected: Boolean(torChatRoom.guestClientId), expiresAt: torChatRoom.inviteExpiresAt, invitationExpired: !torChatRoom.guestClientId && Date.now() >= torChatRoom.inviteExpiresAt };
   }
   try {
     const url = new URL(`${torChatApiPrefix}/messages`, torChatSession.onion);
@@ -1520,13 +1660,40 @@ ipcMain.handle('tor-chat-poll', async (_event, afterId = 0) => {
     });
     const result = JSON.parse(response.body);
     if (response.statusCode !== 200 || !result.ok || !Array.isArray(result.messages)) throw new Error(result.message || `HTTP ${response.statusCode}`);
-    return { ok: true, messages: result.messages };
+    return { ok: true, messages: result.messages, receipts: Array.isArray(result.receipts) ? result.receipts : [], guestConnected: true };
   } catch (error) {
     return { ok: false, message: `Spojenie s onion chatom zlyhalo: ${error instanceof Error ? error.message : String(error)}` };
   }
 });
+ipcMain.handle('tor-chat-read', async (_event, ids) => {
+  if (!torChatSession || !Array.isArray(ids)) return { ok: false, message: 'Onion chat nie je pripojený.' };
+  if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
+    try { await recoverTorChatTransport(); }
+    catch (error) { return { ok: false, message: `Obnovujem Tor spojenie: ${error instanceof Error ? error.message : String(error)}` }; }
+  }
+  if (torChatSession.role === 'host') return { ok: markTorChatMessagesRead(torChatRoom, 'host', ids) };
+  try {
+    const url = new URL(`${torChatApiPrefix}/receipts`, torChatSession.onion);
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+      timeoutMs: 15000,
+      maxResponseBytes: 4096
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 200 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: `Potvrdenie prečítania sa nepodarilo odoslať: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
 ipcMain.handle('tor-chat-send', async (_event, envelope) => {
   if (!torChatSession || !isValidTorChatEnvelope(envelope)) return { ok: false, message: 'Chat nie je pripojený alebo správa nie je platná.' };
+  if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
+    try { await recoverTorChatTransport(); }
+    catch (error) { return { ok: false, message: `Obnovujem Tor spojenie: ${error instanceof Error ? error.message : String(error)}` }; }
+  }
   if (torChatSession.role === 'host') {
     const message = enqueueTorChatMessage(torChatRoom, 'host', envelope);
     return message ? { ok: true, id: message.id } : { ok: false, message: 'Chat sa ukončil.' };
@@ -1546,6 +1713,176 @@ ipcMain.handle('tor-chat-send', async (_event, envelope) => {
   } catch (error) {
     return { ok: false, message: `Správu sa nepodarilo odoslať cez Tor: ${error instanceof Error ? error.message : String(error)}` };
   }
+});
+ipcMain.handle('tor-chat-video-poll', async (_event, afterId = 0) => {
+  const after = Number(afterId);
+  if (!torChatSession || !Number.isSafeInteger(after) || after < 0) return { ok: false, message: 'Onion chat nie je pripojený.' };
+  if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
+    try { await recoverTorChatTransport(); }
+    catch (error) { return { ok: false, message: `Obnovujem Tor spojenie: ${error instanceof Error ? error.message : String(error)}` }; }
+  }
+  if (torChatSession.role === 'host') return torChatRoom ? { ok: true, ...getTorChatVideoState(torChatRoom, 'host', after) } : { ok: false, message: 'Onion chat host sa odpojil.' };
+  try {
+    const url = new URL(`${torChatApiPrefix}/video`, torChatSession.onion);
+    url.searchParams.set('after', String(after));
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId },
+      timeoutMs: 15000,
+      maxResponseBytes: 20000
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 200 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true, active: Boolean(result.active), frame: result.frame || null };
+  } catch (error) {
+    return { ok: false, message: `Video cez Tor sa nepodarilo načítať: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-video-send', async (_event, envelope) => {
+  if (!torChatSession || !isValidTorChatEnvelope(envelope)) return { ok: false, message: 'Video snímka nie je platná alebo chat nie je pripojený.' };
+  if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
+    try { await recoverTorChatTransport(); }
+    catch (error) { return { ok: false, message: `Obnovujem Tor spojenie: ${error instanceof Error ? error.message : String(error)}` }; }
+  }
+  if (torChatSession.role === 'host') {
+    const frame = enqueueTorChatVideoFrame(torChatRoom, 'host', envelope);
+    return frame ? { ok: true, id: frame.id } : { ok: false, message: 'Video hovor sa ukončil.' };
+  }
+  try {
+    const url = new URL(`${torChatApiPrefix}/video`, torChatSession.onion);
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope),
+      timeoutMs: 20000,
+      maxResponseBytes: 4096
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 201 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true, id: result.id };
+  } catch (error) {
+    return { ok: false, message: `Video snímku sa nepodarilo odoslať cez Tor: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-video-stop', async () => {
+  if (!torChatSession) return { ok: true };
+  if (torChatSession.role === 'host') return { ok: stopTorChatVideo(torChatRoom, 'host') };
+  try {
+    const url = new URL(`${torChatApiPrefix}/video`, torChatSession.onion);
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: false }),
+      timeoutMs: 15000,
+      maxResponseBytes: 4096
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 200 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: `Video hovor sa nepodarilo ukončiť cez Tor: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-file-chunk', async (_event, chunk) => {
+  if (!torChatSession || !isValidTorChatFileChunk(chunk)) return { ok: false, message: 'Blok súboru nie je platný alebo chat nie je pripojený.' };
+  if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
+    try { await recoverTorChatTransport(); }
+    catch (error) { return { ok: false, message: `Obnovujem Tor spojenie: ${error instanceof Error ? error.message : String(error)}` }; }
+  }
+  if (torChatSession.role === 'host') {
+    const stored = enqueueTorChatFileChunk(torChatRoom, 'host', chunk);
+    return stored ? { ok: true, index: stored.index } : { ok: false, message: 'Iný súbor sa už prenáša alebo limit bol prekročený.' };
+  }
+  try {
+    const url = new URL(`${torChatApiPrefix}/files`, torChatSession.onion);
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
+      body: JSON.stringify(chunk),
+      timeoutMs: 30000,
+      maxResponseBytes: 4096
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 201 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true, index: result.index };
+  } catch (error) {
+    return { ok: false, message: `Blok súboru sa nepodarilo odoslať cez Tor: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-files-poll', async (_event, afterIndex = -1) => {
+  const after = Number(afterIndex);
+  if (!torChatSession || !Number.isSafeInteger(after) || after < -1 || after >= 90) return { ok: false, message: 'Onion chat nie je pripojený alebo kurzor súboru nie je platný.' };
+  if (!torChatProcess || torChatProcess.exitCode !== null || torChatProcess.signalCode !== null) {
+    try { await recoverTorChatTransport(); }
+    catch (error) { return { ok: false, message: `Obnovujem Tor spojenie: ${error instanceof Error ? error.message : String(error)}` }; }
+  }
+  if (torChatSession.role === 'host') return { ok: true, transfer: getTorChatFileChunks(torChatRoom, 'host', after), outgoingPending: Boolean(getTorChatFileTransfer(torChatRoom, 'host')) };
+  try {
+    const url = new URL(`${torChatApiPrefix}/files`, torChatSession.onion);
+    url.searchParams.set('after', String(after));
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId },
+      timeoutMs: 20000,
+      maxResponseBytes: 200000
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 200 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true, transfer: result.transfer || null, outgoingPending: Boolean(result.outgoingPending) };
+  } catch (error) {
+    return { ok: false, message: `Súbor sa nepodarilo prijať cez Tor: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-file-complete', async (_event, fileId) => {
+  if (!torChatSession || !/^[A-Za-z0-9_-]{24}$/.test(String(fileId || ''))) return { ok: false, message: 'File transfer is not valid.' };
+  if (torChatSession.role === 'host') return { ok: clearTorChatFileTransfer(torChatRoom, 'guest', fileId) };
+  try {
+    const url = new URL(`${torChatApiPrefix}/files/complete`, torChatSession.onion);
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileId }),
+      timeoutMs: 15000,
+      maxResponseBytes: 4096
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 200 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: `Transfer sa nepodarilo uzavrieť: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-file-cancel', async (_event, fileId) => {
+  if (!torChatSession || !/^[A-Za-z0-9_-]{24}$/.test(String(fileId || ''))) return { ok: false, message: 'File transfer is not valid.' };
+  if (torChatSession.role === 'host') return { ok: clearTorChatFileTransfer(torChatRoom, 'host', fileId) };
+  try {
+    const url = new URL(`${torChatApiPrefix}/files/cancel`, torChatSession.onion);
+    const response = await requestOnionService(url.href, torChatClientSocksPort, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${torChatSession.token}`, 'X-Linsoft-Chat-Client': torChatSession.clientId, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileId }),
+      timeoutMs: 15000,
+      maxResponseBytes: 4096
+    });
+    const result = JSON.parse(response.body);
+    if (response.statusCode !== 200 || !result.ok) throw new Error(result.message || `HTTP ${response.statusCode}`);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: `Súbor sa nepodarilo zrušiť: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+ipcMain.handle('tor-chat-file-save', async (event, { name, data } = {}) => {
+  const appUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
+  if (event.sender.getURL() !== appUrl || typeof data !== 'string' || data.length > Math.ceil(maxTorChatFileBytes * 4 / 3) || !/^[A-Za-z0-9_-]*$/.test(data)) return { ok: false, message: 'Súbor nie je platný.' };
+  const bytes = Buffer.from(data, 'base64url');
+  if (bytes.length > maxTorChatFileBytes) return { ok: false, message: 'Súbor prekračuje limit 2 MiB.' };
+  const safeName = path.basename(String(name || 'subor').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')).slice(0, 160) || 'subor';
+  const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender) || undefined, {
+    title: 'Uložiť prijatý súbor',
+    defaultPath: path.join(app.getPath('downloads'), safeName),
+    buttonLabel: 'Uložiť súbor'
+  });
+  if (result.canceled || !result.filePath) return { ok: false, cancelled: true };
+  await require('node:fs').promises.writeFile(result.filePath, bytes);
+  return { ok: true, path: result.filePath };
 });
 ipcMain.handle('tor-default-folder', () => {
   const fs = require('node:fs');
@@ -1749,9 +2086,11 @@ app.whenReady().then(() => {
     callback({ cancel: (browserPreferences.adBlock || browserPreferences.trackingProtection) && isBlockedAdRequest(details.url, details) });
   });
   session.defaultSession.setPermissionRequestHandler(createPermissionRequestHandler(requestSitePermission));
-  session.defaultSession.setPermissionCheckHandler(createPermissionCheckHandler(({ permission, requestingUrl, mediaTypes }) => {
-    return getPermissionDecision({ permission, mediaTypes, requestingUrl, preferences: browserPreferences, decisions: sitePermissions });
-  }));
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingUrl, details = {}) => {
+    const mediaTypes = mediaTypesFromDetails(details);
+    if (isTorChatCameraGrant(webContents, permission, requestingUrl, mediaTypes)) return true;
+    return getPermissionDecision({ permission, mediaTypes, requestingUrl, preferences: browserPreferences, decisions: sitePermissions }).decision === 'allow';
+  });
   configureCertificateErrorHandling(session.defaultSession);
   session.defaultSession.on('will-attach-webview', (event, webPreferences, params) => {
     if (!supportedWebUrl(params.src) && !isSafeLocalHtmlUrl(params.src)) {

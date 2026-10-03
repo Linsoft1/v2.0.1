@@ -18,6 +18,10 @@ const hasLinsoftProtocol = protocols.some((entry) => entry.schemes?.includes('li
 if (!hasLinsoftProtocol) throw new Error('Missing linsoft protocol registration');
 if (!packageJson.build.files.includes('lib/**/*')) throw new Error('Browser policy module is missing from packaged files');
 if (!packageJson.build.files.includes('Linsoft centrum app/**/*')) throw new Error('Standalone App Centrum is missing from packaged files');
+const installerScript = fs.readFileSync(path.join(root, 'packaging', 'installer.nsh'), 'utf8');
+if (!installerScript.includes('FriendlyAppName') || !installerScript.includes('SupportedTypes') || !installerScript.includes('SHChangeNotify')) {
+  throw new Error('Windows Open With registration for Linsoft Browser is incomplete');
+}
 const standaloneFiles = ['index.html', 'styles.css', 'app.js'];
 for (const file of standaloneFiles) {
   if (!fs.existsSync(path.join(root, 'Linsoft centrum app', file))) throw new Error(`Missing App Centrum file: ${file}`);

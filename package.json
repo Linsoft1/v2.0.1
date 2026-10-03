@@ -1,6 +1,6 @@
 {
   "name": "linsoft-browser",
-  "version": "2.0.23",
+  "version": "2.0.24",
   "description": "Linsoft Browser 2.0 — cross-platform web browser for Windows and Debian Linux",
   "main": "main.cjs",
   "productName": "Linsoft Browser",
@@ -31,7 +31,9 @@
     "sharp": "^0.35.4"
   },
   "dependencies": {
-    "electron-updater": "^6.3.9"
+    "@zxing/browser": "^0.2.1",
+    "electron-updater": "^6.3.9",
+    "qrcode": "^1.5.4"
   },
   "build": {
     "appId": "sk.linsoft.browser",

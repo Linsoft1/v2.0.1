@@ -1,21 +1,21 @@
 # Linsoft Browser Release Checklist
 
-## Current Release: 2.0.23
+## Current Release: 2.0.24
 
+- Onion Chat includes QR invitations/scanning, 15-minute invitation expiry/renewal, Tor transport recovery, in-memory chat receipts, encrypted video-only calls, and end-to-end encrypted 2 MiB file transfers over Tor.
 - Electron is upgraded to `44.4.5` and Electron Builder to `26.15.3` to address the audited advisories.
-- `npm ci` succeeds locally with the updated lockfile.
-- `npm test` passes locally.
-- `npm audit` reports zero vulnerabilities.
-- Windows installer builds locally with the current Electron version.
-- For this explicitly requested `2.0.23` hotfix, the Windows installer is intentionally unsigned; the signing gate below remains unsatisfied.
-- Publish tag `v2.0.23`; Linux CI stages the custom Debian package in a flat folder for release upload. Build jobs use `--publish never`; the dedicated release job uploads assets using `GITHUB_TOKEN`.
+- `npm test` passes locally (27 tests).
+- `npm run test:tor` reaches the onion service from a separate guest process, relays encrypted chat, video frames, and file chunks, verifies receipts, and rejects a second guest.
+- Production dependency audit (`npm audit --omit=dev`) reports zero vulnerabilities.
+- The local Windows installer is intentionally unsigned; the signing gate below remains unsatisfied.
+- Publish tag `v2.0.24` only after the applicable release gates are complete. Linux CI stages the custom Debian package in a flat folder; build jobs use `--publish never` and the dedicated release job uploads assets using `GITHUB_TOKEN`.
 - Wait for both build jobs and the release upload to complete before calling this release complete.
 
 ## Release Gate
 
 - [ ] `npm ci` succeeds on both Windows and Linux runners.
 - [x] `npm test` passes, including Tor chat protocol and AES-GCM tests.
-- [x] `npm run test:tor` reaches the onion service, relays encrypted chat data, and rejects a second guest.
+- [x] `npm run test:tor` reaches the onion service from a separate guest process, relays encrypted chat, video frames, and file chunks, verifies receipts, and rejects a second guest.
 - [ ] Windows installer builds and uploads.
 - [ ] Windows installer is signed with the release code-signing certificate; verify its publisher in the file properties before publishing.
 - [ ] Debian package builds and passes `node tools/verify-deb.cjs`.

@@ -4,21 +4,361 @@ const tabTitle = document.getElementById('tabTitle');
 const isGuestWindow = new URLSearchParams(window.location.search).has('guest');
 const isNativeTabs = new URLSearchParams(window.location.search).has('nativeTabs');
 document.getElementById('guestIndicator').hidden = !isGuestWindow;
-const torChatUi = { role: '', onion: '', invite: '', key: null, lastId: 0, messages: [], pollTimer: null, polling: false, busy: false, generation: 0, status: 'stopped', statusMessage: 'Onion chat je vypnutý.' };
+const torChatUi = { role: '', onion: '', invite: '', inviteQr: '', expiresAt: 0, expiryTimer: null, guestConnected: false, pendingReadIds: [], reconnectAttempts: 0, scanning: false, videoActive: false, videoStarting: false, videoStream: null, videoSendTimer: null, videoPollTimer: null, videoLastId: 0, videoGeneration: 0, videoSending: false, videoPolling: false, videoStatus: 'Video-only cez Tor; kvalita prispôsobená sieti.', fileTimer: null, fileGeneration: 0, filePolling: false, fileSending: false, outgoingFileId: '', fileCursor: -1, incomingFile: null, key: null, lastId: 0, messages: [], pollTimer: null, polling: false, busy: false, generation: 0, status: 'stopped', statusMessage: 'Onion chat je vypnutý.' };
+let torChatPanel = null;
+let torChatScannerControls = null;
 async function importTorChatKey(encodedKey) { return window.linsoftTorChatCrypto.importKey(encodedKey); }
 async function encryptTorChatMessage(text) { return window.linsoftTorChatCrypto.encrypt(torChatUi.key, text); }
 async function decryptTorChatMessage(message) { return window.linsoftTorChatCrypto.decrypt(torChatUi.key, message); }
+function formatTorChatFileSize(bytes) { return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / (1024 * 1024)).toFixed(1)} MiB`; }
+function parseTorChatInvitation(value) {
+  const invite = new URL(String(value || '').trim());
+  const [token, encodedKey, extra] = invite.hash.slice(1).split('.');
+  if (invite.protocol !== 'http:' || !/^[a-z2-7]{56}\.onion$/i.test(invite.hostname) || invite.username || invite.password || invite.pathname !== '/' || invite.search || extra !== undefined || !/^[A-Za-z0-9_-]{32}$/.test(token || '') || !/^[A-Za-z0-9_-]{43}$/.test(encodedKey || '')) throw new Error('Vlož platnú onion pozvánku od druhého účastníka.');
+  return { address: `${invite.origin}/`, token, encodedKey };
+}
+async function stopTorChatQrScanner(chatPanel = torChatPanel) {
+  torChatScannerControls?.stop();
+  torChatScannerControls = null;
+  const scanner = chatPanel?.querySelector('#torChatScanner');
+  const video = chatPanel?.querySelector('#torChatScannerVideo');
+  if (video?.srcObject) {
+    for (const track of video.srcObject.getTracks()) track.stop();
+    video.srcObject = null;
+  }
+  if (scanner) scanner.hidden = true;
+  await window.linsoftBrowser?.releaseTorChatCamera?.();
+  torChatUi.scanning = false;
+  if (torChatPanel?.isConnected) renderTorChatState();
+}
+async function startTorChatQrScanner(chatPanel) {
+  if (torChatScannerControls || torChatUi.scanning || torChatUi.busy || torChatUi.role) return;
+  torChatUi.scanning = true;
+  renderTorChatState();
+  const panel = chatPanel.querySelector('#torChatScanner');
+  const status = chatPanel.querySelector('#torChatScannerStatus');
+  panel.hidden = false;
+  status.textContent = 'Čaká sa na povolenie kamery...';
+  try {
+    const permission = await window.linsoftBrowser?.authorizeTorChatCamera?.();
+    if (!permission?.ok) throw new Error(permission?.message || 'Prístup ku kamere bol zrušený.');
+    if (!navigator.mediaDevices?.getUserMedia || !window.ZXingBrowser?.BrowserQRCodeReader) throw new Error('QR skener nie je v tomto zariadení dostupný.');
+    status.textContent = 'Namier kameru na QR pozvánku.';
+    const reader = new window.ZXingBrowser.BrowserQRCodeReader();
+    let invitationQueued = false;
+    torChatScannerControls = await reader.decodeFromVideoDevice(undefined, chatPanel.querySelector('#torChatScannerVideo'), (result) => {
+      if (!result || invitationQueued) return;
+      const value = result.getText();
+      try {
+        parseTorChatInvitation(value);
+        invitationQueued = true;
+        chatPanel.querySelector('#torChatInviteInput').value = value;
+        status.textContent = 'Pozvánka načítaná. Pripájam...';
+        void stopTorChatQrScanner(chatPanel).then(() => chatPanel.querySelector('#torChatJoin').click());
+      } catch {
+        status.textContent = 'Tento QR kód neobsahuje platnú Onion Chat pozvánku.';
+      }
+    });
+  } catch (error) {
+    await stopTorChatQrScanner(chatPanel);
+    torChatUi.statusMessage = error instanceof Error ? error.message : 'QR skener sa nepodarilo spustiť.';
+    renderTorChatState();
+  }
+}
+async function startTorChatVideoCall(chatPanel = torChatPanel) {
+  if (!chatPanel || torChatUi.videoActive || torChatUi.videoStarting || torChatUi.role === '' || torChatUi.status !== 'connected' || !torChatUi.key) return;
+  const generation = ++torChatUi.videoGeneration;
+  torChatUi.videoStarting = true;
+  torChatUi.videoStatus = 'Žiadam o povolenie kamery...';
+  renderTorChatState();
+  try {
+    const permission = await window.linsoftBrowser?.authorizeTorChatCamera?.('video');
+    if (!permission?.ok) throw new Error(permission?.message || 'Prístup ku kamere bol zrušený.');
+    torChatUi.videoStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 1, max: 2 } }, audio: false });
+    if (generation !== torChatUi.videoGeneration) {
+      torChatUi.videoStream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const localVideo = chatPanel.querySelector('#torChatLocalVideo');
+    localVideo.srcObject = torChatUi.videoStream;
+    await localVideo.play().catch(() => {});
+    torChatUi.videoStarting = false;
+    torChatUi.videoLastId = 0;
+    torChatUi.videoActive = true;
+    torChatUi.videoStatus = 'Video-only cez Tor. Nízka snímková frekvencia šetrí prenos.';
+    renderTorChatState();
+    void sendTorChatVideoFrame(chatPanel, generation);
+    void pollTorChatVideoFrame(chatPanel, generation);
+    torChatUi.videoSendTimer = setInterval(() => void sendTorChatVideoFrame(chatPanel, generation), 1400);
+    torChatUi.videoPollTimer = setInterval(() => void pollTorChatVideoFrame(chatPanel, generation), 1400);
+  } catch (error) {
+    if (generation !== torChatUi.videoGeneration) return;
+    torChatUi.videoStarting = false;
+    torChatUi.videoStatus = error instanceof Error ? error.message : 'Video hovor sa nepodarilo spustiť.';
+    await stopTorChatVideoCall(chatPanel, false);
+    await window.linsoftBrowser?.releaseTorChatCamera?.();
+    torChatUi.videoStatus = error instanceof Error ? error.message : 'Video hovor sa nepodarilo spustiť.';
+    renderTorChatState();
+  }
+}
+async function sendTorChatVideoFrame(chatPanel = torChatPanel, generation = torChatUi.videoGeneration) {
+  if (!torChatUi.videoActive || torChatUi.videoSending || !torChatUi.key || generation !== torChatUi.videoGeneration) return;
+  const video = chatPanel?.querySelector('#torChatLocalVideo');
+  if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
+  torChatUi.videoSending = true;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = Math.max(90, Math.round(160 * video.videoHeight / video.videoWidth));
+    const context = canvas.getContext('2d', { alpha: false });
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    let frameData = canvas.toDataURL('image/jpeg', 0.3);
+    if (frameData.length > 7600) frameData = canvas.toDataURL('image/jpeg', 0.16);
+    const envelope = await encryptTorChatMessage(frameData);
+    if (generation !== torChatUi.videoGeneration) return;
+    if (envelope.ciphertext.length > 11000) {
+      torChatUi.videoStatus = 'Snímka je príliš veľká pre bezpečný prenos cez Tor.';
+      renderTorChatState();
+      return;
+    }
+    const result = await window.linsoftBrowser?.sendTorChatVideoFrame?.(envelope);
+    if (!result?.ok && generation === torChatUi.videoGeneration) torChatUi.videoStatus = result?.message || 'Video prenos sa obnovuje cez Tor.';
+  } catch (error) {
+    if (generation === torChatUi.videoGeneration) torChatUi.videoStatus = error instanceof Error ? error.message : 'Video snímku sa nepodarilo odoslať.';
+  } finally {
+    torChatUi.videoSending = false;
+  }
+}
+async function pollTorChatVideoFrame(chatPanel = torChatPanel, generation = torChatUi.videoGeneration) {
+  if (!torChatUi.videoActive || torChatUi.videoPolling || generation !== torChatUi.videoGeneration) return;
+  torChatUi.videoPolling = true;
+  try {
+    const result = await window.linsoftBrowser?.pollTorChatVideo?.(torChatUi.videoLastId);
+    if (generation !== torChatUi.videoGeneration || !torChatUi.videoActive) return;
+    if (!result?.ok) {
+      torChatUi.videoStatus = result?.message || 'Video prenos sa obnovuje cez Tor.';
+      return;
+    }
+    if (result.frame && result.frame.id > torChatUi.videoLastId) {
+      const dataUrl = await decryptTorChatMessage(result.frame);
+      if (generation !== torChatUi.videoGeneration) return;
+      if (!dataUrl.startsWith('data:image/jpeg;base64,')) throw new Error('Neplatná video snímka.');
+      chatPanel.querySelector('#torChatRemoteVideo').src = dataUrl;
+      torChatUi.videoLastId = result.frame.id;
+      torChatUi.videoStatus = result.active ? 'Šifrované video cez Tor · nízka snímková frekvencia' : 'Kontakt ukončil video prenos.';
+    } else if (!result.active) {
+      chatPanel.querySelector('#torChatRemoteVideo').removeAttribute('src');
+      torChatUi.videoStatus = 'Čakám na video druhého účastníka...';
+    }
+  } catch (error) {
+    if (generation === torChatUi.videoGeneration) torChatUi.videoStatus = error instanceof Error ? error.message : 'Video snímku sa nepodarilo načítať.';
+  } finally {
+    torChatUi.videoPolling = false;
+    if (chatPanel?.isConnected && torChatUi.videoActive) renderTorChatVideoStatus(chatPanel);
+  }
+}
+function renderTorChatVideoStatus(chatPanel = torChatPanel) {
+  const status = chatPanel?.querySelector('#torChatVideoStatus');
+  if (status) status.textContent = torChatUi.videoStatus;
+}
+async function stopTorChatVideoCall(chatPanel = torChatPanel, notifyPeer = true) {
+  if (!torChatUi.videoActive && !torChatUi.videoStarting && !torChatUi.videoStream) return;
+  torChatUi.videoGeneration += 1;
+  torChatUi.videoActive = false;
+  torChatUi.videoStarting = false;
+  clearInterval(torChatUi.videoSendTimer);
+  clearInterval(torChatUi.videoPollTimer);
+  torChatUi.videoSendTimer = null;
+  torChatUi.videoPollTimer = null;
+  torChatUi.videoStream?.getTracks().forEach((track) => track.stop());
+  torChatUi.videoStream = null;
+  torChatUi.videoSending = false;
+  torChatUi.videoPolling = false;
+  const localVideo = chatPanel?.querySelector('#torChatLocalVideo');
+  if (localVideo) localVideo.srcObject = null;
+  const remoteVideo = chatPanel?.querySelector('#torChatRemoteVideo');
+  remoteVideo?.removeAttribute('src');
+  if (notifyPeer) await window.linsoftBrowser?.stopTorChatVideo?.();
+  await window.linsoftBrowser?.releaseTorChatCamera?.();
+  torChatUi.videoStatus = 'Video hovor je vypnutý.';
+  if (torChatPanel?.isConnected) renderTorChatState();
+}
+function scheduleTorChatFilePoll(delay = 1200) {
+  if (torChatUi.fileTimer) clearTimeout(torChatUi.fileTimer);
+  torChatUi.fileTimer = torChatUi.role ? setTimeout(pollTorChatFiles, delay) : null;
+}
+async function sendTorChatFile(file, chatPanel = torChatPanel) {
+  const maximumBytes = 2 * 1024 * 1024;
+  const chunkBytes = 24 * 1024;
+  if (!file || !torChatUi.role || !torChatUi.key || torChatUi.fileSending) return;
+  if (file.size > maximumBytes) {
+    showToast('Súbor je väčší ako limit 2 MiB.');
+    return;
+  }
+  const fileId = window.linsoftTorChatCrypto.encodeBase64Url(crypto.getRandomValues(new Uint8Array(18)));
+  const payloadChunks = Math.max(1, Math.ceil(file.size / chunkBytes));
+  const total = payloadChunks + 1;
+  const fileMessage = { id: `file-${fileId}`, sender: torChatUi.role, sentAt: Date.now(), file: { name: file.name.slice(0, 160), size: file.size, status: 'Pripravujem šifrovaný prenos...' } };
+  const generation = torChatUi.fileGeneration;
+  torChatUi.messages.push(fileMessage);
+  if (torChatUi.messages.length > 200) torChatUi.messages.shift();
+  torChatUi.fileSending = true;
+  renderTorChatState();
+  try {
+    const manifest = JSON.stringify({ name: fileMessage.file.name, size: file.size, type: file.type || 'application/octet-stream' });
+    const manifestEnvelope = await encryptTorChatMessage(manifest);
+    const manifestResult = await window.linsoftBrowser?.sendTorChatFileChunk?.({ fileId, index: 0, total, ...manifestEnvelope });
+    if (!manifestResult?.ok) throw new Error(manifestResult?.message || 'Súbor sa nepodarilo pripraviť.');
+    torChatUi.outgoingFileId = fileId;
+    for (let index = 0; index < payloadChunks; index += 1) {
+      if (generation !== torChatUi.fileGeneration) return;
+      const start = index * chunkBytes;
+      const bytes = new Uint8Array(await file.slice(start, Math.min(file.size, start + chunkBytes)).arrayBuffer());
+      const encoded = window.linsoftTorChatCrypto.encodeBase64Url(bytes);
+      const envelope = await encryptTorChatMessage(encoded);
+      const result = await window.linsoftBrowser?.sendTorChatFileChunk?.({ fileId, index: index + 1, total, ...envelope });
+      if (!result?.ok) throw new Error(result?.message || 'Súbor sa nepodarilo odoslať cez Tor.');
+      fileMessage.file.status = `Odosielam ${Math.round(((index + 1) / payloadChunks) * 100)} % cez Tor...`;
+      renderTorChatMessages();
+    }
+    fileMessage.file.status = 'Odoslané do onion prenosu; čaká sa na príjemcu.';
+  } catch (error) {
+    if (generation !== torChatUi.fileGeneration) return;
+    await window.linsoftBrowser?.cancelTorChatFileTransfer?.(fileId);
+    if (torChatUi.outgoingFileId === fileId) torChatUi.outgoingFileId = '';
+    fileMessage.file.status = error instanceof Error ? error.message : 'Súbor sa nepodarilo odoslať.';
+  } finally {
+    if (generation !== torChatUi.fileGeneration) return;
+    torChatUi.fileSending = false;
+    const input = chatPanel?.querySelector('#torChatFileInput');
+    if (input) input.value = '';
+    renderTorChatState();
+  }
+}
+async function pollTorChatFiles() {
+  if (!torChatUi.role || torChatUi.filePolling) return;
+  const generation = torChatUi.fileGeneration;
+  torChatUi.filePolling = true;
+  try {
+    const result = await window.linsoftBrowser?.pollTorChatFiles?.(torChatUi.fileCursor);
+    if (generation !== torChatUi.fileGeneration) return;
+    if (!result?.ok) throw new Error(result?.message || 'Súbor sa nepodarilo prijať cez Tor.');
+    if (torChatUi.outgoingFileId && !result.outgoingPending) {
+      const outgoing = torChatUi.messages.find((message) => message.id === `file-${torChatUi.outgoingFileId}`);
+      if (outgoing?.file) { outgoing.file.status = 'Prenos súboru bol uzavretý.'; renderTorChatMessages(); }
+      torChatUi.outgoingFileId = '';
+      renderTorChatState();
+    }
+    const transfer = result.transfer;
+    if (!transfer) {
+      if (torChatUi.incomingFile) {
+        torChatUi.incomingFile = null;
+        torChatUi.fileCursor = -1;
+      }
+      const status = torChatPanel?.querySelector('#torChatFileStatus');
+      if (status) { status.textContent = ''; status.hidden = true; }
+      return;
+    }
+    if (!torChatUi.incomingFile || torChatUi.incomingFile.fileId !== transfer.fileId) {
+      if (transfer.total < 2 || transfer.total > 90) throw new Error('Počet blokov súboru je neplatný.');
+      torChatUi.incomingFile = { fileId: transfer.fileId, total: transfer.total, nextIndex: 0, manifest: null, chunks: new Array(transfer.total), receivedBytes: 0 };
+      torChatUi.fileCursor = -1;
+    }
+    const incoming = torChatUi.incomingFile;
+    for (const chunk of transfer.chunks || []) {
+      if (generation !== torChatUi.fileGeneration) return;
+      if (chunk.fileId !== incoming.fileId || chunk.total !== incoming.total || chunk.index < incoming.nextIndex) continue;
+      if (chunk.index !== incoming.nextIndex) throw new Error('Poradie blokov prijatého súboru nesedí.');
+      const plaintext = await decryptTorChatMessage(chunk);
+      if (chunk.index === 0) {
+        const manifest = JSON.parse(plaintext);
+        if (typeof manifest.name !== 'string' || manifest.name.length > 160 || !Number.isSafeInteger(manifest.size) || manifest.size < 0 || manifest.size > 2 * 1024 * 1024 || typeof manifest.type !== 'string') throw new Error('Metadáta súboru nie sú platné.');
+        incoming.manifest = manifest;
+      } else {
+        const bytes = plaintext ? window.linsoftTorChatCrypto.decodeBase64Url(plaintext) : new Uint8Array(0);
+        incoming.chunks[chunk.index] = bytes;
+        incoming.receivedBytes += bytes.length;
+        if (incoming.receivedBytes > 2 * 1024 * 1024) throw new Error('Súbor prekračuje limit 2 MiB.');
+      }
+      incoming.nextIndex += 1;
+      torChatUi.fileCursor = chunk.index;
+      const status = torChatPanel?.querySelector('#torChatFileStatus');
+      if (status && incoming.manifest) {
+        status.hidden = false;
+        status.textContent = `Prijímam ${incoming.manifest.name}: ${formatTorChatFileSize(incoming.receivedBytes)} / ${formatTorChatFileSize(incoming.manifest.size)}`;
+      }
+    }
+    if (incoming.nextIndex === incoming.total) {
+      if (!incoming.manifest || incoming.receivedBytes !== incoming.manifest.size) throw new Error('Prijaté dáta sa nezhodujú s veľkosťou súboru.');
+      const bytes = new Uint8Array(incoming.manifest.size);
+      let offset = 0;
+      for (let index = 1; index < incoming.total; index += 1) {
+        const chunk = incoming.chunks[index];
+        if (!chunk) throw new Error('Súbor neobsahuje všetky bloky.');
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const completed = await window.linsoftBrowser?.completeTorChatFile?.(incoming.fileId);
+      if (!completed?.ok) throw new Error(completed?.message || 'Prijatý súbor sa nepodarilo potvrdiť.');
+      torChatUi.messages.push({ id: `file-${incoming.fileId}`, sender: torChatUi.role === 'host' ? 'guest' : 'host', sentAt: Date.now(), file: { name: incoming.manifest.name, type: incoming.manifest.type, size: incoming.manifest.size, bytes, status: 'Prijaté · vyber Uložiť súbor' } });
+      if (torChatUi.messages.length > 200) torChatUi.messages.shift();
+      torChatUi.incomingFile = null;
+      torChatUi.fileCursor = -1;
+      const status = torChatPanel?.querySelector('#torChatFileStatus');
+      if (status) { status.textContent = ''; status.hidden = true; }
+      renderTorChatMessages();
+    }
+  } catch (error) {
+    if (generation !== torChatUi.fileGeneration) return;
+    const status = torChatPanel?.querySelector('#torChatFileStatus');
+    if (status) { status.hidden = false; status.textContent = error instanceof Error ? error.message : 'Prenos súboru sa prerušil.'; }
+  } finally {
+    torChatUi.filePolling = false;
+    if (generation === torChatUi.fileGeneration) scheduleTorChatFilePoll(torChatUi.incomingFile ? 500 : 1400);
+  }
+}
 function renderTorChatMessages() {
   for (const list of document.querySelectorAll('.tor-chat-messages')) {
     list.replaceChildren();
+    if (!torChatUi.messages.length) {
+      const empty = document.createElement('div');
+      empty.className = 'tor-chat-message-empty';
+      empty.textContent = torChatUi.role === 'host' ? 'Pozvánka je pripravená. Správy sa zobrazia po odoslaní.' : 'Táto konverzácia je šifrovaná medzi účastníkmi.';
+      list.appendChild(empty);
+    }
     for (const message of torChatUi.messages) {
       const bubble = document.createElement('article');
       bubble.className = `tor-chat-message${message.sender === torChatUi.role ? ' own' : ''}`;
       const meta = document.createElement('small');
-      meta.textContent = `${message.sender === torChatUi.role ? 'Ty' : 'Kontakt'} · ${new Date(message.sentAt).toLocaleTimeString()}`;
-      const content = document.createElement('p');
-      content.textContent = message.text;
-      bubble.append(meta, content);
+      const receiptLabel = message.sender !== torChatUi.role ? '' : message.status === 'read' ? ' · Prečítané' : message.status === 'delivered' ? ' · Doručené' : ' · Odoslané';
+      meta.textContent = `${message.sender === torChatUi.role ? 'Ty' : 'Kontakt'} · ${new Date(message.sentAt).toLocaleTimeString()}${receiptLabel}`;
+      if (message.file) {
+        const card = document.createElement('div');
+        card.className = 'tor-chat-file-card';
+        const title = document.createElement('strong');
+        title.textContent = message.file.name;
+        const details = document.createElement('small');
+        details.className = 'tor-chat-file-details';
+        details.textContent = `${formatTorChatFileSize(message.file.size)} · ${message.file.status || (message.file.bytes ? 'Pripravené na uloženie' : 'Prenos cez Tor')}`;
+        card.append(title, details);
+        if (message.file.bytes) {
+          const download = document.createElement('button');
+          download.className = 'tor-chat-file-save';
+          download.type = 'button';
+          download.textContent = 'Uložiť súbor';
+          download.addEventListener('click', async () => {
+            const data = window.linsoftTorChatCrypto.encodeBase64Url(message.file.bytes);
+            const result = await window.linsoftBrowser?.saveTorChatFile?.({ name: message.file.name, data });
+            showToast(result?.ok ? 'Súbor bol uložený.' : result?.cancelled ? 'Ukladanie bolo zrušené.' : (result?.message || 'Súbor sa nepodarilo uložiť.'));
+          });
+          card.appendChild(download);
+        }
+        bubble.append(meta, card);
+      } else {
+        const content = document.createElement('p');
+        content.textContent = message.text;
+        bubble.append(meta, content);
+      }
       list.appendChild(bubble);
     }
     list.scrollTop = list.scrollHeight;
@@ -32,15 +372,40 @@ function renderTorChatState() {
     if (!status) continue;
     status.textContent = torChatUi.statusMessage;
     query('#torChatDot').dataset.status = torChatUi.status;
-    query('#torChatHost').disabled = torChatUi.busy || active;
-    query('#torChatJoin').disabled = torChatUi.busy || active;
+    query('#torChatHost').disabled = torChatUi.busy || active || torChatUi.scanning;
+    query('#torChatJoin').disabled = torChatUi.busy || active || torChatUi.scanning;
+    query('#torChatScan').disabled = torChatUi.busy || active || torChatUi.scanning;
     query('#torChatEnd').disabled = !active && !torChatUi.busy;
     query('#torChatInvitePanel').hidden = torChatUi.role !== 'host';
     query('#torChatInviteValue').value = torChatUi.invite;
     query('#torChatJoinPanel').hidden = active;
     query('#torChatConversation').hidden = !active;
+    query('#torChatEmpty').hidden = active;
     query('#torChatMessage').disabled = !active;
-    query('#torChatSend').disabled = !active;
+    query('#torChatSend').disabled = !active || ['reconnecting', 'error', 'stopping'].includes(torChatUi.status);
+    query('#torChatAttach').disabled = !active || !(torChatUi.role === 'guest' || torChatUi.guestConnected) || torChatUi.busy || torChatUi.fileSending || Boolean(torChatUi.outgoingFileId);
+    query('#torChatFileStatus').hidden = !query('#torChatFileStatus').textContent;
+    query('#torChatAttach').disabled = !active || !(torChatUi.role === 'guest' || torChatUi.guestConnected) || torChatUi.busy || torChatUi.fileSending || Boolean(torChatUi.outgoingFileId);
+    query('#torChatFileStatus').hidden = !query('#torChatFileStatus').textContent;
+    query('#torChatPeerName').textContent = torChatUi.role === 'guest' ? 'Hostiteľ onion služby' : 'Druhý účastník';
+    query('#torChatPeerStatus').textContent = torChatUi.status === 'starting' ? 'Pripájanie k sieti Tor...' : torChatUi.status === 'stopping' ? 'Ukončujem chat...' : torChatUi.status === 'reconnecting' ? 'Obnovujem spojenie cez Tor...' : torChatUi.status === 'error' ? 'Spojenie sa prerušilo' : torChatUi.status === 'expired' ? 'Pozvánka vypršala' : torChatUi.role === 'guest' || torChatUi.guestConnected ? 'Pripojený cez Tor' : active ? 'Čaká sa na pripojenie' : 'Nepripojený';
+    query('#torChatHeaderName').textContent = torChatUi.role === 'guest' ? 'Súkromná správa od hostiteľa' : 'Onion konverzácia';
+    query('#torChatHeaderStatus').textContent = torChatUi.statusMessage;
+    query('#torChatEnd').textContent = torChatUi.role === 'host' && !torChatUi.guestConnected ? 'Zrušiť pozvánku' : 'Ukončiť chat';
+    query('#torChatRenewInvite').hidden = torChatUi.role !== 'host' || torChatUi.status !== 'expired';
+    const videoButton = query('#torChatVideoCall');
+    const canCall = torChatUi.role === 'guest' || torChatUi.guestConnected;
+    videoButton.disabled = !canCall || torChatUi.busy || torChatUi.videoStarting || torChatUi.status !== 'connected';
+    videoButton.textContent = torChatUi.videoStarting ? 'Spúšťam...' : torChatUi.videoActive ? 'Ukončiť video' : 'Video hovor';
+    query('#torChatVideoPanel').hidden = !torChatUi.videoActive;
+    query('#torChatVideoStatus').textContent = torChatUi.videoStatus;
+    const qr = query('#torChatInviteQr');
+    if (qr) { qr.src = torChatUi.inviteQr; qr.hidden = !torChatUi.inviteQr; }
+    const expiry = query('#torChatInviteExpiry');
+    if (expiry && torChatUi.role === 'host') {
+      const seconds = Math.max(0, Math.ceil((torChatUi.expiresAt - Date.now()) / 1000));
+      expiry.textContent = torChatUi.guestConnected ? 'Pozvánka bola použitá.' : seconds ? `Pozvánka vyprší o ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}.` : 'Pozvánka vypršala. Zruš ju a vytvor novú.';
+    }
   }
   renderTorChatMessages();
 }
@@ -50,7 +415,26 @@ function stopTorChatPolling() {
 }
 function scheduleTorChatPoll(delay = 2500) {
   stopTorChatPolling();
-  if (torChatUi.role) torChatUi.pollTimer = setTimeout(pollTorChatMessages, delay);
+  if (torChatUi.role && torChatUi.status !== 'stopping') torChatUi.pollTimer = setTimeout(pollTorChatMessages, delay);
+}
+function startTorChatInviteCountdown() {
+  if (torChatUi.expiryTimer) clearInterval(torChatUi.expiryTimer);
+  torChatUi.expiryTimer = setInterval(() => {
+    if (torChatUi.guestConnected || !torChatUi.expiresAt) {
+      clearInterval(torChatUi.expiryTimer);
+      torChatUi.expiryTimer = null;
+      return;
+    }
+    if (Date.now() >= torChatUi.expiresAt) {
+      torChatUi.status = 'expired';
+      torChatUi.statusMessage = 'Pozvánka vypršala. Zruš ju a vytvor novú.';
+    }
+    renderTorChatState();
+    if (torChatUi.status === 'expired') {
+      clearInterval(torChatUi.expiryTimer);
+      torChatUi.expiryTimer = null;
+    }
+  }, 1000);
 }
 async function pollTorChatMessages() {
   if (!torChatUi.role || torChatUi.polling) return;
@@ -61,31 +445,83 @@ async function pollTorChatMessages() {
     for (const message of result.messages || []) {
       if (message.id <= torChatUi.lastId) continue;
       torChatUi.lastId = message.id;
+      if (torChatUi.messages.some((item) => item.id === message.id)) continue;
       try {
         const text = await decryptTorChatMessage(message);
-        torChatUi.messages.push({ sender: message.sender, sentAt: message.sentAt, text });
+        torChatUi.messages.push({ id: message.id, sender: message.sender, sentAt: message.sentAt, text, status: message.deliveredAt ? 'delivered' : 'sent' });
+        if (message.sender !== torChatUi.role) {
+          torChatUi.pendingReadIds.push(message.id);
+          if (torChatUi.pendingReadIds.length > 200) torChatUi.pendingReadIds.shift();
+        }
         if (torChatUi.messages.length > 200) torChatUi.messages.shift();
       } catch {
-        torChatUi.messages.push({ sender: message.sender, sentAt: message.sentAt, text: '[Správu sa nepodarilo dešifrovať.]' });
+        torChatUi.messages.push({ id: message.id, sender: message.sender, sentAt: message.sentAt, text: '[Správu sa nepodarilo dešifrovať.]' });
       }
     }
-    torChatUi.status = 'running';
-    torChatUi.statusMessage = `Šifrovaný onion chat je pripojený${torChatUi.role === 'host' ? ' · Čaká sa na účastníka' : ''}.`;
+    torChatUi.reconnectAttempts = 0;
+    for (const receipt of result.receipts || []) {
+      const message = torChatUi.messages.find((item) => item.id === receipt.id && item.sender === torChatUi.role);
+      if (message) message.status = receipt.readAt ? 'read' : receipt.deliveredAt ? 'delivered' : 'sent';
+    }
+    torChatUi.guestConnected = Boolean(result.guestConnected);
+    if (torChatUi.guestConnected) {
+      torChatUi.expiresAt = 0;
+      if (torChatUi.expiryTimer) clearInterval(torChatUi.expiryTimer);
+      torChatUi.expiryTimer = null;
+    }
+    if (result.invitationExpired) {
+      torChatUi.status = 'expired';
+      torChatUi.statusMessage = 'Pozvánka vypršala. Zruš ju a vytvor novú.';
+    } else {
+      torChatUi.status = torChatUi.guestConnected || torChatUi.role === 'guest' ? 'connected' : 'waiting';
+      torChatUi.statusMessage = torChatUi.guestConnected || torChatUi.role === 'guest' ? 'Šifrovaný onion chat je pripojený cez Tor.' : 'Onion služba čaká na druhého účastníka.';
+    }
     renderTorChatState();
+    await flushTorChatReadReceipts();
   } catch (error) {
-    torChatUi.status = 'error';
-    torChatUi.statusMessage = error instanceof Error ? error.message : 'Spojenie s onion chatom zlyhalo.';
+    torChatUi.reconnectAttempts += 1;
+    torChatUi.status = 'reconnecting';
+    const delaySeconds = Math.ceil(Math.min(30000, 2500 * (2 ** Math.min(torChatUi.reconnectAttempts, 4))) / 1000);
+    torChatUi.statusMessage = `Spojenie sa prerušilo. Obnovujem cez Tor, pokus ${torChatUi.reconnectAttempts} (ďalší o ${delaySeconds} s). ${error instanceof Error ? error.message : ''}`.trim();
     renderTorChatState();
   } finally {
     torChatUi.polling = false;
-    scheduleTorChatPoll(torChatUi.status === 'error' ? 5000 : 2500);
+    const retryDelay = Math.min(30000, 2500 * (2 ** Math.min(torChatUi.reconnectAttempts, 4)));
+    scheduleTorChatPoll(torChatUi.status === 'reconnecting' ? retryDelay : torChatUi.status === 'expired' ? 10000 : 2500);
   }
+}
+function isTorChatTabVisible() {
+  return document.visibilityState === 'visible' && tabs.get(activeTabId)?.url === 'linsoft://tor-chat';
+}
+async function flushTorChatReadReceipts() {
+  if (!torChatUi.pendingReadIds.length || !isTorChatTabVisible()) return;
+  const ids = [...new Set(torChatUi.pendingReadIds)];
+  const result = await window.linsoftBrowser?.markTorChatMessagesRead?.(ids);
+  if (result?.ok) torChatUi.pendingReadIds = torChatUi.pendingReadIds.filter((id) => !ids.includes(id));
 }
 function clearTorChatUi() {
   stopTorChatPolling();
+  if (torChatUi.fileTimer) clearTimeout(torChatUi.fileTimer);
+  torChatUi.fileTimer = null;
+  torChatUi.fileGeneration += 1;
+  torChatUi.filePolling = false;
+  torChatUi.fileSending = false;
+  torChatUi.outgoingFileId = '';
+  torChatUi.fileCursor = -1;
+  torChatUi.incomingFile = null;
+  void stopTorChatQrScanner();
+  void stopTorChatVideoCall();
+  if (torChatUi.expiryTimer) clearInterval(torChatUi.expiryTimer);
+  torChatUi.expiryTimer = null;
   torChatUi.role = '';
   torChatUi.onion = '';
   torChatUi.invite = '';
+  torChatUi.inviteQr = '';
+  torChatUi.expiresAt = 0;
+  torChatUi.guestConnected = false;
+  torChatUi.pendingReadIds = [];
+  torChatUi.reconnectAttempts = 0;
+  torChatUi.scanning = false;
   torChatUi.key = null;
   torChatUi.lastId = 0;
   torChatUi.messages = [];
@@ -94,6 +530,52 @@ function clearTorChatUi() {
   torChatUi.status = 'stopped';
   torChatUi.statusMessage = 'Onion chat je vypnutý.';
   renderTorChatMessages();
+}
+async function createTorChatHostSession(renew) {
+  if (torChatUi.busy || (torChatUi.role && !renew)) return;
+  const generation = ++torChatUi.generation;
+  torChatUi.busy = true;
+  torChatUi.status = 'starting';
+  torChatUi.statusMessage = renew ? 'Vytváram novú onion pozvánku...' : 'Pripájam Tor a vytváram onion službu...';
+  renderTorChatState();
+  try {
+    const generatedKey = await window.linsoftTorChatCrypto.generateKey();
+    const result = renew
+      ? await window.linsoftBrowser?.renewTorChatHost?.()
+      : await window.linsoftBrowser?.startTorChatHost?.();
+    if (generation !== torChatUi.generation) return;
+    if (!result?.ok) throw new Error(result?.message || 'Onion chat sa nepodarilo spustiť.');
+    torChatUi.role = 'host';
+    torChatUi.onion = result.onion;
+    torChatUi.key = generatedKey.key;
+    torChatUi.invite = `${result.onion}#${result.token}.${generatedKey.encoded}`;
+    torChatUi.expiresAt = result.expiresAt;
+    const qrResult = await window.linsoftBrowser?.createTorChatInviteQr?.(torChatUi.invite);
+    if (generation !== torChatUi.generation) return;
+    torChatUi.inviteQr = qrResult?.ok ? qrResult.dataUrl : '';
+    torChatUi.lastId = 0;
+    torChatUi.messages = [];
+    torChatUi.pendingReadIds = [];
+    torChatUi.outgoingFileId = '';
+    torChatUi.fileCursor = -1;
+    torChatUi.incomingFile = null;
+    torChatUi.fileGeneration += 1;
+    torChatUi.reconnectAttempts = 0;
+    torChatUi.guestConnected = false;
+    torChatUi.busy = false;
+    torChatUi.status = 'waiting';
+    torChatUi.statusMessage = qrResult?.ok ? 'Onion služba čaká na druhého účastníka. Zdieľaj QR alebo pozvánku súkromne.' : 'Onion služba čaká na druhého účastníka. Pozvánku zdieľaj súkromne.';
+    renderTorChatState();
+    startTorChatInviteCountdown();
+    scheduleTorChatPoll(0);
+    scheduleTorChatFilePoll(0);
+  } catch (error) {
+    if (generation !== torChatUi.generation) return;
+    torChatUi.busy = false;
+    torChatUi.status = 'error';
+    torChatUi.statusMessage = error instanceof Error ? error.message : 'Onion chat sa nepodarilo spustiť.';
+    renderTorChatState();
+  }
 }
 const historyStack = ['linsoft://start'];
 let historyIndex = 0;
@@ -484,7 +966,7 @@ function updateBookmarksBar() {
 
 function addTab(initialUrl = 'linsoft://start') {
   const id = nextTabId++;
-  const initialTitle = initialUrl === 'linsoft://start' ? 'Linsoft Browser' : initialUrl.replace(/^https?:\/\//, '').split('/')[0];
+  const initialTitle = initialUrl === 'linsoft://start' ? 'Linsoft Browser' : initialUrl === 'linsoft://tor-chat' ? 'Onion Chat' : initialUrl.replace(/^https?:\/\//, '').split('/')[0];
   tabs.set(id, { id, url: initialUrl, title: initialTitle, history: [initialUrl], historyIndex: 0 });
   const button = createTabButton({ id, url: initialUrl, title: initialTitle, pinned: false });
   activeTabId = id;
@@ -498,15 +980,57 @@ function openNewTab(url = 'linsoft://start') {
   newTab?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
+function openTorChatTab() {
+  const existingTab = [...tabs.values()].find((tab) => tab.url === 'linsoft://tor-chat');
+  if (existingTab) { selectTab(existingTab.id); return; }
+  openNewTab('linsoft://tor-chat');
+}
+
 function openBackgroundTab(url) {
   const previousTabId = activeTabId;
   openNewTab(url);
   selectTab(previousTabId);
 }
 
-function selectTab(id) { const tab = tabs.get(id); if (!tab) return; activeTabId = id; updateActiveTab(tab.url, tab.title); addressInput.value = tab.url; tabTitle.textContent = tab.title; if (suspendedTabs.has(id) || tab.crashed) { suspendedTabs.delete(id); tab.suspended = false; tab.crashed = false; navigate(tab.url, false); } else if (tab.url === 'linsoft://start' && !content.querySelector(`.tab-surface[data-tab-id="${id}"]`)) { hideNativeTab(); startPage(); } else if (tab.url === 'linsoft://settings') { hideNativeTab(); openSettings(); } else if (tab.url === 'linsoft://apps') { hideNativeTab(); openAppCenter(); } else { activateSurface(id); if (isNativeTabs) { syncNativeTabLayout(); window.linsoftBrowser?.activateNativeTab?.(id); } } updateNavigationButtons(); }
+function selectTab(id) {
+  const tab = tabs.get(id);
+  if (!tab) return;
+  if (tab.url !== 'linsoft://tor-chat') {
+    if (torChatUi.scanning) void stopTorChatQrScanner();
+    if (torChatUi.videoActive || torChatUi.videoStarting) void stopTorChatVideoCall();
+  }
+  activeTabId = id;
+  updateActiveTab(tab.url, tab.title);
+  addressInput.value = tab.url;
+  tabTitle.textContent = tab.title;
+  if (suspendedTabs.has(id) || tab.crashed) {
+    suspendedTabs.delete(id);
+    tab.suspended = false;
+    tab.crashed = false;
+    navigate(tab.url, false);
+  } else if (tab.url === 'linsoft://start' && !content.querySelector(`.tab-surface[data-tab-id="${id}"]`)) {
+    hideNativeTab();
+    startPage();
+  } else if (tab.url === 'linsoft://settings') {
+    hideNativeTab();
+    openSettings();
+  } else if (tab.url === 'linsoft://apps') {
+    hideNativeTab();
+    openAppCenter();
+  } else if (tab.url === 'linsoft://tor-chat') {
+    hideNativeTab();
+    openTorChatPage();
+  } else {
+    activateSurface(id);
+    if (isNativeTabs) {
+      syncNativeTabLayout();
+      window.linsoftBrowser?.activateNativeTab?.(id);
+    }
+  }
+  updateNavigationButtons();
+}
 
-function closeTab(id) { const tab = tabs.get(id); if (!tab || tab.pinned || tab.locked) return; const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`); if (isNativeTabs) window.linsoftBrowser?.destroyNativeTab?.(id); else surface?.querySelectorAll('webview').forEach((viewer) => viewer.remove()); if (tabs.size === 1) { activeTabId = id; tabs.get(id).url = 'linsoft://start'; tabs.get(id).title = 'Linsoft Browser'; tabs.get(id).history = ['linsoft://start']; tabs.get(id).historyIndex = 0; startPage(); return; } closedTabs.unshift({ ...tab }); closedTabs.splice(10); const ids = [...tabs.keys()]; const closedIndex = ids.indexOf(id); const fallbackId = ids[Math.max(0, closedIndex - 1)]; surface?.remove(); document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.remove(); tabs.delete(id); updateTabDensity(); saveSession(); if (activeTabId === id) selectTab(fallbackId); }
+function closeTab(id) { const tab = tabs.get(id); if (!tab || tab.pinned || tab.locked) return; if (tab.url === 'linsoft://tor-chat') { torChatUi.generation += 1; clearTorChatUi(); void window.linsoftBrowser?.stopTorChat?.(); } const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`); if (isNativeTabs) window.linsoftBrowser?.destroyNativeTab?.(id); else surface?.querySelectorAll('webview').forEach((viewer) => viewer.remove()); if (tabs.size === 1) { activeTabId = id; tabs.get(id).url = 'linsoft://start'; tabs.get(id).title = 'Linsoft Browser'; tabs.get(id).history = ['linsoft://start']; tabs.get(id).historyIndex = 0; startPage(); return; } closedTabs.unshift({ ...tab }); closedTabs.splice(10); const ids = [...tabs.keys()]; const closedIndex = ids.indexOf(id); const fallbackId = ids[Math.max(0, closedIndex - 1)]; surface?.remove(); document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.remove(); tabs.delete(id); updateTabDensity(); saveSession(); if (activeTabId === id) selectTab(fallbackId); }
 
 function restoreClosedTab() { const tab = closedTabs.shift(); if (!tab) return; const id = nextTabId++; tab.id = id; tabs.set(id, tab); createTabButton(tab); activeTabId = id; navigate(tab.url, false); saveSession(); }
 
@@ -578,6 +1102,26 @@ function getActiveSurface() {
   if (!surface) { surface = document.createElement('div'); surface.className = 'tab-surface'; surface.dataset.tabId = activeTabId; content.appendChild(surface); }
   activateSurface(activeTabId);
   return surface;
+}
+
+function openTorChatPage() {
+  if (!torChatPanel) openSettings();
+  if (!torChatPanel) { showToast('Onion Chat sa nepodarilo otvoriť.'); return; }
+  hideNativeTab();
+  const surface = getActiveSurface();
+  addressInput.value = 'linsoft://tor-chat';
+  tabTitle.textContent = 'Onion Chat';
+  updateActiveTab('linsoft://tor-chat', 'Onion Chat');
+  setInstallAppAvailable(false);
+  surface.innerHTML = '<div class="tor-chat-tab-page"><header class="tor-chat-tab-header"><div class="tor-chat-tab-brand"><span class="tor-chat-brand-mark small">L</span><span>Linsoft <strong>Onion</strong></span></div><span class="tor-chat-tab-secure">Súkromný chat 1:1 cez Tor</span><button class="settings-control" id="torChatBackSettings" type="button">Nastavenia</button></header><div class="tor-chat-tab-content"></div></div>';
+  const contentArea = surface.querySelector('.tor-chat-tab-content');
+  torChatPanel.hidden = false;
+  contentArea.append(torChatPanel);
+  surface.querySelector('#torChatBackSettings').addEventListener('click', () => openNewTab('linsoft://settings'));
+  surface.querySelector('.tor-chat-rail-button')?.addEventListener('click', () => openNewTab('linsoft://settings'));
+  renderTorChatState();
+  updateNavigationButtons();
+  saveSession();
 }
 
 function saveSession() { localStorage.setItem('linsoft-session', JSON.stringify([...tabs.values()])); localStorage.setItem('linsoft-active-tab', String(activeTabId)); localStorage.setItem('linsoft-session-clean', '0'); updateNavigationButtons(); }
@@ -1204,7 +1748,37 @@ function addAdvancedSettings() {
   advancedPanel.insertAdjacentHTML('beforeend', '<div class="security-subsection tor-hosting-section"><p class="settings-label">TOR HOSTING</p><div class="setting-card"><div><strong>Hostovať web cez Tor</strong><small id="torHostingStatus">Tor hosting je vypnutý.</small></div><span class="vpn-status-dot" id="torHostingDot"></span></div><div class="setting-card"><div><strong>Priečinok webu</strong><small id="torHostingFolder">Nie je vybraný priečinok.</small></div><button class="settings-control" id="chooseTorFolder">Vybrať priečinok</button></div><div class="vpn-actions"><button class="save-settings" id="startTorHosting">Spustiť hosting</button><button class="settings-reset" id="stopTorHosting">Zastaviť</button></div><div class="vpn-log-wrap"><div class="vpn-log-title">Onion adresa</div><pre id="torHostingAddress">Zatiaľ nie je vytvorená.</pre><button class="settings-control" id="copyTorAddress" disabled>Kopírovať adresu</button></div></div>');
   advancedPanel.querySelector('.tor-hosting-section').insertAdjacentHTML('afterbegin', '<div class="setting-card"><div><strong>Prehliadať cez Tor</strong><small id="torProxyStatus">Tor proxy je vypnutá.</small></div><button class="settings-control" id="toggleTorProxy">Zapnúť Tor</button></div>');
   advancedPanel.querySelector('.tor-hosting-section').insertAdjacentHTML('afterbegin', '<div class="setting-card manual-proxy-card"><div><strong>Manuálna proxy</strong><small>Vyber SOCKS4 alebo SOCKS5 a zadaj hostiteľa s portom.</small></div><select class="settings-input" id="manualProxyProtocol"><option value="socks5">SOCKS5</option><option value="socks4">SOCKS4</option></select><input class="settings-input" id="manualProxyHost" placeholder="Hostiteľ" value="127.0.0.1"><input class="settings-input" id="manualProxyPort" placeholder="Port" value="9150" inputmode="numeric"><button class="settings-control" id="applyManualProxy">Použiť proxy</button><button class="settings-reset" id="disableManualProxy">Vypnúť proxy</button></div>');
-  advancedPanel.querySelector('.tor-hosting-section').insertAdjacentHTML('beforeend', '<div class="security-subsection tor-chat-section"><p class="settings-label">ONION CHAT 1:1</p><div class="setting-card"><div><strong>Šifrovaný chat cez Tor</strong><small id="torChatStatus">Onion chat je vypnutý.</small></div><span class="vpn-status-dot" id="torChatDot" data-status="stopped"></span></div><div class="vpn-actions"><button class="save-settings" id="torChatHost" type="button">Vytvoriť pozvánku</button><button class="settings-reset" id="torChatEnd" type="button" disabled>Ukončiť chat</button></div><div class="tor-chat-invite" id="torChatInvitePanel" hidden><label for="torChatInviteValue">Pozvánka pre druhého účastníka</label><textarea class="settings-input" id="torChatInviteValue" rows="2" readonly></textarea><button class="settings-control" id="copyTorChatInvite" type="button">Kopírovať pozvánku</button></div><div class="tor-chat-join-row" id="torChatJoinPanel"><input class="settings-input" id="torChatInviteInput" type="text" placeholder="Vlož onion pozvánku" autocomplete="off"><button class="settings-control" id="torChatJoin" type="button">Pripojiť</button></div><div class="tor-chat-conversation" id="torChatConversation" hidden><div class="tor-chat-messages" id="torChatMessages" role="log" aria-live="polite" aria-label="Správy onion chatu"></div><form class="tor-chat-compose" id="torChatForm"><textarea class="settings-input" id="torChatMessage" rows="2" maxlength="2000" placeholder="Napíš správu..." disabled></textarea><button class="save-settings" id="torChatSend" type="submit" disabled>Odoslať</button></form></div></div>');
+  advancedPanel.querySelector('.tor-hosting-section').insertAdjacentHTML('beforeend', '<div class="security-subsection tor-chat-launcher"><p class="settings-label">ONION CHAT 1:1</p><div class="setting-card"><div><strong>Šifrovaný chat cez Tor</strong><small>Otvor chat v samostatnej karte.</small></div><button class="settings-control" id="openTorChatTab" type="button">Otvoriť chat</button></div></div>');
+  const createTorChatPanel = !torChatPanel?.isConnected;
+  if (createTorChatPanel) {
+    advancedPanel.querySelector('.tor-hosting-section').insertAdjacentHTML('beforeend', `<section class="tor-chat-section" hidden>
+      <aside class="tor-chat-rail">
+        <div class="tor-chat-brand-mark" aria-hidden="true">L</div>
+        <button class="tor-chat-rail-button" type="button" title="Otvoriť nastavenia" aria-label="Otvoriť nastavenia">⚙</button>
+        <span class="tor-chat-rail-spacer"></span>
+        <span class="tor-chat-rail-lock" title="End-to-end šifrovanie" aria-label="End-to-end šifrovanie">⌑</span>
+      </aside>
+      <aside class="tor-chat-roster">
+        <header class="tor-chat-roster-head"><span class="tor-chat-kicker">LINsoft / SÚKROMNÁ SIEŤ</span><h2>Správy</h2><small id="torChatStatus" aria-live="polite">Onion chat je vypnutý.</small></header>
+        <button class="tor-chat-host-action" id="torChatHost" type="button"><span aria-hidden="true">＋</span> Vytvoriť pozvánku</button>
+        <div class="tor-chat-invite" id="torChatInvitePanel" hidden><label for="torChatInviteValue">Súkromná pozvánka</label><img id="torChatInviteQr" class="tor-chat-invite-qr" alt="QR kód súkromnej onion pozvánky" hidden><small id="torChatInviteExpiry" class="tor-chat-invite-expiry"></small><textarea class="settings-input" id="torChatInviteValue" rows="2" readonly></textarea><button class="settings-control" id="copyTorChatInvite" type="button">Kopírovať pozvánku</button><button class="tor-chat-renew-button" id="torChatRenewInvite" type="button" hidden>Vytvoriť novú pozvánku</button></div>
+        <div class="tor-chat-join-row" id="torChatJoinPanel"><input class="settings-input" id="torChatInviteInput" type="text" placeholder="Vlož onion pozvánku" autocomplete="off"><div class="tor-chat-join-actions"><button class="settings-control" id="torChatScan" type="button">Naskenovať QR</button><button class="settings-control" id="torChatJoin" type="button">Pripojiť</button></div></div>
+        <div class="tor-chat-scanner" id="torChatScanner" hidden><video id="torChatScannerVideo" autoplay muted playsinline></video><small id="torChatScannerStatus" aria-live="polite">Namier kameru na QR pozvánku.</small><button class="settings-control" id="torChatScannerStop" type="button">Zavrieť skener</button></div>
+        <div class="tor-chat-contact-heading">SÚKROMNÁ KONVERZÁCIA</div>
+        <div class="tor-chat-contact-row"><span class="tor-chat-contact-avatar">1:1</span><span class="tor-chat-contact-copy"><strong id="torChatPeerName">Druhý účastník</strong><small id="torChatPeerStatus">Čaká sa na pripojenie</small></span><span class="vpn-status-dot" id="torChatDot" data-status="stopped" aria-label="Stav onion spojenia"></span></div>
+        <span class="tor-chat-roster-spacer"></span>
+        <button class="tor-chat-end-button" id="torChatEnd" type="button" disabled>Ukončiť chat</button>
+      </aside>
+      <main class="tor-chat-main">
+        <header class="tor-chat-main-head"><span class="tor-chat-contact-avatar large">1:1</span><div><strong id="torChatHeaderName">Onion konverzácia</strong><small id="torChatHeaderStatus">Čaká sa na pozvánku alebo spojenie</small></div><button class="tor-chat-video-button" id="torChatVideoCall" type="button" title="Video-only cez Tor, bez zvuku a s nižšou snímkovou frekvenciou" aria-label="Spustiť alebo ukončiť video hovor" disabled>Video hovor</button><span class="tor-chat-encryption-badge"><span aria-hidden="true">⌑</span> AES-GCM / TOR</span></header>
+        <section class="tor-chat-video-stage" id="torChatVideoPanel" hidden><div class="tor-chat-video-grid"><figure><video id="torChatLocalVideo" autoplay muted playsinline></video><figcaption>Ty</figcaption></figure><figure><img id="torChatRemoteVideo" alt="Video druhého účastníka"><figcaption>Kontakt</figcaption></figure></div><small id="torChatVideoStatus" aria-live="polite">Video-only cez Tor, bez zvuku; kvalita sa prispôsobí sieti.</small></section>
+        <div class="tor-chat-conversation" id="torChatConversation" hidden><div class="tor-chat-messages" id="torChatMessages" role="log" aria-live="polite" aria-label="Správy onion chatu"></div><small id="torChatFileStatus" class="tor-chat-file-transfer-status" aria-live="polite" hidden></small><form class="tor-chat-compose" id="torChatForm"><button class="tor-chat-attach-button" id="torChatAttach" type="button" aria-label="Poslať súbor" title="Poslať súbor">⌁</button><input id="torChatFileInput" type="file" hidden><textarea class="settings-input" id="torChatMessage" rows="2" maxlength="2000" placeholder="Napíš šifrovanú správu..." disabled></textarea><button class="tor-chat-send-button" id="torChatSend" type="submit" disabled aria-label="Odoslať správu">Odoslať</button></form></div>
+        <div class="tor-chat-empty" id="torChatEmpty"><span aria-hidden="true">⌑</span><strong>Súkromná komunikácia cez Tor</strong><p>Vytvor pozvánku alebo vlož pozvánku od druhého účastníka. Správy sa šifrujú medzi zariadeniami a po ukončení chatu sa vymažú.</p></div>
+      </main>
+    </section>`);
+    torChatPanel = advancedPanel.querySelector('.tor-chat-section');
+    torChatPanel.hidden = true;
+  }
   let torFolder = '';
   let currentTorStatus = { status: 'stopped', proxyStatus: 'stopped', proxyEnabled: false };
   const renderTorStatus = (update) => { currentTorStatus = { ...currentTorStatus, ...update }; const status = currentTorStatus; if (typeof status.folder === 'string' && status.folder) torFolder = status.folder; const label = surface.querySelector('#torHostingStatus'); const proxyLabel = surface.querySelector('#torProxyStatus'); const proxyButton = surface.querySelector('#toggleTorProxy'); const folderLabel = surface.querySelector('#torHostingFolder'); const dot = surface.querySelector('#torHostingDot'); const address = surface.querySelector('#torHostingAddress'); const start = surface.querySelector('#startTorHosting'); const stop = surface.querySelector('#stopTorHosting'); const copy = surface.querySelector('#copyTorAddress'); if (!label) return; const requestInfo = Number(status.requestCount) > 0 ? ` · Požiadavky: ${status.requestCount}` : ''; label.textContent = `${status.message || 'Tor hosting je vypnutý.'}${requestInfo}`; proxyLabel.textContent = status.proxyMessage || (status.proxyEnabled ? 'Tor proxy je pripojená.' : 'Tor proxy je vypnutá.'); proxyButton.textContent = status.proxyStatus === 'manual' ? 'Vypnúť proxy' : status.proxyEnabled ? 'Vypnúť Tor' : 'Zapnúť Tor'; proxyButton.disabled = status.proxyStatus === 'connecting'; folderLabel.textContent = status.folder || torFolder || 'Nie je vybraný priečinok.'; dot.dataset.status = status.status || 'stopped'; address.textContent = status.onion || 'Zatiaľ nie je vytvorená.'; start.disabled = status.status === 'starting' || status.status === 'running'; stop.disabled = status.status !== 'starting' && status.status !== 'running'; copy.disabled = !status.onion; };
@@ -1216,73 +1790,50 @@ function addAdvancedSettings() {
   surface.querySelector('#stopTorHosting').addEventListener('click', async () => { const result = await window.linsoftBrowser?.stopTorHosting?.(); renderTorStatus(result || { status: 'stopped', message: 'Tor hosting je vypnutý.' }); });
   surface.querySelector('#copyTorAddress').addEventListener('click', async () => { const address = surface.querySelector('#torHostingAddress').textContent; await window.linsoftBrowser?.writeClipboardText?.(address); showToast('Onion adresa bola skopírovaná.'); });
   window.linsoftBrowser?.onTorStatus?.(renderTorStatus); window.linsoftBrowser?.getTorStatus?.().then(renderTorStatus).catch(() => {});
-  renderTorChatState();
-  surface.querySelector('#torChatHost').addEventListener('click', async () => {
-    if (torChatUi.busy || torChatUi.role) return;
-    const generation = ++torChatUi.generation;
-    torChatUi.busy = true;
-    torChatUi.status = 'starting';
-    torChatUi.statusMessage = 'Vytváram onion chat...';
+  advancedPanel.querySelector('#openTorChatTab').addEventListener('click', openTorChatTab);
+  if (createTorChatPanel) {
+    const chatPanel = torChatPanel;
     renderTorChatState();
-    try {
-      const generatedKey = await window.linsoftTorChatCrypto.generateKey();
-      const encodedKey = generatedKey.encoded;
-      const key = generatedKey.key;
-      const result = await window.linsoftBrowser?.startTorChatHost?.();
-      if (generation !== torChatUi.generation) return;
-      if (!result?.ok) {
-        torChatUi.busy = false;
-        torChatUi.status = result?.cancelled ? 'stopped' : 'error';
-        torChatUi.statusMessage = result?.message || (result?.cancelled ? 'Vytváranie chatu bolo zrušené.' : 'Onion chat sa nepodarilo spustiť.');
-        renderTorChatState();
-        return;
-      }
-      torChatUi.role = 'host';
-      torChatUi.onion = result.onion;
-      torChatUi.key = key;
-      torChatUi.invite = `${result.onion}#${result.token}.${encodedKey}`;
-      torChatUi.lastId = 0;
-      torChatUi.messages = [];
-      torChatUi.busy = false;
-      torChatUi.status = 'running';
-      torChatUi.statusMessage = 'Chat čaká na druhého účastníka. Zdieľaj pozvánku súkromne.';
-      renderTorChatState();
-      scheduleTorChatPoll(0);
-    } catch (error) {
-      if (generation !== torChatUi.generation) return;
-      torChatUi.busy = false;
-      torChatUi.status = 'error';
-      torChatUi.statusMessage = error instanceof Error ? error.message : 'Onion chat sa nepodarilo spustiť.';
-      renderTorChatState();
-    }
-  });
-  surface.querySelector('#torChatJoin').addEventListener('click', async () => {
+    chatPanel.querySelector('#torChatHost').addEventListener('click', () => createTorChatHostSession(false));
+    chatPanel.querySelector('#torChatRenewInvite').addEventListener('click', () => createTorChatHostSession(true));
+    chatPanel.querySelector('#torChatScan').addEventListener('click', () => startTorChatQrScanner(chatPanel));
+    chatPanel.querySelector('#torChatScannerStop').addEventListener('click', () => stopTorChatQrScanner(chatPanel));
+    chatPanel.querySelector('#torChatVideoCall').addEventListener('click', () => torChatUi.videoActive ? stopTorChatVideoCall(chatPanel) : startTorChatVideoCall(chatPanel));
+    chatPanel.querySelector('#torChatAttach').addEventListener('click', () => chatPanel.querySelector('#torChatFileInput').click());
+    chatPanel.querySelector('#torChatFileInput').addEventListener('change', (event) => sendTorChatFile(event.currentTarget.files?.[0], chatPanel));
+  chatPanel.querySelector('#torChatJoin').addEventListener('click', async () => {
     if (torChatUi.busy || torChatUi.role) return;
-    const inviteText = surface.querySelector('#torChatInviteInput').value.trim();
+    const inviteText = chatPanel.querySelector('#torChatInviteInput').value.trim();
     const generation = ++torChatUi.generation;
     torChatUi.busy = true;
     torChatUi.status = 'starting';
     torChatUi.statusMessage = 'Pripájam sa k onion chatu cez Tor...';
     renderTorChatState();
     try {
-      const invite = new URL(inviteText);
-      const [token, encodedKey, extra] = invite.hash.slice(1).split('.');
-      if (invite.protocol !== 'http:' || !/^[a-z2-7]{56}\.onion$/i.test(invite.hostname) || invite.username || invite.password || invite.pathname !== '/' || invite.search || extra !== undefined || !/^[A-Za-z0-9_-]{32}$/.test(token || '')) throw new Error('Vlož platnú onion pozvánku od druhého účastníka.');
-      const key = await importTorChatKey(encodedKey || '');
-      const result = await window.linsoftBrowser?.joinTorChat?.({ address: `${invite.origin}/`, token });
+      const invite = parseTorChatInvitation(inviteText);
+      const key = await importTorChatKey(invite.encodedKey);
+      const result = await window.linsoftBrowser?.joinTorChat?.({ address: invite.address, token: invite.token });
       if (generation !== torChatUi.generation) return;
       if (!result?.ok) throw new Error(result?.message || 'K onion chatu sa nepodarilo pripojiť.');
       torChatUi.role = 'guest';
       torChatUi.onion = result.onion;
       torChatUi.invite = '';
+      torChatUi.inviteQr = '';
       torChatUi.key = key;
       torChatUi.lastId = 0;
       torChatUi.messages = [];
+      torChatUi.outgoingFileId = '';
+      torChatUi.fileCursor = -1;
+      torChatUi.incomingFile = null;
+      torChatUi.fileGeneration += 1;
+      torChatUi.reconnectAttempts = 0;
+      torChatUi.guestConnected = true;
       torChatUi.busy = false;
-      torChatUi.status = 'running';
-      torChatUi.statusMessage = 'Pripojené k onion chatu. Správy sú šifrované.';
+      torChatUi.status = 'connected';
+      torChatUi.statusMessage = 'Pripojené k onion chatu cez Tor. Správy sú šifrované.';
       renderTorChatState();
       scheduleTorChatPoll(0);
+      scheduleTorChatFilePoll(0);
     } catch (error) {
       if (generation !== torChatUi.generation) return;
       torChatUi.busy = false;
@@ -1291,31 +1842,37 @@ function addAdvancedSettings() {
       renderTorChatState();
     }
   });
-  surface.querySelector('#torChatEnd').addEventListener('click', async () => {
+  chatPanel.querySelector('#torChatEnd').addEventListener('click', async () => {
+    if (torChatUi.role && !window.confirm(torChatUi.role === 'host' && !torChatUi.guestConnected ? 'Zrušiť pozvánku? Jej odkaz prestane fungovať.' : 'Ukončiť súkromný chat? Správy sa vymažú a spojenie sa zavrie.')) return;
     torChatUi.generation += 1;
     torChatUi.busy = true;
+    torChatUi.status = 'stopping';
     torChatUi.statusMessage = 'Ukončujem onion chat...';
     renderTorChatState();
+    await stopTorChatVideoCall(chatPanel);
     await window.linsoftBrowser?.stopTorChat?.();
     clearTorChatUi();
     renderTorChatState();
   });
-  surface.querySelector('#copyTorChatInvite').addEventListener('click', async () => {
+  chatPanel.querySelector('#copyTorChatInvite').addEventListener('click', async () => {
     const result = await window.linsoftBrowser?.writeClipboardText?.(torChatUi.invite);
     showToast(result?.ok ? 'Onion pozvánka bola skopírovaná.' : (result?.message || 'Pozvánku sa nepodarilo skopírovať.'));
   });
-  surface.querySelector('#torChatForm').addEventListener('submit', async (event) => {
+  chatPanel.querySelector('#torChatForm').addEventListener('submit', async (event) => {
     event.preventDefault();
-    const input = surface.querySelector('#torChatMessage');
+    const input = chatPanel.querySelector('#torChatMessage');
     const text = input.value.trim();
     if (!text || text.length > 2000 || !torChatUi.role || !torChatUi.key) return;
-    const send = surface.querySelector('#torChatSend');
+    const send = chatPanel.querySelector('#torChatSend');
     send.disabled = true;
     try {
       const envelope = await encryptTorChatMessage(text);
       const result = await window.linsoftBrowser?.sendTorChat?.(envelope);
       if (!result?.ok) throw new Error(result?.message || 'Správu sa nepodarilo odoslať cez Tor.');
       input.value = '';
+      torChatUi.messages.push({ id: result.id, sender: torChatUi.role, sentAt: Date.now(), text, status: 'sent' });
+      if (torChatUi.messages.length > 200) torChatUi.messages.shift();
+      renderTorChatMessages();
       await pollTorChatMessages();
     } catch (error) {
       torChatUi.status = 'error';
@@ -1326,6 +1883,7 @@ function addAdvancedSettings() {
       input.focus();
     }
   });
+  }
   const downloadFolderRow = downloads.closest('.setting-card'); downloadFolderRow.insertAdjacentHTML('beforeend', `<button class="settings-control" id="chooseDownloadFolder">${settingsState.downloadFolderPath ? 'Zmeniť vlastný priečinok' : 'Vybrať vlastný priečinok'}</button><small class="download-folder-name" id="downloadFolderName">${settingsState.downloadFolderPath ? escapeHtml(settingsState.downloadFolderPath) : 'Používa sa predvolený systémový priečinok.'}</small>`);
   downloads.addEventListener('change', () => { settingsState.downloadFolderPath = ''; surface.querySelector('#downloadFolderName').textContent = 'Používa sa predvolený systémový priečinok.'; surface.querySelector('#chooseDownloadFolder').textContent = 'Vybrať vlastný priečinok'; });
   surface.querySelector('#chooseDownloadFolder').addEventListener('click', async () => { const folder = await window.linsoftBrowser?.selectDownloadFolder?.(); if (!folder) return; settingsState.downloadFolderPath = folder; surface.querySelector('#downloadFolderName').textContent = folder; surface.querySelector('#chooseDownloadFolder').textContent = 'Zmeniť vlastný priečinok'; saveSettings(); });
@@ -1362,6 +1920,7 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
   }
   if (input.toLowerCase() === 'linsoft://apps') { hideNativeTab(); openAppCenter(); return; }
   if (input.toLowerCase() === 'linsoft://settings') { hideNativeTab(); openSettings(); return; }
+  if (input.toLowerCase() === 'linsoft://tor-chat') { hideNativeTab(); openTorChatPage(); return; }
   if (input.toLowerCase() === 'linsoft://bookmarks') { hideNativeTab(); openLibrary('bookmarks'); return; }
   if (input.toLowerCase() === 'linsoft://history') { hideNativeTab(); openLibrary('history'); return; }
   if (!input || input === 'linsoft://start' || input.toLowerCase() === 'home') { hideNativeTab(); startPage(); return; }
