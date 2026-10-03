@@ -1,10 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const { loadSavedTorHostingState, probeOnionService, requestOnionService, resolveHostedFile, saveTorHostingFolder, waitForOnionService } = require('../lib/tor-hosting.cjs');
+const { createTorStaticRequestHandler, loadSavedTorHostingState, probeOnionService, requestOnionService, resolveHostedFile, saveTorHostingAutoStart, saveTorHostingFolder, waitForOnionService } = require('../lib/tor-hosting.cjs');
+
+function requestLocalServer(port, pathname, headers = {}, method = 'GET') {
+  return new Promise((resolve, reject) => {
+    const request = http.request({ host: '127.0.0.1', port, path: pathname, method, headers }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({ statusCode: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }));
+    });
+    request.once('error', reject);
+    request.end();
+  });
+}
 
 test('hosted files stay inside the selected directory', () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'linsoft-host-root-'));
@@ -100,7 +113,7 @@ test('onion probe retries until the hidden service responds successfully', async
   }
 });
 
-test('saved onion state is restored as stopped without starting Tor', () => {
+test('saved onion state restores its auto-start preference without starting Tor', () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'linsoft-host-state-'));
   const root = path.join(temporaryDirectory, 'public');
   const statePath = path.join(temporaryDirectory, 'tor-hosting-state.json');
@@ -116,9 +129,43 @@ test('saved onion state is restored as stopped without starting Tor', () => {
     assert.equal(state.status, 'stopped');
     assert.equal(state.folder, fs.realpathSync(root));
     assert.equal(state.onion, `http://${hostname}/`);
-    assert.match(state.message, /ručn/);
+    assert.equal(state.autoStart, true);
+    assert.match(state.message, /obnovuje/);
     assert.equal(state.proxyEnabled, undefined);
+    assert.equal(saveTorHostingAutoStart(statePath, false), true);
+    assert.equal(loadSavedTorHostingState(statePath, hostnamePath).autoStart, false);
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test('static hosting gzips text and revalidates cached assets', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'linsoft-host-cache-'));
+  const html = path.join(root, 'index.html');
+  const script = path.join(root, 'app.js');
+  const scriptBody = `window.app = '${'cached-content-'.repeat(100)}';`;
+  fs.writeFileSync(html, '<!doctype html><title>Current</title>');
+  fs.writeFileSync(script, scriptBody);
+  const server = http.createServer(createTorStaticRequestHandler(root));
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const port = server.address().port;
+  try {
+    const compressed = await requestLocalServer(port, '/app.js', { 'Accept-Encoding': 'gzip' });
+    assert.equal(compressed.statusCode, 200);
+    assert.equal(compressed.headers['content-encoding'], 'gzip');
+    assert.equal(compressed.headers['cache-control'], 'public, max-age=300');
+    assert.match(compressed.headers.vary, /accept-encoding/i);
+    assert.equal(require('node:zlib').gunzipSync(compressed.body).toString(), scriptBody);
+
+    const cached = await requestLocalServer(port, '/app.js', { 'If-None-Match': compressed.headers.etag });
+    assert.equal(cached.statusCode, 304);
+    assert.equal(cached.body.length, 0);
+
+    const page = await requestLocalServer(port, '/');
+    assert.equal(page.statusCode, 200);
+    assert.equal(page.headers['cache-control'], 'no-cache');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

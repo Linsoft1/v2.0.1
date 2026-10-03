@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, Menu, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, WebContentsView, Menu, Tray, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const net = require('node:net');
@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 const QRCode = require('qrcode');
 const { pathToFileURL } = require('node:url');
 const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeLocalDocumentUrl, isSafeLocalPdfUrl, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
-const { loadSavedTorHostingState, requestOnionService, resolveHostedFile, saveTorHostingFolder, waitForOnionService } = require('./lib/tor-hosting.cjs');
+const { createTorStaticRequestHandler, loadSavedTorHostingState, requestOnionService, resolveHostedFile, saveTorHostingAutoStart, saveTorHostingFolder, waitForOnionService } = require('./lib/tor-hosting.cjs');
 const { clearTorChatFileTransfer, createTorChatRoom, createTorChatServer, enqueueTorChatFileChunk, enqueueTorChatMessage, enqueueTorChatVideoFrame, getTorChatFileChunks, getTorChatFileTransfer, getTorChatReceipts, getTorChatVideoState, isValidTorChatEnvelope, isValidTorChatFileChunk, markTorChatMessagesDelivered, markTorChatMessagesRead, stopTorChatVideo } = require('./lib/tor-chat-protocol.cjs');
 const { createPermissionCheckHandler, createPermissionRequestHandler, mediaTypesFromDetails } = require('./lib/permission-handlers.cjs');
 const { NativeTabManager } = require('./lib/native-tab-manager.cjs');
@@ -87,6 +87,7 @@ let torHostingStartPromise = null;
 let torHostingStartController = null;
 let torHostingGeneration = 0;
 let torShutdownPromise = null;
+let torHostingTray = null;
 let torState = { ...loadSavedTorHostingState(torHostingStatePath, torHostingHostnamePath), proxyEnabled: false, proxyStatus: 'stopped', proxyMessage: 'Tor proxy je vypnutá.', requestCount: 0, lastRequest: '' };
 let downloadHistory = [];
 let passwordVault = [];
@@ -476,6 +477,13 @@ function supportedNavigationUrl(value) {
   } catch { return false; }
 }
 
+function isOnionUrl(value) {
+  try {
+    const url = new URL(String(value));
+    return ['http:', 'https:'].includes(url.protocol) && url.hostname.endsWith('.onion');
+  } catch { return false; }
+}
+
 function ownedWebContentsForEvent(event, webContentsId) {
   if (!Number.isInteger(webContentsId)) return null;
   const contents = require('electron').webContents.fromId(webContentsId);
@@ -741,7 +749,7 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
   window.on('close', (event) => {
     if (window.__closeConfirmed) return;
     event.preventDefault();
-    window.webContents.send('window-close-request');
+    window.webContents.send('window-close-request', { keepHosting: torState.autoStart === true });
   });
   window.webContents.once('did-finish-load', () => {
     if (safeInitialUrl || /^https?:\/\//i.test(normalizedInitialUrl) === false) dispatchExternalUrl(window, normalizedInitialUrl || 'linsoft://start');
@@ -795,6 +803,10 @@ ipcMain.on('window-control', (event, action) => {
 ipcMain.on('confirm-window-close', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window) return;
+  if (torState.autoStart && !window.__guest && ensureTorHostingTray()) {
+    window.hide();
+    return;
+  }
   window.__closeConfirmed = true;
   window.close();
 });
@@ -1031,6 +1043,61 @@ function torExecutable() {
 function publishTorState(state) {
   torState = { ...torState, ...state };
   for (const window of browserWindows) if (!window.isDestroyed()) window.webContents.send('tor-status', torState);
+  updateTorHostingTray();
+}
+
+function showMainBrowserWindow() {
+  if (!hasLock) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow('linsoft://start');
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function updateTorHostingTray() {
+  if (!torHostingTray) return;
+  const active = torState.status === 'running' || torState.status === 'starting' || torState.autoStart;
+  torHostingTray.setToolTip(torState.status === 'running' ? 'Linsoft Browser - Tor hosting online' : 'Linsoft Browser - Tor hosting na pozadí');
+  torHostingTray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Otvoriť Linsoft Browser', click: showMainBrowserWindow },
+    { label: torState.status === 'running' ? 'Tor hosting je online' : torState.message || 'Tor hosting sa obnovuje', enabled: false },
+    { label: 'Zastaviť hosting', enabled: active, click: async () => { await stopTorHosting(); showMainBrowserWindow(); } },
+    { type: 'separator' },
+    { label: 'Ukončiť Linsoft Browser', click: () => app.quit() }
+  ]));
+}
+
+function ensureTorHostingTray() {
+  if (torHostingTray) return true;
+  try {
+    const iconPath = path.join(__dirname, 'assets', 'linsoft-icon-256.png');
+    let icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'linsoft-icon.ico'));
+    torHostingTray = new Tray(icon.resize({ width: 16, height: 16 }));
+    torHostingTray.on('double-click', showMainBrowserWindow);
+    updateTorHostingTray();
+    return true;
+  } catch (error) {
+    torHostingTray = null;
+    console.warn('Could not create Tor hosting tray icon:', error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+function setTorHostingLoginStart(enabled) {
+  if (process.platform !== 'win32' || typeof app.setLoginItemSettings !== 'function') return;
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      path: process.execPath,
+      args: app.isPackaged ? ['--tor-hosting-background'] : [app.getAppPath(), '--tor-hosting-background']
+    });
+  } catch (error) {
+    console.warn('Could not update Tor hosting login item:', error instanceof Error ? error.message : String(error));
+  }
 }
 
 function closeTorServer(server) {
@@ -1084,14 +1151,23 @@ async function stopTorProxyProcess(invalidateStart = true) {
   await terminateTorProcess(child);
 }
 
-async function stopTorHosting() {
+async function stopTorHosting(persistAutoStart = true) {
   torHostingGeneration += 1;
+  if (persistAutoStart && torState.autoStart) {
+    saveTorHostingAutoStart(torHostingStatePath, false);
+    torState.autoStart = false;
+    setTorHostingLoginStart(false);
+  }
   await stopTorHostingResources();
   const hasSavedAddress = Boolean(torState.onion);
   publishTorState({
     status: 'stopped',
     message: hasSavedAddress ? 'Hosting je vypnutý. Onion adresa zostáva uložená a čaká na ručné spustenie.' : 'Tor hosting je vypnutý.'
   });
+  if (persistAutoStart && torHostingTray) {
+    torHostingTray.destroy();
+    torHostingTray = null;
+  }
   return { ok: true, ...torState };
 }
 
@@ -1241,7 +1317,7 @@ async function disableTorProxy() {
   return { ok: true, ...torState };
 }
 
-async function startTorHosting(folder) {
+async function startTorHostingInternal(folder) {
   const fs = require('node:fs');
   const requestedFolder = String(folder || '').trim();
   if (!requestedFolder) return { ok: false, message: 'Najprv vyber priečinok pre hosting.' };
@@ -1265,34 +1341,17 @@ async function startTorHosting(folder) {
   const hostDir = path.join(writableDataPath, 'tor-hosting');
   const serviceDir = path.join(hostDir, 'hidden-service');
   const hostingDataDir = path.join(hostDir, 'data');
-  const mimeTypes = { '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8' };
   torState.requestCount = 0;
   torState.lastRequest = '';
   try {
     fs.mkdirSync(serviceDir, { recursive: true });
     fs.mkdirSync(hostingDataDir, { recursive: true });
     try { fs.unlinkSync(path.join(hostingDataDir, 'lock')); } catch {}
-    torServer = http.createServer((request, response) => {
-      let requested;
-      try { requested = decodeURIComponent((request.url || '/').split('?')[0]); } catch { response.writeHead(400); response.end('Bad request'); return; }
-      if (!['GET', 'HEAD'].includes(request.method || '')) {
-        response.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
-        response.end('Method not allowed');
-        return;
-      }
-      const relative = requested === '/' ? 'index.html' : requested.replace(/^\/+/, '');
-      const filePath = resolveHostedFile(root, relative);
+    torServer = http.createServer(createTorStaticRequestHandler(root, (method, requested) => {
       torState.requestCount += 1;
-      torState.lastRequest = `${request.method || 'GET'} ${requested}`;
+      torState.lastRequest = `${method} ${requested}`;
       publishTorState({ requestCount: torState.requestCount, lastRequest: torState.lastRequest });
-      if (!filePath) { response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }); response.end('Not found'); return; }
-      fs.stat(filePath, (error, stats) => {
-        if (error || !stats.isFile()) { response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' }); response.end('Not found'); return; }
-        response.writeHead(200, { 'Content-Type': mimeTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream', 'Content-Length': stats.size, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
-        if (request.method === 'HEAD') { response.end(); return; }
-        fs.createReadStream(filePath).on('error', () => { if (!response.headersSent) response.writeHead(500); response.end('Server error'); }).pipe(response);
-      });
-    });
+    }));
     await new Promise((resolve, reject) => { torServer.once('error', reject); torServer.listen(0, '127.0.0.1', resolve); });
     const port = torServer.address().port;
     const configPath = path.join(hostDir, 'torrc');
@@ -1324,9 +1383,12 @@ async function startTorHosting(folder) {
     publishTorState({ status: 'starting', onion: address, folder: root, message: 'Čakám na zverejnenie onion služby a overujem jej dostupnosť...' });
     await waitForOnionService(address, 9151, { timeoutMs: 180000, attemptTimeoutMs: 15000, retryDelayMs: 5000, signal });
     if (generation !== torHostingGeneration || torHostingProcess !== hostingChild) throw new Error('Tor hosting was stopped while starting.');
-    saveTorHostingFolder(torHostingStatePath, root);
+    saveTorHostingFolder(torHostingStatePath, root, true);
+    torState.autoStart = true;
+    setTorHostingLoginStart(true);
+    ensureTorHostingTray();
     torHostingStartController = null;
-    publishTorState({ status: 'running', onion: address, folder: root, message: `Hosting je dostupný na ${address}` });
+    publishTorState({ status: 'running', onion: address, folder: root, autoStart: true, message: `Hosting je dostupný na ${address} a bude bežať aj po zavretí okna.` });
     return { ok: true, ...torState };
   } catch (error) {
     const cancelled = generation !== torHostingGeneration || (signal.aborted && torState.status === 'stopped');
@@ -2156,7 +2218,18 @@ app.whenReady().then(() => {
     contents.on('render-process-gone', (_event, details) => { contents.hostWebContents?.send('webview-process-gone', { reason: details.reason }); });
     contents.on('enter-html-full-screen', () => { const parent = BrowserWindow.fromWebContents(contents.hostWebContents); if (parent && !parent.isDestroyed()) { parent.setFullScreen(true); parent.webContents.send('webview-fullscreen', true); } });
     contents.on('leave-html-full-screen', () => { const parent = BrowserWindow.fromWebContents(contents.hostWebContents); if (parent && !parent.isDestroyed()) { parent.setFullScreen(false); parent.webContents.send('webview-fullscreen', false); } });
-    contents.on('will-navigate', (navigationEvent, url) => { if (!supportedNavigationUrl(url)) navigationEvent.preventDefault(); });
+    contents.on('will-navigate', (navigationEvent, url) => {
+      if (!supportedNavigationUrl(url)) { navigationEvent.preventDefault(); return; }
+      if (!isOnionUrl(url) || torState.proxyEnabled) return;
+      navigationEvent.preventDefault();
+      void enableTorProxy().then((result) => {
+        if (!result.ok) {
+          contents.hostWebContents?.send('tor-navigation-error', result.message || 'Tor proxy sa nepodarilo spustiť.');
+          return;
+        }
+        if (!contents.isDestroyed()) void contents.loadURL(url).catch((error) => contents.hostWebContents?.send('tor-navigation-error', `Onion stránku sa nepodarilo načítať: ${error.message}`));
+      }).catch((error) => contents.hostWebContents?.send('tor-navigation-error', `Tor proxy sa nepodarilo spustiť: ${error.message}`));
+    });
     contents.setWindowOpenHandler(({ url, disposition }) => {
       if (!supportedWebUrl(url)) return { action: 'deny' };
       contents.hostWebContents?.send(disposition === 'new-window' ? 'open-link-in-window' : 'open-link-in-tab', url);
@@ -2220,6 +2293,12 @@ app.whenReady().then(() => {
   });
   setupAutoUpdater();
   if (hasLock) createWindow(startupUrlFromArgs(process.argv));
+  if (hasLock && torState.autoStart && torState.folder) {
+    ensureTorHostingTray();
+    setTorHostingLoginStart(true);
+    if (process.argv.includes('--tor-hosting-background') && ensureTorHostingTray()) mainWindow?.once('ready-to-show', () => mainWindow?.hide());
+    void startTorHosting(torState.folder);
+  }
   app.on('activate', () => {
     if (hasLock && BrowserWindow.getAllWindows().length === 0) createWindow('linsoft://start');
   });
@@ -2235,8 +2314,10 @@ app.on('before-quit', async (event) => {
   if (torShutdownPromise) { event.preventDefault(); return; }
   if (torHostingProcess || torProxyProcess || torChatProcess || torHostingStartPromise || torStartPromise || torChatStartPromise) {
     event.preventDefault();
-    torShutdownPromise = Promise.allSettled([stopTorHosting(), disableTorProxy(), stopTorChat()]).finally(() => {
+    torShutdownPromise = Promise.allSettled([stopTorHosting(false), disableTorProxy(), stopTorChat()]).finally(() => {
       torShutdownPromise = null;
+      torHostingTray?.destroy();
+      torHostingTray = null;
       app.quit();
     });
     return;

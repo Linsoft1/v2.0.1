@@ -1906,6 +1906,16 @@ function addAdvancedSettings() {
 
 function navigate(value, addHistory = true, skipTorProxy = false) {
   const input = value.trim();
+  try {
+    parseTorChatInvitation(input);
+    openTorChatPage();
+    const inviteInput = torChatPanel?.querySelector('#torChatInviteInput');
+    if (inviteInput) {
+      inviteInput.value = input;
+      torChatPanel.querySelector('#torChatJoin')?.click();
+    }
+    return;
+  } catch {}
   const explicitFile = /^file:\/\//i.test(input);
   let localFileUrl = '';
   if (explicitFile) {
@@ -1931,8 +1941,9 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
   if (/^(javascript|data|vbscript):/i.test(input)) { showToast('Tento typ adresy je z bezpečnostných dôvodov zablokovaný.'); return; }
   const explicitHttp = /^https?:\/\//i.test(input);
   const networkAddress = normalizeNetworkAddress(input);
+  const bareOnionAddress = /^[a-z2-7]{56}\.onion(?::\d+)?(?:[/?#]|$)/i.test(input);
   const looksLikeUrl = explicitHttp || explicitFile || networkAddress.isIp || /^[^\s]+\.[^\s]+$/.test(input);
-  const requestedUrl = explicitFile ? localFileUrl : looksLikeUrl ? (explicitHttp ? input : networkAddress.isIp ? networkAddress.value : `https://${input}`) : searchUrl(input);
+  const requestedUrl = explicitFile ? localFileUrl : looksLikeUrl ? (explicitHttp ? input : networkAddress.isIp ? networkAddress.value : `${bareOnionAddress ? 'http' : 'https'}://${input}`) : searchUrl(input);
   const url = requestedUrl;
   const currentTab = tabs.get(activeTabId);
   if (addHistory && currentTab) { currentTab.history = currentTab.history || [currentTab.url]; currentTab.history.splice(currentTab.historyIndex + 1); currentTab.history.push(url); currentTab.historyIndex = currentTab.history.length - 1; }
@@ -2608,6 +2619,7 @@ window.linsoftBrowser?.listDownloads?.().then((downloads) => {
 document.addEventListener('click', () => { document.getElementById('downloadPanel').hidden = true; });
 
 window.linsoftBrowser?.onExternalUrl((url) => navigate(url));
+window.linsoftBrowser?.onTorNavigationError?.((message) => showToast(message));
 window.linsoftBrowser?.onTranslatePage?.(translateWebPage);
 window.addEventListener('storage', (event) => {
   if (event.key !== 'linsoft-apps') return;
@@ -2706,7 +2718,7 @@ window.linsoftBrowser?.onBrowserShortcut?.(({ key, shift }) => {
   if (key === 's' && shift) { captureCurrentPage(); return; }
   if (key === 'i' && shift) content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"] .webview`)?.openDevTools?.();
 });
-window.linsoftBrowser?.onWindowCloseRequest(() => { if (!settingsState.confirmClose || tabs.size <= 1 || window.confirm(`Zatvoriť Linsoft Browser s ${tabs.size} otvorenými kartami?`)) window.linsoftBrowser.confirmWindowClose(); });
+window.linsoftBrowser?.onWindowCloseRequest(({ keepHosting = false } = {}) => { const message = keepHosting ? 'Zavrieť okno? Tor hosting bude ďalej bežať na pozadí. Otvoríš ho zo systémovej lišty.' : `Zatvoriť Linsoft Browser s ${tabs.size} otvorenými kartami?`; if (!settingsState.confirmClose || tabs.size <= 1 || window.confirm(message)) window.linsoftBrowser.confirmWindowClose(); });
 window.linsoftBrowser?.onOpenAppCenter(() => openNewTab('linsoft://apps'));
 window.linsoftBrowser?.onInstallExternalApp(async (data) => { if (!data?.url || !/^https?:\/\//i.test(data.url)) return showToast('Webová adresa nie je platná.'); const result = await window.linsoftBrowser.installWebApp(data.url, data.name || new URL(data.url).hostname);
   if (!result?.ok) return showToast(result?.message || 'Web sa nepodarilo nainštalovať.');

@@ -208,7 +208,7 @@ async function run() {
   const tokenHeader = { Authorization: `Bearer ${chatToken}` };
   const chatHealth = await waitForOnionService(`http://${onion}:81/_linsoft/chat/v1/health`, proxyPort, { timeoutMs: 180000, attemptTimeoutMs: 20000, retryDelayMs: 10000, headers: tokenHeader });
   const guest = await runGuestProcess({ onion, token: chatToken, proxyPort, room: chatRoom });
-  console.log(JSON.stringify({ ok: true, onion, statusCode, chatHealth, ...guest, response: 'Tor hosting and separate host/guest processes OK' }));
+  console.log(JSON.stringify({ ok: true, testOnly: true, onion, onionLifetime: 'temporary; this service stops when the smoke test exits', statusCode, chatHealth, ...guest, response: 'Tor hosting and separate host/guest processes OK' }));
 }
 
 (process.argv.includes('--guest') ? runGuestClient() : run()).catch((error) => {

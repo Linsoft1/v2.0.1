@@ -4,7 +4,7 @@ contextBridge.exposeInMainWorld('linsoftBrowser', {
   isDesktopApp: true,
   appName: 'Linsoft Browser',
   windowControl: (action) => ipcRenderer.send('window-control', action),
-  onWindowCloseRequest: (callback) => ipcRenderer.on('window-close-request', () => callback()),
+  onWindowCloseRequest: (callback) => ipcRenderer.on('window-close-request', (_event, data) => callback(data)),
   confirmWindowClose: () => ipcRenderer.send('confirm-window-close'),
   onDownload: (callback) => ipcRenderer.on('download-update', (_event, data) => callback(data)),
   listDownloads: () => ipcRenderer.invoke('download-list'),
@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('linsoftBrowser', {
   ,disableTorProxy: () => ipcRenderer.invoke('tor-disable-proxy')
   ,setManualProxy: (settings) => ipcRenderer.invoke('set-manual-proxy', settings)
   ,onTorStatus: (callback) => ipcRenderer.on('tor-status', (_event, status) => callback(status))
+  ,onTorNavigationError: (callback) => ipcRenderer.on('tor-navigation-error', (_event, message) => callback(message))
   ,getTorDefaultFolder: () => ipcRenderer.invoke('tor-default-folder')
   ,startTorChatHost: () => ipcRenderer.invoke('tor-chat-host-start')
   ,renewTorChatHost: () => ipcRenderer.invoke('tor-chat-host-renew')
