@@ -18,6 +18,7 @@
   WriteRegStr HKCU "Software\Classes\Applications\Linsoft Browser.exe\shell\open\command" "" "$\"$INSTDIR\Linsoft Browser.exe$\" $\"%1$\""
   WriteRegStr HKCU "Software\Classes\Applications\Linsoft Browser.exe\SupportedTypes" ".html" ""
   WriteRegStr HKCU "Software\Classes\Applications\Linsoft Browser.exe\SupportedTypes" ".htm" ""
+  WriteRegStr HKCU "Software\Classes\Applications\Linsoft Browser.exe\SupportedTypes" ".pdf" ""
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
 !macroend
 

@@ -7,7 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const QRCode = require('qrcode');
 const { pathToFileURL } = require('node:url');
-const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeLocalHtmlUrl, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
+const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeLocalDocumentUrl, isSafeLocalPdfUrl, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
 const { loadSavedTorHostingState, requestOnionService, resolveHostedFile, saveTorHostingFolder, waitForOnionService } = require('./lib/tor-hosting.cjs');
 const { clearTorChatFileTransfer, createTorChatRoom, createTorChatServer, enqueueTorChatFileChunk, enqueueTorChatMessage, enqueueTorChatVideoFrame, getTorChatFileChunks, getTorChatFileTransfer, getTorChatReceipts, getTorChatVideoState, isValidTorChatEnvelope, isValidTorChatFileChunk, markTorChatMessagesDelivered, markTorChatMessagesRead, stopTorChatVideo } = require('./lib/tor-chat-protocol.cjs');
 const { createPermissionCheckHandler, createPermissionRequestHandler, mediaTypesFromDetails } = require('./lib/permission-handlers.cjs');
@@ -441,8 +441,8 @@ function openVpnExecutable() {
 function externalUrlFromArgs(args) {
   const explicitUrl = args.find((value) => /^linsoft:\/\/(?:apps|centrum|install\?|uninstall\?)/i.test(value) || /^file:\/\//i.test(value));
   if (explicitUrl) return explicitUrl;
-  const htmlFile = args.find((value) => /\.html?$/i.test(value) && !String(value).startsWith('-'));
-  return htmlFile ? pathToFileURL(path.resolve(htmlFile)).href : undefined;
+  const documentFile = args.find((value) => /\.(?:html?|pdf)$/i.test(value) && !String(value).startsWith('-'));
+  return documentFile ? pathToFileURL(path.resolve(documentFile)).href : undefined;
 }
 
 function startupUrlFromArgs(args) {
@@ -457,12 +457,20 @@ function supportedWebUrl(value) {
   return isSafeWebUrl(value);
 }
 
+function isPdfDocumentUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:', 'file:'].includes(url.protocol) && /\.pdf$/i.test(decodeURIComponent(url.pathname));
+  } catch { return false; }
+}
+
 function supportedNavigationUrl(value) {
   try {
     const parsed = new URL(String(value));
     if (parsed.protocol === 'http:') return Boolean(parsed.hostname);
     if (parsed.protocol === 'https:') return Boolean(parsed.hostname);
     if (parsed.protocol !== 'file:') return false;
+    if (isSafeLocalDocumentUrl(value)) return true;
     const localPath = path.resolve(decodeURIComponent(parsed.pathname.replace(/^\//, '').replace(/^([A-Za-z]):/, '$1:')));
     return /\.(?:html?|css|js|json|png|jpg|jpeg|gif|svg|ico)$/i.test(localPath) && require('node:fs').existsSync(localPath);
   } catch { return false; }
@@ -550,7 +558,7 @@ function showMouseEditContextMenu(window, contents, params, menuData) {
 
 function dispatchExternalUrl(window, url) {
   if (!window || !url) return;
-  if (/^file:\/\//i.test(url) && !isSafeLocalHtmlUrl(url)) return;
+  if (/^file:\/\//i.test(url) && !isSafeLocalDocumentUrl(url)) return;
   if (/^linsoft:\/\/install\?/i.test(url)) {
     try {
       const parsed = new URL(url);
@@ -2093,7 +2101,7 @@ app.whenReady().then(() => {
   });
   configureCertificateErrorHandling(session.defaultSession);
   session.defaultSession.on('will-attach-webview', (event, webPreferences, params) => {
-    if (!supportedWebUrl(params.src) && !isSafeLocalHtmlUrl(params.src)) {
+    if (!supportedWebUrl(params.src) && !isSafeLocalDocumentUrl(params.src)) {
       event.preventDefault();
       return;
     }
@@ -2104,6 +2112,7 @@ app.whenReady().then(() => {
     webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
     webPreferences.allowRunningInsecureContent = false;
+    webPreferences.plugins = isSafeLocalPdfUrl(params.src) || isPdfDocumentUrl(params.src);
   });
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() !== 'webview') return;

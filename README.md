@@ -48,6 +48,8 @@ npm run test:tor
 
 Open Settings > Advanced > Tor Hosting and choose **Otvoriť chat** to open the dedicated Onion Chat tab. One person creates an invitation and shares it privately by QR code or link; the other can scan it with **Naskenovať QR** or paste it. Camera access is requested only for scanning or a call and is released when that action ends. The invitation accepts one guest, expires after 15 minutes if unused, and can be replaced with **Vytvoriť novú pozvánku** after expiry. Both participants must keep Linsoft Browser running. The app retries interrupted Tor connections with increasing delays and restarts a failed Tor transport while retaining the in-memory room. Chat messages, delivery/read receipts, and active file transfers are held in memory only; stopping the chat or closing the app clears them. Messages show sent, delivered, and read status. Read receipts are sent only while the recipient's Onion Chat tab is active and visible. Attachments are end-to-end encrypted in 24 KiB chunks and limited to 2 MiB; the recipient explicitly chooses **Uložiť súbor**, and files are never opened automatically. Both participants can enable **Video hovor** for an end-to-end encrypted, video-only feed relayed through Tor; it has a low frame rate and no audio, and does not use direct WebRTC connections. Only the latest frame is kept in memory. The invitation contains the room access token and encryption key, so treat it like a password. A new invitation is required after the host restarts the app.
 
+Linsoft Browser opens existing local PDF files in its embedded viewer. PDF opening uses the Chromium viewer inside an isolated webview; the PDF plugin is enabled only for PDF URLs.
+
 ## Build Debian package
 
 ```powershell

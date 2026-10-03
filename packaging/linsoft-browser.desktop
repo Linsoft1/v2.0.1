@@ -6,5 +6,5 @@ Icon=linsoft-browser
 Terminal=false
 Type=Application
 Categories=Network;WebBrowser;
-MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+MimeType=application/pdf;text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
 StartupWMClass=Linsoft Browser

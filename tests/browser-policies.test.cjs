@@ -9,7 +9,9 @@ const {
   formatUpdateFailure,
   getPermissionDecision,
   getUpdateStatus,
+  isSafeLocalDocumentUrl,
   isSafeLocalHtmlUrl,
+  isSafeLocalPdfUrl,
   isSafeWebUrl,
   normalizePermissionOrigin
 } = require('../lib/browser-policies.cjs');
@@ -105,16 +107,23 @@ test('Electron permission request handler fails closed and responds once', async
   assert.deepEqual(denied, [false]);
 });
 
-test('local document URLs accept only existing HTML files', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'linsoft-html-'));
+test('local document URLs accept existing HTML and PDF files only', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'linsoft-doc-'));
   const htmlPath = path.join(directory, 'sample page.html');
+  const pdfPath = path.join(directory, 'sample report.pdf');
   const textPath = path.join(directory, 'notes.txt');
   fs.writeFileSync(htmlPath, '<!doctype html><title>Local page</title>');
+  fs.writeFileSync(pdfPath, '%PDF-1.4');
   fs.writeFileSync(textPath, 'not HTML');
   try {
     assert.equal(isSafeLocalHtmlUrl(pathToFileURL(htmlPath).href), true);
+    assert.equal(isSafeLocalHtmlUrl(pathToFileURL(pdfPath).href), false);
+    assert.equal(isSafeLocalPdfUrl(pathToFileURL(pdfPath).href), true);
+    assert.equal(isSafeLocalDocumentUrl(pathToFileURL(pdfPath).href), true);
     assert.equal(isSafeLocalHtmlUrl(pathToFileURL(textPath).href), false);
+    assert.equal(isSafeLocalDocumentUrl(pathToFileURL(textPath).href), false);
     assert.equal(isSafeLocalHtmlUrl(pathToFileURL(path.join(directory, 'missing.html')).href), false);
+    assert.equal(isSafeLocalPdfUrl(pathToFileURL(path.join(directory, 'missing.pdf')).href), false);
     assert.equal(isSafeLocalHtmlUrl('https://example.com/index.html'), false);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });

@@ -17,6 +17,10 @@ function parseTorChatInvitation(value) {
   if (invite.protocol !== 'http:' || !/^[a-z2-7]{56}\.onion$/i.test(invite.hostname) || invite.username || invite.password || invite.pathname !== '/' || invite.search || extra !== undefined || !/^[A-Za-z0-9_-]{32}$/.test(token || '') || !/^[A-Za-z0-9_-]{43}$/.test(encodedKey || '')) throw new Error('Vlož platnú onion pozvánku od druhého účastníka.');
   return { address: `${invite.origin}/`, token, encodedKey };
 }
+function isPdfDocumentUrl(value) {
+  try { return /\.pdf$/i.test(decodeURIComponent(new URL(String(value)).pathname)); }
+  catch { return false; }
+}
 async function stopTorChatQrScanner(chatPanel = torChatPanel) {
   torChatScannerControls?.stop();
   torChatScannerControls = null;
@@ -1907,10 +1911,10 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
   if (explicitFile) {
     try {
       const parsedFileUrl = new URL(input);
-      if (!/\.html?$/i.test(decodeURIComponent(parsedFileUrl.pathname))) throw new Error('Unsupported local file type');
+      if (!/\.(?:html?|pdf)$/i.test(decodeURIComponent(parsedFileUrl.pathname))) throw new Error('Unsupported local file type');
       localFileUrl = parsedFileUrl.href;
     } catch {
-      showToast('Otvoriť možno iba platný HTML dokument.');
+      showToast('Otvoriť možno iba platný HTML alebo PDF dokument.');
       return;
     }
   }
@@ -1941,7 +1945,7 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
   addressInput.value = url;
   updateConnectionIndicator(url);
   const tabLabel = url.replace(/^https?:\/\//, '').split('/')[0]; tabTitle.textContent = tabLabel; updateActiveTab(url, tabLabel); saveSession();
-  const viewer = window.linsoftBrowser ? `<webview class="webview" src="${escapeHtml(url)}" allowpopups allowfullscreen zoom-factor="${pageZoomForUrl(url) / 100}"></webview>` : `<iframe class="webview" src="${escapeHtml(url)}" title="Web page" allowfullscreen></iframe>`;
+  const viewer = window.linsoftBrowser ? `<webview class="webview" src="${escapeHtml(url)}"${isPdfDocumentUrl(url) ? ' plugins' : ''} allowpopups allowfullscreen zoom-factor="${pageZoomForUrl(url) / 100}"></webview>` : `<iframe class="webview" src="${escapeHtml(url)}" title="Web page" allowfullscreen></iframe>`;
   let surface = content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"]`);
   if (!surface) { surface = document.createElement('div'); surface.className = 'tab-surface'; surface.dataset.tabId = activeTabId; content.appendChild(surface); }
   if (isNativeTabs) {
@@ -1952,8 +1956,13 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
     return;
   }
   if (!window.linsoftBrowser && /^https?:\/\//i.test(url)) { showExternalPreview(surface, url); return; }
-  if (!surface.querySelector('.webview')) surface.innerHTML = viewer;
-  else surface.querySelector('.webview').src = url;
+  const existingViewer = surface.querySelector('.webview');
+  const pdfPluginMode = Boolean(window.linsoftBrowser && isPdfDocumentUrl(url));
+  if (!existingViewer) surface.innerHTML = viewer;
+  else if (existingViewer.tagName === 'WEBVIEW' && existingViewer.hasAttribute('plugins') !== pdfPluginMode) {
+    existingViewer.remove();
+    surface.insertAdjacentHTML('beforeend', viewer);
+  } else existingViewer.src = url;
   activateSurface(activeTabId);
   const activeViewer = surface.querySelector('webview');
   const activeTab = tabs.get(activeTabId);
