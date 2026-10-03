@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, WebContentsView, Menu, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const net = require('node:net');
@@ -9,12 +9,15 @@ const { pathToFileURL } = require('node:url');
 const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
 const { createPermissionCheckHandler, createPermissionRequestHandler } = require('./lib/permission-handlers.cjs');
 const { NativeTabManager } = require('./lib/native-tab-manager.cjs');
+app.setName('Linsoft Browser');
+const isPackagedBuild = app.isPackaged && process.env.LINSOFT_DEV_LAUNCH !== '1';
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { autoUpdater = null; }
 let updateState = { status: 'idle' };
 const experimentalNativeTabs = process.env.LINSOFT_NATIVE_TABS === '1';
 const isLinux = process.platform === 'linux';
-const browserUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
+const browserUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36 LinsoftBrowser/${app.getVersion()}`;
+app.userAgentFallback = browserUserAgent;
 const writableDataPath = process.env.LINSOFT_BROWSER_USER_DATA || path.join(app.getPath('appData'), 'Linsoft Browser');
 app.setPath('userData', writableDataPath);
 app.setPath('cache', path.join(writableDataPath, 'Cache'));
@@ -24,6 +27,7 @@ const downloadHistoryPath = path.join(writableDataPath, 'download-history.json')
 const sitePermissionsPath = path.join(writableDataPath, 'site-permissions.json');
 /** @type {Set<import('electron').BrowserWindow>} */
 const browserWindows = new Set();
+let certificateErrorHandlerRegistered = false;
 
 function publishUpdateState(state) {
   updateState = state;
@@ -33,7 +37,7 @@ function publishUpdateState(state) {
 }
 
 function setupAutoUpdater() {
-  if (!autoUpdater || !app.isPackaged || process.platform !== 'win32') return;
+  if (!autoUpdater || !isPackagedBuild || process.platform !== 'win32') return;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('update-available', (info) => publishUpdateState({ status: 'available', version: info.version, checkedAt: Date.now() }));
@@ -43,7 +47,7 @@ function setupAutoUpdater() {
   autoUpdater.on('error', (error) => { console.warn('Linsoft Browser update check failed:', error.message); publishUpdateState({ ...formatUpdateFailure(error), checkedAt: Date.now() }); });
 
   const checkForUpdates = () => {
-    if (!canAutoCheckForUpdates({ isPackaged: app.isPackaged, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) return;
+    if (!canAutoCheckForUpdates({ isPackaged: isPackagedBuild, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) return;
     autoUpdater.checkForUpdates().catch((error) => publishUpdateState({ ...formatUpdateFailure(error), checkedAt: Date.now() }));
   };
   setTimeout(checkForUpdates, 8000);
@@ -95,6 +99,43 @@ function permissionLabel(permission, mediaTypes = []) {
 function isGuestWebContents(webContents) {
   const parentContents = webContents?.hostWebContents || webContents;
   return BrowserWindow.fromWebContents(parentContents)?.__guest === true;
+}
+
+function isPrivateNetworkAddress(value) {
+  try {
+    const url = new URL(String(value || ''));
+    const host = url.hostname.toLowerCase();
+    if (host === 'localhost' || host.endsWith('.localhost')) return true;
+    const parts = host.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+    return parts[0] === 10 || parts[0] === 127 || (parts[0] === 169 && parts[1] === 254) || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) || (parts[0] === 192 && parts[1] === 168);
+  } catch { return false; }
+}
+
+function configureCertificateErrorHandling() {
+  if (certificateErrorHandlerRegistered) return;
+  certificateErrorHandlerRegistered = true;
+  app.on('certificate-error', async (event, webContents, url, error, _certificate, callback, isMainFrame) => {
+    if (!isMainFrame || !String(error).startsWith('net::ERR_CERT_') || !isPrivateNetworkAddress(url)) return callback(false);
+    event.preventDefault();
+    const parentContents = webContents.hostWebContents || webContents;
+    const parentWindow = BrowserWindow.fromWebContents(parentContents) || [...browserWindows].find((window) => [...(window.__nativeTabs?.views?.values() || [])].some((view) => view.webContents === webContents));
+    try {
+      const result = await dialog.showMessageBox(parentWindow, {
+        type: 'warning',
+        title: 'Nedôveryhodný certifikát',
+        message: `Certifikát pre ${new URL(url).hostname} nie je dôveryhodný.`,
+        detail: 'Môže ísť o lokálne zariadenie so samopodpísaným certifikátom. Pokračuj iba vtedy, ak zariadeniu dôveruješ.',
+        buttons: ['Pokračovať nezabezpečene', 'Zrušiť'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true
+      });
+      callback(result.response === 0);
+    } catch {
+      callback(false);
+    }
+  });
 }
 
 async function requestSitePermission(webContents, permission, callback, details = {}) {
@@ -164,6 +205,7 @@ const browserPreferences = {
   camera: false,
   microphone: false,
   webNotifications: false,
+  spellcheckLanguages: null,
   clearExit: false,
   autoUpdateCheck: true
 };
@@ -243,6 +285,7 @@ let adBlockCount = 0;
 let adBlockHostsCount = {};
 let allowlistedHosts = new Set();
 let dynamicAdHosts = new Set();
+let adBlockSaveTimer = null;
 function isYoutubeCoreHost(hostname) {
   const host = String(hostname || '').toLowerCase();
   return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtubei.googleapis.com' || host.endsWith('.googlevideo.com') || host.endsWith('.ytimg.com') || host.endsWith('.ggpht.com');
@@ -258,6 +301,28 @@ try {
 } catch {}
 
 function saveAdBlockLearning() {
+  if (adBlockSaveTimer) clearTimeout(adBlockSaveTimer);
+  adBlockSaveTimer = setTimeout(() => {
+    adBlockSaveTimer = null;
+    persistAdBlockLearning();
+  }, 1500);
+  adBlockSaveTimer.unref?.();
+}
+
+async function persistAdBlockLearning() {
+  try {
+    const compactCandidates = Object.fromEntries(Object.entries(adBlockCandidates).sort((left, right) => right[1] - left[1]).slice(0, 5000));
+    const compactHostCounts = Object.fromEntries(Object.entries(adBlockHostsCount).sort((left, right) => right[1] - left[1]).slice(0, 1000));
+    const fs = require('node:fs/promises');
+    await fs.mkdir(path.dirname(adBlockLearningPath), { recursive: true });
+    await fs.writeFile(adBlockLearningPath, JSON.stringify({ learnedAdHosts: [...learnedAdHosts].slice(-500), candidates: compactCandidates, blocked: adBlockCount, hostCounts: compactHostCounts, allowlistedHosts: [...allowlistedHosts], dynamicAdHosts: [...dynamicAdHosts].slice(-50000) }), 'utf8');
+  } catch {}
+}
+
+function flushAdBlockLearning() {
+  if (!adBlockSaveTimer) return;
+  clearTimeout(adBlockSaveTimer);
+  adBlockSaveTimer = null;
   try {
     const compactCandidates = Object.fromEntries(Object.entries(adBlockCandidates).sort((left, right) => right[1] - left[1]).slice(0, 5000));
     const compactHostCounts = Object.fromEntries(Object.entries(adBlockHostsCount).sort((left, right) => right[1] - left[1]).slice(0, 1000));
@@ -375,6 +440,69 @@ function editTargetForEvent(event, webContentsId) {
   return ownedWebContentsForEvent(event, webContentsId) || event.sender.__lastContextWebContents || null;
 }
 
+async function pasteAtContextPoint(contents, point) {
+  if (!point || typeof contents.executeJavaScript !== 'function') return false;
+  const x = Number.isFinite(point.x) ? point.x : 0;
+  const y = Number.isFinite(point.y) ? point.y : 0;
+  const text = String(clipboard.readText() || '');
+  if (!text) return false;
+  try {
+    return Boolean(await contents.executeJavaScript(`(() => {
+      let target = document.elementFromPoint(${x}, ${y});
+      while (target?.shadowRoot) {
+        const nested = target.shadowRoot.elementFromPoint(${x}, ${y});
+        if (!nested || nested === target) break;
+        target = nested;
+      }
+      const fieldSelector = 'input, textarea, [contenteditable], [role="textbox"], [role="searchbox"], [role="combobox"]';
+      const active = document.activeElement;
+      const field = target?.closest?.(fieldSelector) || (active?.matches?.(fieldSelector) || active?.isContentEditable ? active : null);
+      const editableInputTypes = ['email', 'password', 'search', 'tel', 'text', 'url'];
+      const editable = field?.isContentEditable || field?.matches('textarea, [role="textbox"], [role="searchbox"], [role="combobox"]') || (field?.matches('input') && editableInputTypes.includes(field.type));
+      if (!editable) return false;
+      field.focus();
+      if (field.matches('input, textarea')) {
+        const value = field.value;
+        const start = typeof field.selectionStart === 'number' ? field.selectionStart : value.length;
+        const end = typeof field.selectionEnd === 'number' ? field.selectionEnd : start;
+        const nextValue = value.slice(0, start) + ${JSON.stringify(text)} + value.slice(end);
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')?.set;
+        if (setter) setter.call(field, nextValue);
+        else field.value = nextValue;
+        const caret = start + ${JSON.stringify(text)}.length;
+        field.setSelectionRange?.(caret, caret);
+        field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(text)} }));
+        return field.value === nextValue;
+      }
+      return document.execCommand('insertText', false, ${JSON.stringify(text)});
+    })()`, true));
+  } catch {
+    return false;
+  }
+}
+
+function showMouseEditContextMenu(window, contents, params, menuData) {
+  const items = [];
+  const editFlags = params.editFlags || {};
+  const misspelledWord = String(params.misspelledWord || '');
+  const suggestions = Array.isArray(params.dictionarySuggestions) ? params.dictionarySuggestions.slice(0, 5) : [];
+  const hasClipboardText = Boolean(clipboard.readText());
+  if ((params.isEditable || editFlags.canPaste) && hasClipboardText) items.push({ label: 'Vložiť', click: () => contents.paste() });
+  if (params.selectionText || editFlags.canCopy) items.push({ label: 'Kopírovať', click: () => contents.copy() });
+  if ((params.isEditable || editFlags.canCut) && (params.selectionText || editFlags.canCut)) items.push({ label: 'Vystrihnúť', click: () => contents.cut() });
+  if (params.isEditable || editFlags.canSelectAll) items.push({ label: 'Označiť všetko', click: () => contents.selectAll() });
+  if (misspelledWord) {
+    items.push({ type: 'separator' });
+    if (suggestions.length) suggestions.forEach((suggestion) => items.push({ label: suggestion, click: () => contents.replaceMisspelling(suggestion) }));
+    else items.push({ label: 'Bez návrhov', enabled: false });
+    items.push({ label: 'Pridať do slovníka', click: () => contents.session.addWordToSpellCheckerDictionary(misspelledWord) });
+  }
+  if (!items.length) return false;
+  items.push({ type: 'separator' }, { label: 'Preložiť stránku do slovenčiny', click: () => window.webContents.send('translate-page', menuData.pageURL || contents.getURL()) }, { label: 'Ďalšie možnosti Linsoft', click: () => window.webContents.send('webview-context-menu', menuData) });
+  Menu.buildFromTemplate(items).popup({ window });
+  return true;
+}
+
 function dispatchExternalUrl(window, url) {
   if (!window || !url) return;
   if (/^linsoft:\/\/install\?/i.test(url)) {
@@ -404,6 +532,7 @@ const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) app.quit();
 
 function configureGuestSession(guestSession) {
+  configureCertificateErrorHandling(guestSession);
   guestSession.setPermissionRequestHandler(createPermissionRequestHandler(requestSitePermission));
   guestSession.setPermissionCheckHandler(createPermissionCheckHandler(({ permission, requestingUrl, mediaTypes }) => {
     return getPermissionDecision({ permission, mediaTypes, requestingUrl, preferences: browserPreferences, decisions: {} });
@@ -420,6 +549,7 @@ function configureGuestSession(guestSession) {
     webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
     webPreferences.allowRunningInsecureContent = false;
+    webPreferences.spellcheck = true;
   });
   guestSession.webRequest.onBeforeSendHeaders((details, callback) => {
     details.requestHeaders.DNT = '1';
@@ -444,9 +574,9 @@ function configureNativeTabContents(window, tabId, contents) {
       window.webContents.send('webview-fullscreen', fullscreen);
       return;
     }
-    if (input.type === 'mouseDown' && input.button === 'left') {
+    if (input.type === 'mouseDown' && ['left', 'right', 'middle'].includes(input.button)) {
       window.webContents.send('dismiss-webview-overlay');
-      return;
+      if (input.button === 'left') return;
     }
     if (input.type === 'mouseDown' && (input.button === 'back' || input.button === 'forward')) {
       inputEvent.preventDefault();
@@ -466,8 +596,11 @@ function configureNativeTabContents(window, tabId, contents) {
   });
   contents.on('context-menu', (_event, params) => {
     window.__lastContextWebContents = contents;
-    window.__lastContextPoint = { x: params.x || 0, y: params.y || 0 };
-    window.webContents.send('webview-context-menu', { tabId, x: params.x || 0, y: params.y || 0, selectionText: params.selectionText || '', linkURL: params.linkURL || '', srcURL: params.srcURL || '', isEditable: Boolean(params.isEditable), mediaType: params.mediaType || '' });
+    window.webContents.__lastContextWebContents = contents;
+    window.webContents.__lastContextPoint = { x: params.x || 0, y: params.y || 0 };
+    const menuData = { tabId, x: params.x || 0, y: params.y || 0, pageURL: params.pageURL || contents.getURL(), selectionText: params.selectionText || '', linkURL: params.linkURL || '', srcURL: params.srcURL || '', isEditable: Boolean(params.isEditable), mediaType: params.mediaType || '' };
+    if (showMouseEditContextMenu(window, contents, params, menuData)) return;
+    window.webContents.send('webview-context-menu', menuData);
   });
   contents.setUserAgent(browserUserAgent);
   contents.on('will-navigate', (event, url) => { if (!supportedNavigationUrl(url)) event.preventDefault(); });
@@ -505,17 +638,26 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: !useNativeTabs,
+      spellcheck: true,
       sandbox: true,
       partition: partition || undefined
     }
   });
   window.__guest = guest;
   window.__nativeTabsEnabled = useNativeTabs;
+  try {
+    const spellSession = window.webContents.session;
+    const availableLanguages = spellSession.availableSpellCheckerLanguages || [];
+    const preferredLanguages = ['sk-SK', 'sk', 'en-US', 'en-GB', 'en'];
+    const requestedLanguages = browserPreferences.spellcheckLanguages;
+    const languages = (Array.isArray(requestedLanguages) ? requestedLanguages : preferredLanguages).filter((language) => availableLanguages.includes(language));
+    spellSession.setSpellCheckerLanguages(languages);
+  } catch {}
   if (useNativeTabs) {
     window.__nativeTabs = new NativeTabManager({
       window,
       WebContentsView,
-      createWebPreferences: () => ({ contextIsolation: true, nodeIntegration: false, sandbox: true, partition: partition || undefined }),
+      createWebPreferences: () => ({ contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: true, partition: partition || undefined }),
       configureWebContents: (tabId, contents) => configureNativeTabContents(window, tabId, contents),
       onEvent: (tabId, type, data) => window.webContents.send('native-tab-event', { tabId, type, ...data })
     });
@@ -631,13 +773,22 @@ ipcMain.handle('download-clear', () => {
   saveDownloadHistory();
   return { ok: true };
 });
-ipcMain.on('set-browser-preferences', (_event, preferences) => {
+ipcMain.on('set-browser-preferences', (event, preferences) => {
   if (!preferences || typeof preferences !== 'object') return;
   const enablingAutoUpdates = browserPreferences.autoUpdateCheck === false && preferences.autoUpdateCheck === true;
   for (const key of Object.keys(browserPreferences)) {
     if (typeof preferences[key] === typeof browserPreferences[key]) browserPreferences[key] = preferences[key];
   }
-  if (enablingAutoUpdates && autoUpdater && canAutoCheckForUpdates({ isPackaged: app.isPackaged, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) autoUpdater.checkForUpdates().catch(() => {});
+  if (preferences.spellcheckLanguages === null || Array.isArray(preferences.spellcheckLanguages)) {
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+    const spellSession = ownerWindow?.webContents.session || event.sender.session;
+    const availableLanguages = spellSession.availableSpellCheckerLanguages || [];
+    const requestedLanguages = Array.isArray(preferences.spellcheckLanguages) ? preferences.spellcheckLanguages : ['sk-SK', 'sk', 'en-US', 'en-GB', 'en'];
+    const selectedLanguages = [...new Set(requestedLanguages)].filter((language) => typeof language === 'string' && availableLanguages.includes(language));
+    browserPreferences.spellcheckLanguages = Array.isArray(preferences.spellcheckLanguages) ? selectedLanguages : null;
+    spellSession.setSpellCheckerLanguages(selectedLanguages);
+  }
+  if (enablingAutoUpdates && autoUpdater && canAutoCheckForUpdates({ isPackaged: isPackagedBuild, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) autoUpdater.checkForUpdates().catch(() => {});
 });
 ipcMain.handle('site-permission-list', (event) => {
   if (isGuestWebContents(event.sender)) return [];
@@ -696,30 +847,15 @@ ipcMain.handle('edit-command', async (event, webContentsId, command) => {
   try {
     if (command === 'paste') {
       const text = String(clipboard.readText() || '');
-      const point = event.sender.__lastContextPoint;
-      if (point && typeof contents.executeJavaScript === 'function') {
-        const inserted = await contents.executeJavaScript(`(() => {
-          const target = document.elementFromPoint(${Number(point.x) || 0}, ${Number(point.y) || 0});
-          const field = target?.closest?.('input, textarea, [contenteditable="true"]') || (document.activeElement?.matches?.('input, textarea, [contenteditable="true"]') ? document.activeElement : null) || document.querySelector('textarea.gLFyf, input[name="q"], input[type="search"], textarea, input:not([type="hidden"])');
-          if (!field) return false;
-          field.focus();
-          if ('value' in field) {
-            const start = field.selectionStart ?? field.value.length;
-            const end = field.selectionEnd ?? start;
-            field.setRangeText(${JSON.stringify(text)}, start, end, 'end');
-            field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(text)} }));
-          } else document.execCommand('insertText', false, ${JSON.stringify(text)});
-          return true;
-        })()`, true);
-        if (inserted) return { ok: true };
-      }
+      if (!text) return { ok: false, message: 'Schránka je prázdna. Najprv skopíruj text.' };
+      if (await pasteAtContextPoint(contents, event.sender.__lastContextPoint)) return { ok: true };
       contents.focus?.();
-      if (typeof contents.sendInputEvent === 'function') {
+      if (typeof contents.paste === 'function') contents.paste();
+      else if (typeof contents.insertText === 'function') await contents.insertText(text);
+      else if (typeof contents.sendInputEvent === 'function') {
         contents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: ['control'] });
         contents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: ['control'] });
-        return { ok: true };
       }
-      if (typeof contents.insertText === 'function') contents.insertText(text);
       else if (typeof contents.paste === 'function') contents.paste();
       else return { ok: false, message: 'Vloženie nie je dostupné na tejto stránke.' };
       return { ok: true };
@@ -731,14 +867,37 @@ ipcMain.handle('edit-command', async (event, webContentsId, command) => {
 });
 ipcMain.handle('clipboard-read-text', () => clipboard.readText());
 ipcMain.handle('clipboard-write-text', (_event, value) => { clipboard.writeText(String(value || '')); return { ok: true }; });
-ipcMain.handle('clipboard-copy-selection', async (event) => {
+ipcMain.handle('page-source', async (event) => {
   const contents = event.sender.__lastContextWebContents;
-  if (!contents?.executeJavaScript) return { ok: false, message: 'Výber sa nepodarilo načítať.' };
+  const url = contents?.getURL?.() || '';
+  if (!contents || contents.isDestroyed() || !ownedWebContentsForEvent(event, contents.id) || !/^https?:/i.test(url)) {
+    return { ok: false, message: 'Zdrojový kód tejto stránky nie je dostupný.' };
+  }
+  try { return { ok: true, source: await contents.executeJavaScript('document.documentElement?.outerHTML || ""', true), url }; }
+  catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
+});
+ipcMain.handle('clipboard-copy-selection', async (event, selectedText = '') => {
+  let text = String(selectedText || '');
+  const candidate = event.sender.__lastContextWebContents;
+  const contents = candidate && !candidate.isDestroyed() && ownedWebContentsForEvent(event, candidate.id) ? candidate : null;
+  if (contents) {
+    try {
+      const previousClipboardText = clipboard.readText();
+      contents.focus?.();
+      contents.copy();
+      const nativeCopiedText = clipboard.readText();
+      if (nativeCopiedText && nativeCopiedText !== previousClipboardText && (!text || nativeCopiedText === text)) return { ok: true };
+    } catch {}
+    if (!text && contents.executeJavaScript) {
+      try {
+        text = String(await contents.executeJavaScript('String(window.getSelection?.()?.toString?.() || document.activeElement?.value?.slice(document.activeElement.selectionStart, document.activeElement.selectionEnd) || "")', true) || '');
+      } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
+    }
+  }
+  if (!text) return { ok: false, message: 'Nie je označený žiadny text.' };
   try {
-    const text = await contents.executeJavaScript('String(window.getSelection?.()?.toString?.() || document.activeElement?.value?.slice(document.activeElement.selectionStart, document.activeElement.selectionEnd) || "")', true);
-    if (!String(text || '')) return { ok: false, message: 'Nie je označený žiadny text.' };
-    clipboard.writeText(String(text));
-    return { ok: true };
+    clipboard.writeText(text);
+    return clipboard.readText() === text ? { ok: true } : { ok: false, message: 'Schránka text neprijala.' };
   } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
 });
 ipcMain.handle('clipboard-write-image', async (_event, url) => {
@@ -756,7 +915,7 @@ ipcMain.handle('clipboard-write-image', async (_event, url) => {
 ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('update-state', () => updateState);
 ipcMain.handle('update-check', async () => {
-  if (!autoUpdater || !app.isPackaged) return { ok: false, status: 'unavailable', message: 'Aktualizácie sú dostupné iba v nainštalovanej verzii.' };
+  if (!autoUpdater || !isPackagedBuild) return { ok: false, status: 'unavailable', message: 'Aktualizácie sú dostupné iba v nainštalovanej verzii.' };
   try { autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; const result = await autoUpdater.checkForUpdates(); const state = { ...getUpdateStatus(app.getVersion(), result?.updateInfo), checkedAt: Date.now() }; publishUpdateState(state); return { ok: true, ...state }; } catch (error) { const state = { ...formatUpdateFailure(error), checkedAt: Date.now() }; publishUpdateState(state); return state; }
 });
 ipcMain.handle('update-download', async () => { if (!autoUpdater) return { ok: false }; try { await autoUpdater.downloadUpdate(); return { ok: true }; } catch (error) { return formatUpdateFailure(error); } });
@@ -987,6 +1146,11 @@ function nativeTabsForEvent(event) {
   return window?.__nativeTabsEnabled ? window.__nativeTabs : null;
 }
 ipcMain.handle('native-tabs-enabled', (event) => BrowserWindow.fromWebContents(event.sender)?.__nativeTabsEnabled === true);
+ipcMain.handle('spellchecker-languages', (event) => {
+  const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+  const spellSession = ownerWindow?.webContents.session || event.sender.session;
+  return { available: spellSession.availableSpellCheckerLanguages || [], selected: browserPreferences.spellcheckLanguages };
+});
 ipcMain.on('native-tab-layout', (event, bounds) => {
   const manager = nativeTabsForEvent(event);
   if (!manager || !bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) return;
@@ -1002,7 +1166,7 @@ ipcMain.handle('native-tab-load', (event, { tabId, url } = {}) => {
 ipcMain.handle('native-tab-activate', (event, tabId) => ({ ok: nativeTabsForEvent(event)?.activate(tabId) === true }));
 ipcMain.handle('native-tab-deactivate', (event) => { nativeTabsForEvent(event)?.deactivate(); return { ok: true }; });
 ipcMain.handle('native-tab-destroy', (event, tabId) => { nativeTabsForEvent(event)?.destroy(tabId); return { ok: true }; });
-ipcMain.handle('native-tab-command', async (event, { tabId, command, value } = {}) => {
+ipcMain.handle('native-tab-command', async (event, { tabId, command, value, fromContextMenu } = {}) => {
   const view = nativeTabsForEvent(event)?.views.get(tabId);
   if (!view) return { ok: false };
   const contents = view.webContents;
@@ -1010,6 +1174,20 @@ ipcMain.handle('native-tab-command', async (event, { tabId, command, value } = {
   else if (command === 'back' && contents.canGoBack()) contents.goBack();
   else if (command === 'forward' && contents.canGoForward()) contents.goForward();
   else if (command === 'zoom' && Number.isFinite(value)) contents.setZoomFactor(value);
+  else if (command === 'paste' && fromContextMenu) {
+    if (!(await pasteAtContextPoint(contents, event.sender.__lastContextPoint))) {
+      const text = String(clipboard.readText() || '');
+      if (!text) return { ok: false, message: 'Schránka je prázdna. Najprv skopíruj text.' };
+      contents.focus?.();
+      if (typeof contents.paste === 'function') contents.paste();
+      else if (typeof contents.insertText === 'function') await contents.insertText(text);
+      else if (typeof contents.sendInputEvent === 'function') {
+        contents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: ['control'] });
+        contents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: ['control'] });
+      } else if (typeof contents.paste === 'function') contents.paste();
+      else return { ok: false };
+    }
+  }
   else if (['copy', 'cut', 'paste', 'selectAll', 'undo', 'redo'].includes(command) && typeof contents[command] === 'function') contents[command]();
   else return { ok: false };
   return { ok: true };
@@ -1122,6 +1300,7 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionCheckHandler(createPermissionCheckHandler(({ permission, requestingUrl, mediaTypes }) => {
     return getPermissionDecision({ permission, mediaTypes, requestingUrl, preferences: browserPreferences, decisions: sitePermissions });
   }));
+  configureCertificateErrorHandling(session.defaultSession);
   session.defaultSession.on('will-attach-webview', (event, webPreferences, params) => {
     if (!supportedWebUrl(params.src)) {
       event.preventDefault();
@@ -1145,9 +1324,9 @@ app.whenReady().then(() => {
         if (parent && !parent.isDestroyed()) { const fullscreen = !parent.isFullScreen(); parent.setFullScreen(fullscreen); parent.webContents.send('webview-fullscreen', fullscreen); }
         return;
       }
-      if (input.type === 'mouseDown' && input.button === 'left') {
+      if (input.type === 'mouseDown' && ['left', 'right', 'middle'].includes(input.button)) {
         contents.hostWebContents?.send('dismiss-webview-overlay');
-        return;
+        if (input.button === 'left') return;
       }
       if (input.type === 'mouseDown' && (input.button === 'back' || input.button === 'forward')) {
         inputEvent.preventDefault();
@@ -1168,7 +1347,10 @@ app.whenReady().then(() => {
     contents.on('context-menu', (_event, params) => {
       if (contents.hostWebContents) contents.hostWebContents.__lastContextWebContents = contents;
       if (contents.hostWebContents) contents.hostWebContents.__lastContextPoint = { x: params.x || 0, y: params.y || 0 };
-      contents.hostWebContents?.send('webview-context-menu', { x: params.x || 0, y: params.y || 0, selectionText: params.selectionText || '', linkURL: params.linkURL || '', srcURL: params.srcURL || '', isEditable: Boolean(params.isEditable), mediaType: params.mediaType || '' });
+      const menuData = { x: params.x || 0, y: params.y || 0, pageURL: params.pageURL || contents.getURL(), selectionText: params.selectionText || '', linkURL: params.linkURL || '', srcURL: params.srcURL || '', isEditable: Boolean(params.isEditable), mediaType: params.mediaType || '' };
+      const hostWindow = BrowserWindow.fromWebContents(contents.hostWebContents);
+      if (hostWindow && showMouseEditContextMenu(hostWindow, contents, params, menuData)) return;
+      contents.hostWebContents?.send('webview-context-menu', menuData);
     });
     contents.setUserAgent(browserUserAgent);
     contents.on('render-process-gone', (_event, details) => { contents.hostWebContents?.send('webview-process-gone', { reason: details.reason }); });
@@ -1249,6 +1431,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async (event) => {
+  flushAdBlockLearning();
   if (!browserPreferences.clearExit || clearingExitData) return;
   event.preventDefault();
   clearingExitData = true;

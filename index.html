@@ -9,24 +9,66 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="icon-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+    <symbol id="icon-arrow-right" viewBox="0 0 24 24"><path d="m12 5 7 7-7 7"/><path d="M5 12h14"/></symbol>
+    <symbol id="icon-rotate-cw" viewBox="0 0 24 24"><path d="M20 7v5h-5"/><path d="M20 12a8 8 0 1 1-2.34-5.66L20 9"/></symbol>
+    <symbol id="icon-house" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7"/><path d="M9 21V11h6v10"/><path d="M5 12v9h14v-9"/></symbol>
+    <symbol id="icon-lock-keyhole" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24"><path d="m18 6-12 12"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
+    <symbol id="icon-bookmark" viewBox="0 0 24 24"><path d="M6 4h12v17l-6-4-6 4z"/></symbol>
+    <symbol id="icon-bookmark-check" viewBox="0 0 24 24"><path d="M6 4h12v17l-6-4-6 4z"/><path d="m9 11 2 2 4-4"/></symbol>
+    <symbol id="icon-shield-check" viewBox="0 0 24 24"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="icon-shield-off" viewBox="0 0 24 24"><path d="m3 3 18 18"/><path d="M12 22s8-4 8-11V5l-8-3-5 1.88"/><path d="M4 5v6c0 3.5 2.1 6.4 4.5 8.4"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="icon-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M8 11h6"/></symbol>
+    <symbol id="icon-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M11 8v6M8 11h6"/></symbol>
+    <symbol id="icon-printer" viewBox="0 0 24 24"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></symbol>
+    <symbol id="icon-file-down" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 12v6m-3-3 3 3 3-3"/></symbol>
+    <symbol id="icon-camera" viewBox="0 0 24 24"><path d="M14 4H10l-2 3H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-4z"/><circle cx="12" cy="13" r="3"/></symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></symbol>
+    <symbol id="icon-chevron-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
+    <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="icon-ellipsis" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+    <symbol id="icon-minimize" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="icon-maximize" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/></symbol>
+    <symbol id="icon-fullscreen" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/></symbol>
+    <symbol id="icon-pin" viewBox="0 0 24 24"><path d="m16 3 5 5-4 1-4 4-1 5-2-2-4 4"/><path d="m8 8 8 8"/></symbol>
+    <symbol id="icon-clipboard-paste" viewBox="0 0 24 24"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/><rect x="8" y="2" width="8" height="4" rx="1"/></symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+    <symbol id="icon-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="m8.1 8.1 12 12M14 14l6-6M8.1 15.9 12 12"/></symbol>
+    <symbol id="icon-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1"/><path d="M22 22 17 12l-5 10M14 18h6"/></symbol>
+    <symbol id="icon-external-link" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+    <symbol id="icon-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+    <symbol id="icon-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></symbol>
+    <symbol id="icon-file-code" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M10 13l-2 2 2 2m4-4 2 2-2 2"/></symbol>
+    <symbol id="icon-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5m4-1v5l4 2"/></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.8-.7a8 8 0 0 1-1.5.9l-.3 1.9h-2.8l-.3-1.9a8 8 0 0 1-1.5-.9l-1.8.7-1.4-2.4 1.5-1.1a8 8 0 0 1 0-1.8L6.1 12l1.4-2.4 1.8.7a8 8 0 0 1 1.5-.9l.3-1.9h2.8l.3 1.9a8 8 0 0 1 1.5.9l1.8-.7 1.4 2.4-1.5 1.1a8 8 0 0 1 0 1.9Z"/></symbol>
+    <symbol id="icon-layout-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="icon-user-round" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></symbol>
+    <symbol id="icon-trash-2" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6"/></symbol>
+    <symbol id="icon-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/></symbol>
+  </svg>
   <main class="browser-window">
     <header class="tabs-bar">
-      <button class="tab active managed-tab" draggable="true" data-tab-id="1"><span class="tab-logo">L</span><span id="tabTitle">Nová karta</span><span class="tab-audio" aria-label="Stlmiť kartu" title="Stlmiť kartu"></span><span class="tab-loading" aria-hidden="true"></span><span class="tab-close" title="Zatvoriť kartu">×</span></button>
+      <button class="tab active managed-tab" draggable="true" data-tab-id="1"><span class="tab-logo"></span><span id="tabTitle">Linsoft Browser</span><span class="tab-audio" aria-label="Stlmiť kartu" title="Stlmiť kartu"></span><span class="tab-loading" aria-hidden="true"></span><span class="tab-close" title="Zatvoriť kartu">×</span></button>
       <button id="newTab" class="new-tab" type="button" aria-label="Nová karta" title="Nová karta">+</button><span class="guest-indicator" id="guestIndicator" hidden>HOSŤ</span>
       <div class="window-buttons">
-        <button id="minimizeWindow" aria-label="Minimalizovať" title="Minimalizovať okno">−</button>
-        <button id="maximizeWindow" aria-label="Maximalizovať" title="Maximalizovať okno">□</button>
-        <button id="fullscreenWindow" aria-label="Celá obrazovka" title="Celá obrazovka">▣</button>
-        <button id="pinWindow" aria-label="Vždy navrchu" title="Pripnúť okno navrch">📌</button>
-        <button id="closeWindow" aria-label="Zavrieť" title="Zavrieť okno">×</button>
+        <button id="minimizeWindow" aria-label="Minimalizovať" title="Minimalizovať okno"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-minimize"></use></svg></button>
+        <button id="maximizeWindow" aria-label="Maximalizovať" title="Maximalizovať okno"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-maximize"></use></svg></button>
+        <button id="fullscreenWindow" aria-label="Celá obrazovka" title="Celá obrazovka"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-fullscreen"></use></svg></button>
+        <button id="pinWindow" aria-label="Vždy navrchu" title="Pripnúť okno navrch"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-pin"></use></svg></button>
+        <button id="closeWindow" aria-label="Zavrieť" title="Zavrieť okno"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-x"></use></svg></button>
       </div>
     </header>
-    <nav class="toolbar" aria-label="Navigácia browsera">
-      <button id="backButton" title="Späť">‹</button><button id="forwardButton" title="Dopredu">›</button><button id="reloadButton" title="Obnoviť">↻</button><button id="homeButton" title="Domov">⌂</button>
-      <form id="addressForm" class="address-bar"><button type="button" class="secure" id="securityButton" aria-label="Informácie o pripojení" title="Informácie o pripojení">●</button><input id="addressInput" value="linsoft://start" aria-label="Adresný riadok" /><button type="button" id="clearAddress">×</button></form>
-      <button id="installAppButton" class="install-app-button" title="Nainštalovať webovú aplikáciu" aria-label="Nainštalovať webovú aplikáciu" hidden>⊞</button><button id="bookmarkButton" title="Záložka">☆</button><button id="adBlockButton" title="AdBlock zapnutý" aria-label="Zapnúť alebo vypnúť AdBlock">🛡</button><button id="findPageButton" title="Hľadať na stránke (Ctrl+F)" aria-label="Hľadať na stránke">⌕</button><button id="zoomOutButton" title="Oddialiť (Ctrl+-)" aria-label="Oddialiť">−</button><button id="zoomInButton" title="Priblížiť (Ctrl++)" aria-label="Priblížiť">＋</button><button id="printButton" title="Tlačiť stránku (Ctrl+P)" aria-label="Tlačiť stránku">▣</button><button id="savePdfButton" title="Uložiť stránku ako PDF" aria-label="Uložiť stránku ako PDF">PDF</button><button id="capturePageButton" title="Snímka webu (Ctrl+Shift+S)" aria-label="Snímka webu">▧</button><button id="downloadsButton" title="Sťahovania" aria-label="Sťahovania">⇩</button><button id="menuButton" title="Menu">⋮</button>
+    <nav class="toolbar tools-collapsed" aria-label="Navigácia browsera">
+      <button id="backButton" title="Späť" disabled><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-arrow-left"></use></svg></button><button id="forwardButton" title="Dopredu" disabled><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-arrow-right"></use></svg></button><button id="reloadButton" title="Obnoviť"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-rotate-cw"></use></svg></button><button id="homeButton" title="Domov"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-house"></use></svg></button>
+      <form id="addressForm" class="address-bar"><button type="button" class="secure" id="securityButton" aria-label="Informácie o pripojení" title="Informácie o pripojení"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-lock-keyhole"></use></svg></button><input id="addressInput" value="linsoft://start" aria-label="Adresný riadok" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="addressSuggestions" autocomplete="off" /><button type="button" id="clearAddress" aria-label="Vymazať adresu" title="Vymazať adresu"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-x"></use></svg></button></form>
+      <button id="installAppButton" class="install-app-button" title="Nainštalovať webovú aplikáciu" aria-label="Nainštalovať webovú aplikáciu" hidden><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-plus"></use></svg></button><button id="bookmarkButton" title="Záložka" aria-label="Pridať záložku"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-bookmark"></use></svg></button><button id="adBlockButton" title="AdBlock zapnutý" aria-label="Zapnúť alebo vypnúť AdBlock"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-shield-check"></use></svg></button><button id="findPageButton" title="Hľadať na stránke (Ctrl+F)" aria-label="Hľadať na stránke"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search"></use></svg></button><button id="zoomOutButton" title="Oddialiť (Ctrl+-)" aria-label="Oddialiť"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-zoom-out"></use></svg></button><button id="zoomInButton" title="Priblížiť (Ctrl++)" aria-label="Priblížiť"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-zoom-in"></use></svg></button><button id="printButton" title="Tlačiť stránku (Ctrl+P)" aria-label="Tlačiť stránku"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-printer"></use></svg></button><button id="savePdfButton" title="Uložiť stránku ako PDF" aria-label="Uložiť stránku ako PDF">PDF</button><button id="capturePageButton" title="Snímka webu (Ctrl+Shift+S)" aria-label="Snímka webu"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-camera"></use></svg></button><button id="downloadsButton" title="Sťahovania" aria-label="Sťahovania"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-download"></use></svg></button><button id="toolbarToolsToggle" type="button" title="Zobraziť nástroje" aria-label="Zobraziť nástroje" aria-expanded="false"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></button><button id="menuButton" title="Menu" aria-label="Menu"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-ellipsis"></use></svg></button>
     </nav>
-    <nav class="bookmarks" id="bookmarksBar" hidden><span></span></nav>
+    <div id="addressSuggestions" class="address-suggestions" role="listbox" aria-label="Nedávno navštívené" hidden></div>
+    <nav class="bookmarks" id="bookmarksBar" hidden><span></span><button id="hideBookmarksBar" class="bookmark-bar-hide" type="button" title="Skryť lištu záložiek" aria-label="Skryť lištu záložiek">×</button></nav>
     <div class="loading-track" id="loadingTrack"><i></i></div>
     <section id="content" class="content"></section>
   </main>
@@ -46,6 +88,15 @@
   <div class="browser-menu" id="browserMenu" hidden><div class="menu-section-label">APLIKÁCIE</div><button data-app-url="https://www.google.com">G <span>Google</span></button><button data-app-url="https://www.youtube.com">▶ <span>YouTube</span></button><button data-app-url="https://github.com">⌘ <span>GitHub</span></button><button data-app-url="https://news.google.com">N <span>Správy</span></button><div class="menu-divider"></div><button id="menuAppCenter">▦ Linsoft App Centrum</button><button id="toggleBookmarksBar">☆ Zobraziť lištu záložiek</button><button id="menuInstallApp">⊞ Nainštalovať webovú aplikáciu</button><button id="menuNewTab">＋ Nová karta</button><button id="menuGuestWindow">◌ Nové okno hosťa</button><button id="menuSearchTabs">⌕ Vyhľadať kartu</button><button id="menuBookmarks">★ Správca záložiek</button><button id="menuHistory">◷ História</button><button id="menuSettings">⚙ Nastavenia</button><button id="menuDownloads">⇩ Otvoriť Downloads</button><button id="menuClearData">⌫ Vymazať údaje</button><button id="menuAbout">ⓘ O Linsoft Browser</button></div>
   <div class="download-panel" id="downloadPanel" hidden><div class="download-panel-head"><strong>Sťahovania</strong><div><button id="clearDownloads" title="Vymazať históriu sťahovaní">Vymazať</button><button id="closeDownload" aria-label="Zavrieť">×</button></div></div><select id="downloadFilter" class="download-filter" aria-label="Filter sťahovaní"><option value="all">Všetko</option><option value="active">Aktívne</option><option value="completed">Dokončené</option><option value="failed">Zlyhané a zrušené</option></select><div class="download-list" id="downloadList"></div><button class="open-downloads" id="openDownloads">Otvoriť priečinok Downloads</button></div>
   <div class="security-panel" id="securityPanel" hidden><div class="security-panel-head"><span class="security-check">✓</span><div><strong id="securityTitle">Pripojenie je zabezpečené</strong><small>Linsoft Browser</small></div><button id="closeSecurity" aria-label="Zavrieť">×</button></div><div class="ip-row"><span>Verejná IP adresa</span><strong id="publicIp">Načítavam...</strong></div><div class="ip-row"><span>Sieť / krajina</span><strong id="publicNetwork">Načítavam...</strong></div><small class="ip-note" id="ipNote">Údaj sa načíta iba po kliknutí. Poskytovateľ: ipapi.co.</small></div>
+  <div class="page-source-backdrop" id="pageSourceDialog" hidden>
+    <section class="page-source-dialog" role="dialog" aria-modal="true" aria-labelledby="pageSourceTitle">
+      <header class="page-source-header">
+        <div class="page-source-heading"><strong id="pageSourceTitle">HTML kód stránky</strong><small id="pageSourceAddress"></small></div>
+        <div class="page-source-actions"><button id="copyPageSource" type="button" title="Kopírovať HTML kód">Kopírovať</button><button id="closePageSource" type="button" aria-label="Zavrieť náhľad">×</button></div>
+      </header>
+      <pre id="pageSourceCode" tabindex="0" aria-label="HTML kód stránky"></pre>
+    </section>
+  </div>
   <div class="install-dialog-backdrop" id="installDialog" hidden><div class="install-dialog"><div class="install-dialog-icon">⊞</div><div><p class="settings-eyebrow">WEBOVÁ APLIKÁCIA</p><h2 id="installDialogTitle">Nainštalovať aplikáciu</h2><p id="installDialogUrl"></p></div><button class="install-dialog-close" id="cancelInstall" aria-label="Zrušiť">×</button><div class="install-dialog-actions"><button class="settings-reset" id="cancelInstallButton">Zrušiť</button><button class="save-settings" id="confirmInstall">Nainštalovať</button></div></div></div>
   <script src="app.js"></script>
 </body>
