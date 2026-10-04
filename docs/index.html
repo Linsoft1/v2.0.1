@@ -43,10 +43,9 @@
 
     /* --- ANIMÁCIE PRI SCROLLOVANÍ --- */
     .reveal {
-      opacity: 0;
-      transform: translateY(30px);
       transition: all 0.8s ease-out;
     }
+    .js .reveal { opacity: 0; transform: translateY(30px); }
     .reveal.active {
       opacity: 1;
       transform: translateY(0);
@@ -731,16 +730,21 @@
     // 2. Animácie pri scrollovaní (Scroll Reveal)
     const revealElements = document.querySelectorAll('.reveal');
 
-    const revealObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('active');
-          revealObserver.unobserve(entry.target);
-        }
-      });
-    }, { threshold: 0.15 });
+    if ('IntersectionObserver' in window) {
+      const revealObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('active');
+            revealObserver.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.15 });
 
-    revealElements.forEach(el => revealObserver.observe(el));
+      document.documentElement.classList.add('js');
+      revealElements.forEach(el => revealObserver.observe(el));
+    } else {
+      revealElements.forEach(el => el.classList.add('active'));
+    }
 
     // 3. Zmena navigácie pri scrollovaní + Tlačidlo Späť nahor
     const navbar = document.getElementById('navbar');
