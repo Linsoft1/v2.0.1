@@ -367,6 +367,14 @@
     .guide-code { display: block; margin: 18px 0 10px; padding: 14px 16px; overflow-x: auto; border: 1px solid var(--border); border-radius: 11px; background: #071722; color: #d2f1ff; font: 0.87rem/1.6 Consolas, "Courier New", monospace; white-space: pre; }
     .guide-links { margin-top: 16px; color: var(--text-muted); font-size: 0.9rem; }
     .guide-links a { margin-right: 15px; }
+    .requirements-panel, .checksums-panel, .support-panel, .limitations-panel { margin-top: 24px; padding: clamp(20px, 3vw, 28px); border: 1px solid var(--border); border-radius: 16px; background: rgba(18, 42, 59, 0.72); }
+    .requirements-panel h3, .checksums-panel h3, .support-panel h3, .limitations-panel h3 { margin-bottom: 10px; font-size: 1.1rem; }
+    .requirements-panel p, .checksums-panel p, .support-panel p, .limitations-panel p { color: var(--text-muted); font-size: 0.92rem; line-height: 1.7; }
+    .requirements-list, .limitations-list { display: grid; gap: 9px; margin: 12px 0 0; padding-left: 21px; color: #c6d5df; font-size: 0.92rem; line-height: 1.65; }
+    .checksum-row { display: grid; grid-template-columns: minmax(190px, 0.8fr) minmax(0, 2fr); gap: 12px; align-items: start; padding: 12px 0; border-top: 1px solid var(--border); }
+    .checksum-row strong { color: #d9ebf5; font-size: 0.9rem; }
+    .checksum-row code { color: #a9e4fa; font: 0.78rem/1.6 Consolas, "Courier New", monospace; overflow-wrap: anywhere; }
+    .verification-code { display: block; margin-top: 9px; padding: 12px 14px; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: #071722; color: #d2f1ff; font: 0.83rem/1.7 Consolas, "Courier New", monospace; white-space: pre; }
 
     /* --- OCHRANA SUKROMIA --- */
     .privacy-section { padding: 88px 20px; background: linear-gradient(180deg, rgba(6, 20, 31, 0.72), rgba(6, 20, 31, 0.24)); }
@@ -384,6 +392,7 @@
     .release-row { display: grid; grid-template-columns: minmax(115px, 0.65fr) 1fr auto; gap: 18px; align-items: center; padding: 19px 22px; border: 1px solid var(--border); border-radius: 15px; background: rgba(18, 42, 59, 0.74); }
     .release-version { color: #b9eaff; font-size: 1.08rem; font-weight: 800; }
     .release-date { color: var(--text-muted); font-size: 0.88rem; }
+    .release-summary { margin-top: 5px; color: #c6d5df; font-size: 0.87rem; line-height: 1.55; }
     .release-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 14px; }
     .release-links a { color: #8edcff; font-size: 0.88rem; font-weight: 600; text-decoration: none; }
     .release-links a:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
@@ -531,6 +540,7 @@
       .guide-grid, .privacy-grid { grid-template-columns: 1fr; }
       .release-row { grid-template-columns: 1fr; gap: 7px; }
       .release-links { justify-content: flex-start; margin-top: 6px; }
+      .checksum-row { grid-template-columns: 1fr; gap: 5px; }
       .section-title { font-size: 2rem; }
       .stats { gap: 22px; }
       .license-permissions { grid-template-columns: 1fr; }
@@ -798,7 +808,54 @@
           <p class="guide-callout">Príkaz použite v priečinku, kam sa balík stiahol (zvyčajne `~/Downloads`). Správca balíkov nainštaluje potrebné závislosti.</p>
         </article>
       </div>
+      <div class="requirements-panel" id="poziadavky">
+        <h3>Systémové požiadavky a kompatibilita</h3>
+        <ul class="requirements-list">
+          <li><strong>Windows:</strong> inštalátor pre 64-bitové Windows (x64); stránka ponúka postup pre Windows 10 a 11.</li>
+          <li><strong>Linux:</strong> balík Debian `.deb` pre architektúru amd64; návod je určený pre Debian a Ubuntu. Ostatné distribúcie ani architektúry nemajú na tejto stránke samostatný balík.</li>
+          <li>Na prehliadanie webu a použitie online funkcií je potrebné internetové pripojenie.</li>
+          <li>Projekt nezverejňuje minimálne nároky na RAM, procesor ani voľné miesto na disku. Veľkosť balíka nie je to isté ako miesto potrebné po inštalácii.</li>
+        </ul>
+      </div>
+      <div class="checksums-panel" id="kontrolne-sucty">
+        <h3>Kontrolné súčty SHA-256 vydania 2.0.26</h3>
+        <p>Pred overovaním stiahni inštalátor z <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.26" target="_blank" rel="noopener noreferrer">oficiálneho vydania na GitHube ↗</a>, potom porovnaj jeho hash s hodnotou z metadát vydania:</p>
+        <div class="checksum-row">
+          <strong>Windows x64 · .exe</strong>
+          <code>df11d056cd7289f98e9e01ae4340d5c1ecd06a96a1c1693935b86afd960dc563</code>
+        </div>
+        <div class="checksum-row">
+          <strong>Debian/Ubuntu amd64 · .deb</strong>
+          <code>e42c8732a34342af9a1192e3fb24dc89f42b5e1f079b029ecd2aed162e93ebd8</code>
+        </div>
+        <p>Windows PowerShell:</p>
+        <code class="verification-code">Get-FileHash .\Linsoft-Browser-Setup-2.0.26.exe -Algorithm SHA256</code>
+        <p>Debian / Ubuntu:</p>
+        <code class="verification-code">sha256sum Linsoft-Browser-2.0.26-amd64.deb</code>
+        <p class="guide-callout">Hash pomáha odhaliť poškodené alebo neúplné stiahnutie, ale sám osebe nepotvrdzuje identitu vydavateľa. Inštalátor Windows nemusí byť digitálne podpísaný; porovnávaj hash len s dôveryhodným zdrojom.</p>
+      </div>
       <p class="guide-links">Zdrojový kód a postup na zostavenie aplikácie sú nižšie v sekcii <a href="#zdroj">Zdrojový kód a prispievanie</a>.</p>
+    </div>
+  </section>
+
+  <section class="guide-section reveal" id="obmedzenia" aria-labelledby="limitations-title">
+    <div class="guide-inner">
+      <div class="screenshots-heading">
+        <p class="eyebrow">Transparentne o možnostiach</p>
+        <h2 id="limitations-title">Známe obmedzenia</h2>
+        <p>Niektoré ochrany a funkcie majú hranice, ktoré je dobré poznať ešte pred použitím.</p>
+      </div>
+      <div class="limitations-panel">
+        <ul class="limitations-list">
+          <li>Blokovanie reklám a sledovacích požiadaviek používa rozpoznávanie pravidiel; nie je úplné a nemusí zachytiť každý tracker ani reklamu.</li>
+          <li>Tor hosting a Onion Chat sú samostatné voliteľné funkcie. Bežné karty, webové vyhľadávanie a celá internetová prevádzka sa cez Tor automaticky nesmerujú; nejde o systémovú VPN.</li>
+          <li>Onion Chat je určený pre jedného hosťa na pozvánku. Účastníci musia mať aplikáciu spustenú; pozvánka nesie prístupové údaje, preto ju zdieľaj iba s príjemcom.</li>
+          <li>Prílohy v Onion Chate majú limit 2 MiB. Video hovor prenáša iba obraz, má nízku snímkovú frekvenciu a neobsahuje zvuk.</li>
+          <li>Inštalátor Windows nemusí byť digitálne podpísaný a môže vyvolať upozornenie systému. Pred spustením over jeho pôvod a kontrolný súčet.</li>
+          <li>Stránka dokumentuje balíky Windows x64 a Debian/Ubuntu amd64; nepodporované distribúcie a hardvérové konfigurácie môžu vyžadovať samostatné riešenie.</li>
+        </ul>
+        <p class="guide-links">Podrobnosti o spracovaní údajov sú v sekcii <a href="#sukromie">Súkromie</a>; postup inštalácie je v sekcii <a href="#instalacia">Inštalácia</a>.</p>
+      </div>
     </div>
   </section>
 
@@ -844,7 +901,10 @@
       <div class="release-list">
         <article class="release-row">
           <div class="release-version">v2.0.26</div>
-          <div class="release-date">3. októbra 2026 · najnovšie vydanie</div>
+          <div>
+            <div class="release-date">3. októbra 2026 · najnovšie vydanie</div>
+            <p class="release-summary">Spoľahlivejšie spúšťanie a obnova Tor hostingu vrátane správy hostingu na pozadí.</p>
+          </div>
           <div class="release-links">
             <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.26" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
             <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.25...v2.0.26" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.25 ↗</a>
@@ -852,7 +912,10 @@
         </article>
         <article class="release-row">
           <div class="release-version">v2.0.25</div>
-          <div class="release-date">3. októbra 2026</div>
+          <div>
+            <div class="release-date">3. októbra 2026</div>
+            <p class="release-summary">Pridaná podpora otvárania existujúcich lokálnych PDF dokumentov vo vstavanom prehliadači.</p>
+          </div>
           <div class="release-links">
             <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.25" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
             <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.24...v2.0.25" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.24 ↗</a>
@@ -860,7 +923,10 @@
         </article>
         <article class="release-row">
           <div class="release-version">v2.0.24</div>
-          <div class="release-date">3. októbra 2026</div>
+          <div>
+            <div class="release-date">3. októbra 2026</div>
+            <p class="release-summary">Rozšírený Onion Chat: pozvánky, šifrované správy a prílohy, stav doručenia a video bez zvuku.</p>
+          </div>
           <div class="release-links">
             <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.24" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
             <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.23...v2.0.24" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.23 ↗</a>
@@ -868,7 +934,10 @@
         </article>
         <article class="release-row">
           <div class="release-version">v2.0.23</div>
-          <div class="release-date">3. októbra 2026</div>
+          <div>
+            <div class="release-date">3. októbra 2026</div>
+            <p class="release-summary">Vydanie nemá samostatné podrobné poznámky; presný rozdiel kódu je v porovnaní zmien.</p>
+          </div>
           <div class="release-links">
             <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.23" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
             <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.22...v2.0.23" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.22 ↗</a>
@@ -904,6 +973,26 @@ npm start</code></pre>
     </div>
   </section>
 
+  <section class="guide-section reveal" id="podpora" aria-labelledby="support-title">
+    <div class="guide-inner">
+      <div class="screenshots-heading">
+        <p class="eyebrow">Pomoc s projektom</p>
+        <h2 id="support-title">Podpora a kontakt</h2>
+        <p>Podpora projektu prebieha verejne cez GitHub, aby sa riešenia dali nájsť aj ďalším používateľom.</p>
+      </div>
+      <div class="support-panel">
+        <h3>Nahlás problém alebo navrhni zlepšenie</h3>
+        <p>Pri probléme uveď verziu Linsoft Browsera, operačný systém a architektúru, kroky na zopakovanie a prípadné chybové hlásenie. Pred odoslaním odstráň heslá, osobné údaje a súkromné Onion pozvánky.</p>
+        <p class="guide-links">
+          <a href="https://github.com/Linsoft1/v2.0.1/issues/new/choose" target="_blank" rel="noopener noreferrer">Nahlásiť chybu alebo požiadať o funkciu ↗</a>
+          <a href="https://github.com/Linsoft1/v2.0.1/issues" target="_blank" rel="noopener noreferrer">Pozrieť existujúce požiadavky ↗</a>
+          <a href="https://github.com/Linsoft1/v2.0.1" target="_blank" rel="noopener noreferrer">Otvoriť repozitár projektu ↗</a>
+        </p>
+        <p>Nikdy neprikladaj heslá, prístupové tokeny, privátne kľúče ani celé súkromné pozvánky. Do verejných hlásení patria iba technické údaje, ktoré možno bezpečne zverejniť.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- FAQ SEKCIA -->
   <section id="faq" class="faq-section reveal">
     <h2 class="section-title">Časté otázky</h2>
@@ -924,6 +1013,18 @@ npm start</code></pre>
     <details class="faq-item">
       <summary>Čo potrebujem na inštaláciu?</summary>
       <div class="faq-content">Linsoft Browser ponúka inštalátor pre Windows 10/11 x64 a balík `.deb` pre Debian/Ubuntu amd64. Podrobný postup je v sekcii <a href="#instalacia">Inštalácia</a>.</div>
+    </details>
+    <details class="faq-item">
+      <summary>Ako overím stiahnutý inštalátor?</summary>
+      <div class="faq-content">Porovnaj SHA-256 súčet súboru s hodnotou v sekcii <a href="#kontrolne-sucty">Kontrolné súčty</a>. Hash pomáha overiť úplnosť súboru, ale nenahrádza digitálny podpis ani dôveryhodný zdroj.</div>
+    </details>
+    <details class="faq-item">
+      <summary>Je blokovanie reklám a sledovania úplné?</summary>
+      <div class="faq-content">Nie. Blokovanie používa pravidlá na rozpoznanie požiadaviek a nemusí zachytiť každý tracker ani reklamu. Ďalšie hranice sú opísané v časti <a href="#obmedzenia">Známe obmedzenia</a>.</div>
+    </details>
+    <details class="faq-item">
+      <summary>Kde získam pomoc alebo nahlásim problém?</summary>
+      <div class="faq-content">Použi <a href="#podpora">sekciu Podpora</a> alebo <a href="https://github.com/Linsoft1/v2.0.1/issues/new/choose" target="_blank" rel="noopener noreferrer">formulár na GitHube ↗</a>. Pridaj verziu aplikácie, operačný systém a kroky na zopakovanie; nezverejňuj tajné údaje.</div>
     </details>
     <details class="faq-item">
       <summary>Je Linsoft úplne open source?</summary>
@@ -977,6 +1078,8 @@ npm start</code></pre>
         <a href="#publikum">Pre koho je určený</a>
         <a href="#instalacia">Inštalácia</a>
         <a href="#sukromie">Súkromie</a>
+        <a href="#obmedzenia">Známe obmedzenia</a>
+        <a href="#podpora">Podpora</a>
         <a href="#vydania">Vydania</a>
         <a href="#stiahnut">Stiahnuť</a>
         <a href="#faq">FAQ</a>
