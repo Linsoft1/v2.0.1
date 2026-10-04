@@ -13,6 +13,10 @@ const ipcHandlers = [...mainSource.matchAll(/\bipcMain\.handle\(\s*['"]([^'"]+)[
 const duplicateIpcHandlers = [...new Set(ipcHandlers.filter((channel, index) => ipcHandlers.indexOf(channel) !== index))];
 if (duplicateIpcHandlers.length) throw new Error(`Duplicate IPC handlers in main.cjs: ${duplicateIpcHandlers.join(', ')}`);
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+if (packageJson.license !== 'MIT') throw new Error('Linsoft source code must declare its MIT license');
+if (!fs.existsSync(path.join(root, 'LICENSE')) || !packageJson.build.files.includes('LICENSE')) {
+  throw new Error('MIT license file is missing from the repository or packaged application');
+}
 const protocols = packageJson.build?.protocols || [];
 const hasLinsoftProtocol = protocols.some((entry) => entry.schemes?.includes('linsoft'));
 if (!hasLinsoftProtocol) throw new Error('Missing linsoft protocol registration');

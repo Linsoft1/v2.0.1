@@ -4,11 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Linsoft Browser 2.0.26 – Rýchly a bezpečný prehliadač</title>
-  <meta name="description" content="Stiahnite si Linsoft Browser 2.0.26 pre Windows a Linux. Moderný prehliadač s dôrazom na súkromie a rýchlosť.">
-
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <meta name="description" content="Spoznajte open-source Linsoft Browser 2.0.26: karty, záložky, PDF, OpenVPN a voliteľné Tor nástroje pre Windows a Linux.">
 
   <style>
     :root {
@@ -22,7 +18,7 @@
       --accent-green: #49d8ad;
       --accent-yellow: #ffb85c;
       --border: rgba(158, 197, 218, 0.16);
-      --font: 'Inter', system-ui, sans-serif;
+      --font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -293,7 +289,7 @@
     .screenshot-open:hover { color: #fff; }
 
     /* --- SEKCIA FUNKCIÍ --- */
-    .features { padding: 100px 20px; background: linear-gradient(180deg, var(--bg-dark) 0%, #0d0f14 100%); }
+    .features { padding: 100px 20px; background: linear-gradient(180deg, var(--bg-dark) 0%, #0b1b29 100%); }
 
     .section-title { text-align: center; font-size: 2.5rem; font-weight: 800; margin-bottom: 16px; letter-spacing: -1px; }
     .section-subtitle { text-align: center; color: var(--text-muted); max-width: 600px; margin: 0 auto 60px; font-size: 1.1rem; }
@@ -330,6 +326,7 @@
     .feature-icon svg { width: 24px; height: 24px; fill: currentColor; }
     .feature-card h3 { font-size: 1.25rem; margin-bottom: 12px; font-weight: 600; }
     .feature-card p { color: var(--text-muted); font-size: 0.95rem; line-height: 1.7; }
+    .feature-number { font-size: 0.83rem; font-weight: 800; letter-spacing: 0.08em; }
 
     /* --- SEKCIA O NÁS --- */
     .about-section { padding: 100px 20px; max-width: 920px; margin: 0 auto; }
@@ -339,9 +336,32 @@
     .about-text p { color: var(--text-muted); font-size: 1.05rem; margin-bottom: 20px; line-height: 1.8; }
     .about-text strong { color: var(--text-main); font-weight: 600; }
 
-    .stats { display: flex; justify-content: center; gap: 40px; margin-top: 40px; border-top: 1px solid var(--border); padding-top: 30px; }
+    .stats { display: flex; justify-content: center; flex-wrap: wrap; gap: 24px 40px; margin-top: 40px; border-top: 1px solid var(--border); padding-top: 30px; }
     .stat { font-size: 0.9rem; color: var(--text-muted); font-weight: 500; }
-    .stat span { display: block; font-size: 2rem; font-weight: 800; color: var(--accent-blue); margin-bottom: 4px; }
+    .stat span { display: block; font-size: clamp(1.35rem, 4vw, 2rem); font-weight: 800; color: var(--accent-blue); margin-bottom: 4px; }
+    .project-facts { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .project-facts span { padding: 8px 14px; border: 1px solid var(--border); border-radius: 999px; color: #c4d9e6; background: rgba(85, 197, 242, 0.06); font-size: 0.86rem; }
+
+    /* --- PRE KOHO JE PREHLIADAC --- */
+    .audience-section { padding: 84px 20px; background: linear-gradient(180deg, rgba(6, 20, 31, 0.12), rgba(6, 20, 31, 0.68)); }
+    .audience-inner { max-width: 1100px; margin: 0 auto; }
+    .audience-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 18px; }
+    .audience-card { padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: rgba(18, 42, 59, 0.75); }
+    .audience-card h3 { margin-bottom: 9px; font-size: 1.05rem; }
+    .audience-card p { color: var(--text-muted); font-size: 0.93rem; line-height: 1.7; }
+    .audience-note { max-width: 860px; margin: 24px auto 0; padding: 16px 20px; border-left: 3px solid var(--accent-yellow); border-radius: 0 12px 12px 0; color: #c6d3dc; background: rgba(255, 184, 92, 0.07); font-size: 0.9rem; }
+
+    /* --- OPEN SOURCE A LICENCIA --- */
+    .license-section { padding: 84px 20px; }
+    .license-panel { max-width: 940px; margin: 0 auto; padding: clamp(24px, 5vw, 48px); border: 1px solid rgba(73, 216, 173, 0.3); border-radius: 22px; background: linear-gradient(145deg, rgba(18, 52, 62, 0.94), rgba(15, 37, 53, 0.98)); box-shadow: 0 24px 65px rgba(0, 0, 0, 0.2); }
+    .license-panel h2 { margin-bottom: 14px; font-size: clamp(1.8rem, 4vw, 2.6rem); letter-spacing: -0.04em; }
+    .license-panel > p { max-width: 780px; color: #c1d2dd; line-height: 1.8; }
+    .license-permissions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 26px 0; }
+    .license-permissions div { padding: 16px; border: 1px solid var(--border); border-radius: 13px; background: rgba(7, 24, 35, 0.45); }
+    .license-permissions strong { display: block; margin-bottom: 4px; color: #e6fff6; }
+    .license-permissions span { color: var(--text-muted); font-size: 0.87rem; }
+    .license-link { display: inline-flex; margin-top: 4px; color: #9be7ce; font-weight: 700; text-underline-offset: 4px; }
+    .license-note { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); color: #b0c3ce; font-size: 0.88rem; line-height: 1.8; }
 
     /* --- FAQ SEKCIA --- */
     .faq-section { padding: 100px 20px; max-width: 800px; margin: 0 auto; }
@@ -369,9 +389,10 @@
     }
     .faq-item[open] summary::after { transform: rotate(45deg); }
     .faq-content { padding: 0 24px 20px; color: var(--text-muted); font-size: 0.95rem; line-height: 1.7; }
+    .faq-content a { color: #8edcff; text-underline-offset: 3px; }
 
     /* --- SEKCIA NA STIAHNUTIE --- */
-    .download-section { padding: 100px 20px; text-align: center; background: linear-gradient(180deg, #0d0f14 0%, var(--bg-dark) 100%); }
+    .download-section { padding: 100px 20px; text-align: center; background: linear-gradient(180deg, #0b1b29 0%, var(--bg-dark) 100%); }
     .download-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; max-width: 800px; margin: 0 auto; }
     .download-card {
       background: var(--bg-card); border: 1px solid var(--border); border-radius: 20px;
@@ -381,7 +402,7 @@
     .download-card:hover { border-color: var(--accent-blue); box-shadow: 0 10px 40px -10px rgba(59, 130, 246, 0.2); transform: translateY(-4px); }
 
     /* Zvýraznenie odporúčaného systému */
-    .download-card.recommended { border-color: var(--accent-green); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15); }
+    .download-card.recommended { border-color: var(--accent-green); box-shadow: 0 0 0 3px rgba(73, 216, 173, 0.15); }
     .download-card.recommended::before {
       content: "Odporúčané pre váš systém";
       position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
@@ -391,7 +412,7 @@
 
     .download-card svg { width: 48px; height: 48px; margin-bottom: 20px; fill: var(--text-main); }
     .download-card.windows svg { fill: #00a4ef; }
-    .download-card.linux svg { fill: #f59e0b; }
+    .download-card.linux svg { fill: var(--accent-yellow); }
     .download-card h3 { font-size: 1.5rem; margin-bottom: 8px; }
     .download-card p { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 24px; }
     .download-card .btn { width: 100%; justify-content: center; }
@@ -416,6 +437,7 @@
       text-align: center; padding-top: 30px; border-top: 1px solid var(--border);
       color: var(--text-muted); font-size: 0.85rem;
     }
+    .footer-bottom a { color: #8edcff; text-underline-offset: 3px; }
 
     /* --- SPÄŤ NAHOR --- */
     .back-to-top {
@@ -437,6 +459,10 @@
 
     /* --- RESPONZIVITA --- */
     @media (max-width: 900px) {
+      nav { padding: 18px 24px; }
+      nav.scrolled { padding: 12px 24px; }
+      .nav-links { gap: 16px; }
+      .nav-links a { font-size: 0.88rem; }
       .screenshot-grid { gap: 18px; }
       .footer-grid { grid-template-columns: 1fr 1fr; }
     }
@@ -461,6 +487,7 @@
       .screenshot-caption { padding: 16px 18px 18px; }
       .section-title { font-size: 2rem; }
       .stats { gap: 22px; }
+      .license-permissions { grid-template-columns: 1fr; }
       .footer-grid { grid-template-columns: 1fr; text-align: center; }
     }
 
@@ -483,7 +510,9 @@
     <ul class="nav-links" id="navLinks">
       <li><a href="#funkcie">Funkcie</a></li>
       <li><a href="#ukazky">Ukážky</a></li>
+      <li><a href="#publikum">Pre koho</a></li>
       <li><a href="#o-nas">O nás</a></li>
+      <li><a href="#licencia">Licencia</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="#stiahnut">Stiahnuť</a></li>
     </ul>
@@ -491,9 +520,9 @@
 
   <!-- HERO SEKCIA -->
   <header class="hero">
-    <div class="hero-badge">Nová verzia 2.0.26 je tu</div>
-    <h1>Rýchly. Bezpečný.<br><span style="background: linear-gradient(135deg, var(--accent-yellow), #f97316); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Linsoft.</span></h1>
-    <p>Zažite webový prehliadač, ktorý kladie dôraz na vaše súkromie, rýchlosť a moderný dizajn. Dostupné pre Windows aj Linux.</p>
+    <div class="hero-badge">Open source • MIT licencia • Windows a Linux</div>
+    <h1>Váš web.<br><span style="background: linear-gradient(135deg, var(--accent-yellow), #f97316); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Pod vašou kontrolou.</span></h1>
+    <p>Linsoft Browser spája každodenné prehliadanie webu s užitočnými nástrojmi pre Windows a Debian Linux. Zdrojový kód Linsoftu je otvorený pod licenciou MIT.</p>
 
     <div class="hero-buttons">
       <a href="#stiahnut" class="btn btn-primary">
@@ -576,25 +605,79 @@
 
   <!-- SEKCIA FUNKCIÍ -->
   <section id="funkcie" class="features reveal">
-    <h2 class="section-title">Prečo si vybrať Linsoft?</h2>
-    <p class="section-subtitle">Navrhnutý pre používateľov, ktorí očakávajú viac od svojho prehliadača.</p>
+    <h2 class="section-title">Funkcie pre každý deň</h2>
+    <p class="section-subtitle">Základné nástroje na prehliadanie webu spolu s voliteľnými možnosťami pre pokročilejších používateľov.</p>
 
     <div class="features-grid">
       <div class="feature-card">
-        <div class="feature-icon"><svg viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg></div>
-        <h3>Blesková rýchlosť</h3>
-        <p>Optimalizovaný engine zaručuje plynulé načítavanie stránok a okamžitú odozvu, aj keď máte otvorených veľa kariet.</p>
+        <div class="feature-icon" aria-hidden="true"><span class="feature-number">01</span></div>
+        <h3>Karty a prehliadanie</h3>
+        <p>Otvárajte viac stránok v kartách a používajte známe ovládanie pre návrat, obnovenie a vyhľadávanie webových stránok.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" style="color: var(--accent-green); background: rgba(16, 185, 129, 0.1);"><svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg></div>
-        <h3>Súkromie na prvom mieste</h3>
-        <p>Žiadne sledovanie, žiadne zbytočné zberanie dát. Vaše súkromie je pre nás prioritou číslo jedna.</p>
+        <div class="feature-icon" aria-hidden="true" style="color: var(--accent-green); background: rgba(73, 216, 173, 0.1);"><span class="feature-number">02</span></div>
+        <h3>Vyhľadávanie a správy</h3>
+        <p>Vyhľadávajte webové stránky, obrázky, videá aj správy a výsledky si otvárajte priamo v kartách prehliadača.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" style="color: var(--accent-yellow); background: rgba(245, 158, 11, 0.1);"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg></div>
-        <h3>Multiplatformový</h3>
-        <p>Či už používate Windows alebo Linux, Linsoft Browser vám ponúkne pohodlné a prehľadné prostredie na každodenné prehliadanie webu.</p>
+        <div class="feature-icon" aria-hidden="true" style="color: var(--accent-yellow); background: rgba(255, 184, 92, 0.1);"><span class="feature-number">03</span></div>
+        <h3>Záložky a história</h3>
+        <p>Ukladajte si obľúbené stránky a vracajte sa k predchádzajúcemu prehliadaniu cez históriu a panel záložiek.</p>
       </div>
+      <div class="feature-card">
+        <div class="feature-icon" aria-hidden="true"><span class="feature-number">04</span></div>
+        <h3>Sťahovanie súborov</h3>
+        <p>Spravujte stiahnuté súbory cez vstavaný panel sťahovania.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon" aria-hidden="true" style="color: var(--accent-green); background: rgba(73, 216, 173, 0.1);"><span class="feature-number">05</span></div>
+        <h3>Webové aplikácie</h3>
+        <p>Využite centrum aplikácií a podporu inštalácie webových aplikácií priamo z prehliadača.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon" aria-hidden="true" style="color: var(--accent-yellow); background: rgba(255, 184, 92, 0.1);"><span class="feature-number">06</span></div>
+        <h3>PDF a OpenVPN</h3>
+        <p>Otvárajte miestne PDF súbory v integrovanom prehliadači a využite podporu OpenVPN, ak ju potrebujete.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon" aria-hidden="true"><span class="feature-number">07</span></div>
+        <h3>Voliteľné Tor nástroje</h3>
+        <p>Rozšírené možnosti zahŕňajú statické onion stránky a súkromný 1 : 1 chat cez Tor. Nie sú potrebné na bežné prehliadanie.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon" aria-hidden="true" style="color: var(--accent-green); background: rgba(73, 216, 173, 0.1);"><span class="feature-number">08</span></div>
+        <h3>Windows a Debian Linux</h3>
+        <p>Počítačová aplikácia je dostupná pre Windows a Linuxové distribúcie založené na Debiane, napríklad Ubuntu.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="audience-section reveal" id="publikum" aria-labelledby="audience-title">
+    <div class="audience-inner">
+      <div class="screenshots-heading">
+        <p class="eyebrow">Pre koho je Linsoft?</p>
+        <h2 id="audience-title">Pre používateľov, ktorí chcú mať na výber.</h2>
+        <p>Linsoft je počítačový prehliadač pre každodenné používanie s možnosťami navyše, keď ich potrebujete.</p>
+      </div>
+      <div class="audience-grid">
+        <article class="audience-card">
+          <h3>Každodenné prehliadanie</h3>
+          <p>Pre ľudí, ktorí chcú karty, záložky, históriu, vyhľadávanie a sťahovanie v jednej aplikácii.</p>
+        </article>
+        <article class="audience-card">
+          <h3>Technicky zvedaví používatelia</h3>
+          <p>Pre každého, kto si chce prezrieť zdrojový kód, vytvoriť vlastnú úpravu alebo prispieť k projektu.</p>
+        </article>
+        <article class="audience-card">
+          <h3>Používatelia Windows a Linuxu</h3>
+          <p>Pre používateľov počítačov s Windows alebo Debian/Ubuntu Linuxom, ktorí hľadajú alternatívny prehliadač.</p>
+        </article>
+        <article class="audience-card">
+          <h3>Pokročilé Tor nástroje</h3>
+          <p>Pre používateľov, ktorí cielene potrebujú onion hosting alebo Tor chat a rozumejú ich obmedzeniam.</p>
+        </article>
+      </div>
+      <p class="audience-note"><strong>Dôležité:</strong> Linsoft automaticky nesmeruje všetku bežnú prevádzku cez Tor a negarantuje anonymitu. Navštívené weby aj poskytovatelia vyhľadávania môžu prijímať údaje o požiadavkách podľa vlastných pravidiel. Tor chat a hosting sú samostatné, voliteľné funkcie.</p>
     </div>
   </section>
 
@@ -602,16 +685,31 @@
   <section id="o-nas" class="about-section reveal">
     <div class="about-content">
       <div class="about-text">
-        <h2>O nás</h2>
-        <p><strong>Linsoft Browser</strong> je projekt, ktorý vznikol s jasnou víziou: priniesť používateľom na systémoch Windows a Linux rýchly, bezpečný a moderný nástroj na prehliadanie webu.</p>
-        <p>Autorom je <strong>Martin Pastorek</strong>, ktorý sa snaží spojiť to najlepšie z moderných technológií (ako Electron a Chromium) s dôrazom na súkromie, čistý dizajn a praktické funkcie pre každodenné používanie.</p>
-        <p>Veríme, že prehliadač by mal byť rozšírením vás samých – rýchly, spoľahlivý a bez zbytočného balastu.</p>
+        <h2>O projekte Linsoft</h2>
+        <p><strong>Linsoft</strong> je nezávislý projekt počítačového prehliadača vytvorený <strong>Martinom Pastorekom</strong>. Spája každodenné surfovanie s praktickými nástrojmi a voliteľnými funkciami pre ľudí, ktorí si radi upravujú svoj softvér.</p>
+        <p>Prehliadač je postavený na technológiách Electron a Chromium a cieli na Windows a Debian Linux. Vývoj prebieha verejne na GitHube: možno si prezrieť zdrojový kód, nahlásiť problém a navrhnúť zlepšenie.</p>
+        <p>Projekt sa volá Linsoft a jeho cieľom je vytvárať použiteľný softvér s otvoreným zdrojovým kódom, transparentnými právami a užitočnými možnosťami — bez predstierania, že otvorený kód sám osebe zaručuje súkromie alebo bezpečnosť.</p>
         <div class="stats">
-          <div class="stat"><span>2+</span> Platformy</div>
-          <div class="stat"><span>100%</span> Súkromie</div>
-          <div class="stat"><span>24/7</span> Vývoj</div>
+          <div class="stat"><span>2.0.26</span> Aktuálna verzia</div>
+          <div class="stat"><span>MIT</span> Licencia kódu Linsoftu</div>
+          <div class="stat"><span>GitHub</span> Verejný zdrojový kód</div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section id="licencia" class="license-section reveal" aria-labelledby="license-title">
+    <div class="license-panel">
+      <p class="eyebrow">Otvorený zdrojový kód</p>
+      <h2 id="license-title">Linsoft Browser má licenciu MIT.</h2>
+      <p>Zdrojový kód vytvorený pre Linsoft Browser je zverejnený pod licenciou MIT. Môžete ho používať, študovať, upravovať a ďalej šíriť — aj ako súčasť komerčného projektu — ak spolu s kódom zachováte príslušné oznámenie o autorských právach a text licencie.</p>
+      <div class="license-permissions">
+        <div><strong>Používať a upravovať</strong><span>Pre osobné aj komerčné projekty.</span></div>
+        <div><strong>Kopírovať a šíriť</strong><span>Aj upravené verzie so zachovaním copyrightu a oznámenia MIT.</span></div>
+        <div><strong>Skontrolovať zdroj</strong><span>Kód a vývoj sú verejné na GitHube.</span></div>
+      </div>
+      <a class="license-link" href="https://github.com/Linsoft1/v2.0.1/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Prečítať úplné znenie licencie MIT ↗</a>
+      <p class="license-note"><strong>Rozsah licencie:</strong> MIT sa vzťahuje na pôvodný kód Linsoftu uvedený v repozitári. Electron, Chromium a ďalšie knižnice majú vlastné licencie. Ochranné známky a cudzie obrázky alebo texty, ktoré sa môžu zobrazovať na screenshotoch či navštívených weboch, týmto nie sú prevádzané na MIT. Pri ďalšom šírení hotových inštalátorov si skontrolujte licencie a oznámenia pribalených komponentov.</p>
     </div>
   </section>
 
@@ -622,19 +720,23 @@
 
     <details class="faq-item">
       <summary>Je Linsoft Browser naozaj zadarmo?</summary>
-      <div class="faq-content">Áno, Linsoft Browser je poskytovaný na osobné a interné použitie. Je zakázané aplikáciu predávať alebo redistribuovať bez písomného súhlasu autora.</div>
+      <div class="faq-content">Áno. Pôvodný zdrojový kód Linsoft Browsera je pod licenciou MIT: možno ho bezplatne používať, upravovať a šíriť aj komerčne, ak sa zachová oznámenie o autorských právach a licencia. Závislosti a cudzie materiály majú vlastné licenčné podmienky.</div>
     </details>
     <details class="faq-item">
-      <summary>Na akých technológiách je postavený?</summary>
-      <div class="faq-content">Aplikácia používa Electron, Chromium a ďalšie komponenty tretích strán, ktoré sa riadia vlastnými licenciami. To zaručuje vysoký výkon a kompatibilitu s modernými webovými štandardmi.</div>
+      <summary>Čo na Linsoft Browseri vyniká?</summary>
+      <div class="faq-content">Okrem bežných funkcií prehliadača ponúka aj voliteľný Tor hosting a 1 : 1 chat. Pozvánka do chatu je jednorazová, prijme jedného hosťa a pri nepoužití vyprší po 15 minútach. Súbory sú end-to-end šifrované a majú limit 2 MiB; video hovor prenáša iba obraz, bez zvuku. Tieto funkcie samy osebe nesmerujú cez Tor všetko vaše bežné prehliadanie.</div>
     </details>
     <details class="faq-item">
-      <summary>Zbiera Linsoft Browser moje dáta?</summary>
-      <div class="faq-content">Nie. Súkromie je pre nás prioritou. Prehliadač neobsahuje žiadne sledovacie skripty ani nezbiera telemetrické údaje o vašom používaní.</div>
+      <summary>Je Linsoft úplne open source?</summary>
+      <div class="faq-content">Zdrojový kód vytvorený pre Linsoft je otvorený pod licenciou MIT. Projekt obsahuje aj samostatné knižnice a technológie tretích strán, ktorých licencie sa líšia. Cudzie obrázky, články a ochranné známky zobrazené vo výsledkoch vyhľadávania sa licenciou Linsoftu nestávajú open source.</div>
     </details>
     <details class="faq-item">
-      <summary>Ako môžem nahlásiť chybu?</summary>
-      <div class="faq-content">Chyby môžete nahlásiť prostredníctvom našej GitHub stránky alebo priamo autorovi, Martinovi Pastorkovi. Váš feedback nám pomáha robiť Linsoft lepším.</div>
+      <summary>Znamená otvorený kód, že prehliadač zaručuje súkromie?</summary>
+      <div class="faq-content">Nie. Otvorený kód umožňuje preskúmať, čo projekt robí, ale sám osebe nie je bezpečnostným auditom ani zárukou anonymity. Navštívené weby a poskytovatelia vyhľadávania môžu spracúvať požiadavky podľa vlastných pravidiel. Tor funkcie sú samostatné a voliteľné.</div>
+    </details>
+    <details class="faq-item">
+      <summary>Ako môžem prispieť alebo nahlásiť chybu?</summary>
+      <div class="faq-content">Zdrojový kód, históriu zmien, vydania aj priestor na nahlásenie chýb nájdete v <a href="https://github.com/Linsoft1/v2.0.1" target="_blank" rel="noopener noreferrer">GitHub repozitári Linsoft Browsera</a>.</div>
     </details>
   </section>
 
@@ -670,8 +772,10 @@
         <p>Rýchly, bezpečný a moderný webový prehliadač pre Windows a Linux. Vytvorené s dôrazom na súkromie.</p>
       </div>
       <div class="footer-col">
-        <h4>Produkt</h4>
+        <h4>Prehliadač</h4>
         <a href="#funkcie">Funkcie</a>
+        <a href="#ukazky">Ukážky</a>
+        <a href="#publikum">Pre koho je určený</a>
         <a href="#stiahnut">Stiahnuť</a>
         <a href="#faq">FAQ</a>
       </div>
@@ -684,10 +788,11 @@
         <a href="https://github.com/Linsoft1/v2.0.1" target="_blank" rel="noopener noreferrer">GitHub projektu ↗</a>
         <a href="https://github.com/Linsoft1/v2.0.1/releases" target="_blank" rel="noopener noreferrer">Vydania a stiahnutie ↗</a>
         <a href="https://github.com/Linsoft1/v2.0.1/issues" target="_blank" rel="noopener noreferrer">Nahlásiť chybu ↗</a>
+        <a href="#licencia">Licencia MIT</a>
       </div>
     </div>
     <div class="footer-bottom">
-      <p>© 2026 Linsoft Browser v2.0.26. Všetky práva vyhradené. Autor: Martin Pastorek.</p>
+      <p>© 2026 Martin Pastorek · Zdrojový kód Linsoft Browsera pod licenciou MIT · <a href="https://github.com/Linsoft1/v2.0.1/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Znenie licencie</a></p>
     </div>
   </footer>
 

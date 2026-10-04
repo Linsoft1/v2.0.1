@@ -41,6 +41,14 @@ are pushed to `main`. Before the first deployment, enable GitHub Pages in the
 repository settings under **Settings > Pages**, with **GitHub Actions** as the
 build and deployment source.
 
+## License
+
+Original Linsoft Browser source code is released under the [MIT License](./LICENSE).
+You may use, modify, redistribute, and sell it, provided the copyright and
+license notice are included. Third-party libraries, trademarks, and third-party
+content shown in website screenshots retain their own licenses and are not
+relicensed by the Linsoft license.
+
 ## Validate the project
 
 ```powershell
