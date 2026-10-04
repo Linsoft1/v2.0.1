@@ -287,6 +287,17 @@
     .screenshot-caption p { color: var(--text-muted); font-size: 0.92rem; line-height: 1.6; }
     .screenshot-open { display: inline-block; margin-top: 12px; color: #8edcff; font-size: 0.86rem; font-weight: 600; text-decoration: none; }
     .screenshot-open:hover { color: #fff; }
+    .screenshot-zoom { margin: 12px 12px 0 0; padding: 8px 12px; border: 1px solid rgba(85, 197, 242, 0.35); border-radius: 9px; background: rgba(85, 197, 242, 0.08); color: #a9e4fa; font: inherit; font-size: 0.86rem; cursor: pointer; }
+    .screenshot-zoom:hover { border-color: var(--accent-blue); background: rgba(85, 197, 242, 0.16); }
+    .screenshot-dialog { width: min(96vw, 1500px); max-width: 96vw; max-height: 94vh; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: #071722; color: var(--text-main); }
+    .screenshot-dialog::backdrop { background: rgba(0, 8, 14, 0.88); backdrop-filter: blur(5px); }
+    .screenshot-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+    .screenshot-dialog-head h2 { margin: 0; font-size: 1.05rem; }
+    .screenshot-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .screenshot-dialog-actions button, .screenshot-dialog-close { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: #102b3d; color: var(--text-main); font: inherit; font-size: 0.85rem; cursor: pointer; }
+    .screenshot-dialog-viewport { max-height: calc(94vh - 84px); overflow: auto; border-radius: 8px; background: #020a10; }
+    .screenshot-dialog-viewport img { display: block; width: 100%; height: auto; margin: 0 auto; }
+    .screenshot-dialog-viewport.is-actual-size img { width: auto; max-width: none; }
 
     /* --- SEKCIA FUNKCIÍ --- */
     .features { padding: 100px 20px; background: linear-gradient(180deg, var(--bg-dark) 0%, #0b1b29 100%); }
@@ -617,7 +628,7 @@
         <h2 id="screenshots-title">Všetko, čo hľadáte. Prehľadne.</h2>
         <p>Ukážka toho, ako možno prehliadať web, obrázky, videá a správy v jednom prehliadači.</p>
       </div>
-      <p class="screenshots-note">Toto sú originálne snímky obrazovky Linsoft Browsera s výsledkami pre vyhľadávanie „slovensko“.</p>
+      <p class="screenshots-note">Toto sú originálne snímky Linsoft Browsera s výsledkami pre „slovensko“. Výsledky, logá a fotografie pochádzajú od tretích strán; ich zobrazenie nie je odporúčaním ani potvrdením týchto stránok alebo obsahu. Právne podmienky cudzích materiálov sa riadia licenciami ich vlastníkov.</p>
       <div class="screenshot-grid">
         <article class="screenshot-card">
           <a class="screenshot-link" href="images/browser-search-web.png" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť pôvodnú snímku webového vyhľadávania vo väčšom">
@@ -626,6 +637,7 @@
           <div class="screenshot-caption">
             <h3>Webové vyhľadávanie</h3>
             <p>Originálna snímka výsledkov webového vyhľadávania a informačného panela.</p>
+            <button class="screenshot-zoom" type="button" data-screenshot-zoom data-image="images/browser-search-web.png" data-alt="Pôvodná snímka Linsoft Browsera s webovými výsledkami vyhľadávania pre Slovensko a informačným panelom">Zväčšiť náhľad</button>
             <a class="screenshot-open" href="images/browser-search-web.png" target="_blank" rel="noopener noreferrer">Otvoriť originálnu snímku ↗</a>
           </div>
         </article>
@@ -636,6 +648,7 @@
           <div class="screenshot-caption">
             <h3>Obrázky pre každú tému</h3>
             <p>Originálna snímka mriežky obrazových výsledkov.</p>
+            <button class="screenshot-zoom" type="button" data-screenshot-zoom data-image="images/browser-search-images.png" data-alt="Pôvodná snímka Linsoft Browsera s výsledkami vyhľadávania obrázkov pre Slovensko">Zväčšiť náhľad</button>
             <a class="screenshot-open" href="images/browser-search-images.png" target="_blank" rel="noopener noreferrer">Otvoriť originálnu snímku ↗</a>
           </div>
         </article>
@@ -646,6 +659,7 @@
           <div class="screenshot-caption">
             <h3>Videá na jednom mieste</h3>
             <p>Originálna snímka karty s video výsledkami.</p>
+            <button class="screenshot-zoom" type="button" data-screenshot-zoom data-image="images/browser-search-videos.png" data-alt="Pôvodná snímka Linsoft Browsera s výsledkami vyhľadávania videí pre Slovensko">Zväčšiť náhľad</button>
             <a class="screenshot-open" href="images/browser-search-videos.png" target="_blank" rel="noopener noreferrer">Otvoriť originálnu snímku ↗</a>
           </div>
         </article>
@@ -656,12 +670,27 @@
           <div class="screenshot-caption">
             <h3>Aktuálne správy</h3>
             <p>Originálna snímka kariet s výsledkami správ.</p>
+            <button class="screenshot-zoom" type="button" data-screenshot-zoom data-image="images/browser-search-news.png" data-alt="Pôvodná snímka Linsoft Browsera s kartami výsledkov vyhľadávania správ pre Slovensko">Zväčšiť náhľad</button>
             <a class="screenshot-open" href="images/browser-search-news.png" target="_blank" rel="noopener noreferrer">Otvoriť originálnu snímku ↗</a>
           </div>
         </article>
       </div>
     </div>
   </section>
+
+  <dialog class="screenshot-dialog" id="screenshotDialog" aria-labelledby="screenshotDialogTitle">
+    <div class="screenshot-dialog-head">
+      <h2 id="screenshotDialogTitle">Zväčšená snímka Linsoft Browsera</h2>
+      <div class="screenshot-dialog-actions">
+        <button type="button" data-image-fit>Prispôsobiť obrazovke</button>
+        <button type="button" data-image-actual>Veľkosť 1 : 1</button>
+        <button class="screenshot-dialog-close" type="button" data-dialog-close aria-label="Zavrieť zväčšenú snímku">Zavrieť</button>
+      </div>
+    </div>
+    <div class="screenshot-dialog-viewport" id="screenshotDialogViewport">
+      <img id="screenshotDialogImage" alt="">
+    </div>
+  </dialog>
 
   <!-- SEKCIA FUNKCIÍ -->
   <section id="funkcie" class="features reveal">
@@ -763,7 +792,7 @@
         </article>
         <article class="privacy-card">
           <h3>Aktualizácie cez GitHub</h3>
-          <p>Nainštalovaná verzia pre Windows môže kontrolovať dostupné aktualizácie cez GitHub. Kontrola môže odoslať sieťové údaje potrebné na spojenie; aktualizácia sa nestiahne automaticky bez potvrdenia.</p>
+          <p>Zabalená aplikácia pre Windows má automatickú kontrolu aktualizácií predvolene zapnutú; kontroluje po spustení a potom približne každých 6 hodín. Kontrola kontaktuje GitHub, ktorý pri spojení spracúva bežné sieťové údaje, napríklad IP adresu. Aktualizačný súbor sa bez potvrdenia nestiahne.</p>
         </article>
         <article class="privacy-card">
           <h3>Tor je samostatná voliteľná funkcia</h3>
@@ -772,6 +801,14 @@
         <article class="privacy-card">
           <h3>Samotný web bez analytických skriptov</h3>
           <p>Táto stránka používa statické súbory na GitHub Pages; nepripája Google Fonts ani analytické skripty. GitHub ako poskytovateľ hostingu môže pri načítaní stránky spracovať bežné sieťové údaje.</p>
+        </article>
+        <article class="privacy-card">
+          <h3>Vymazanie lokálnych údajov</h3>
+          <p>V aplikácii otvor Nastavenia → Súkromie a bezpečnosť → „Vymazať históriu a údaje prehliadania“. Táto akcia odstráni lokálnu históriu, uloženú reláciu, záložky, pripnuté stránky a záznamy o webových aplikáciách. Neodstraňuje tým automaticky všetky cookies ani uložené povolenia webov.</p>
+        </article>
+        <article class="privacy-card">
+          <h3>Spracovanie aktualizácií</h3>
+          <p>Kontrola aktualizácie načíta informácie o vydaní z GitHubu. Automatickú kontrolu možno vypnúť v Nastaveniach → Aktualizácie; pri ručnej kontrole aplikácia ponúkne dostupnú verziu a následne začne sťahovanie. V projekte nie sú pridané analytické skripty ani reklamné sledovanie.</p>
         </article>
       </div>
       <p class="privacy-footnote">Navštívené stránky a poskytovateľ vyhľadávania majú vlastné zásady ochrany súkromia. Ak potrebujete citlivé prehliadanie, oboznámte sa s tým, čo robia vyhľadávacie služby, webové stránky aj váš operačný systém.</p>
@@ -788,7 +825,7 @@
       <div class="guide-grid">
         <article class="guide-card">
           <h3>Windows 10 / 11 · 64-bit</h3>
-          <p>Inštalátor stiahnite výhradne z oficiálneho vydania projektu.</p>
+          <p>Inštalátor x64 má približne 145 MiB (152 MB). Stiahnite ho výhradne z oficiálneho vydania projektu.</p>
           <ol class="step-list">
             <li>Stiahnite inštalátor <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.26/Linsoft-Browser-Setup-2.0.26.exe">Linsoft-Browser-Setup-2.0.26.exe</a>.</li>
             <li>Otvorte súbor a v sprievodcovi vyberte priečinok inštalácie.</li>
@@ -798,7 +835,7 @@
         </article>
         <article class="guide-card">
           <h3>Debian / Ubuntu · amd64</h3>
-          <p>Balík `.deb` stiahnite z oficiálneho vydania. Inštaláciu môžete spustiť aj cez aplikáciu na inštaláciu balíkov systému.</p>
+          <p>Balík `.deb` amd64 má približne 175 MiB (183 MB). Stiahnite ho z oficiálneho vydania; inštaláciu môžete spustiť aj cez systémovú aplikáciu na správu balíkov.</p>
           <ol class="step-list">
             <li>Stiahnite <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.26/Linsoft-Browser-2.0.26-amd64.deb">Linsoft-Browser-2.0.26-amd64.deb</a>.</li>
             <li>Otvorte Terminál v priečinku so stiahnutým súborom.</li>
@@ -810,12 +847,14 @@
       </div>
       <div class="requirements-panel" id="poziadavky">
         <h3>Systémové požiadavky a kompatibilita</h3>
+        <p>Nasledujúce údaje opisujú publikované ciele zostavenia, nie úplnú certifikáciu všetkých verzií a zariadení:</p>
         <ul class="requirements-list">
-          <li><strong>Windows:</strong> inštalátor pre 64-bitové Windows (x64); stránka ponúka postup pre Windows 10 a 11.</li>
-          <li><strong>Linux:</strong> balík Debian `.deb` pre architektúru amd64; návod je určený pre Debian a Ubuntu. Ostatné distribúcie ani architektúry nemajú na tejto stránke samostatný balík.</li>
+          <li><strong>Windows:</strong> ponúkaný inštalátor je x64 a stránka uvádza Windows 10/11. Samostatné ARM64 zostavenie sa neponúka.</li>
+          <li><strong>Linux:</strong> ponúkaný balík je Debian `.deb` pre amd64; návod je určený pre Debian a Ubuntu. Ostatné distribúcie ani architektúry nemajú na tejto stránke samostatný balík.</li>
           <li>Na prehliadanie webu a použitie online funkcií je potrebné internetové pripojenie.</li>
-          <li>Projekt nezverejňuje minimálne nároky na RAM, procesor ani voľné miesto na disku. Veľkosť balíka nie je to isté ako miesto potrebné po inštalácii.</li>
+          <li>Projekt nezverejňuje overené minimálne nároky na RAM, procesor, verziu distribúcie ani voľné miesto po inštalácii. Veľkosť stiahnutého balíka nie je to isté ako miesto potrebné po inštalácii.</li>
         </ul>
+        <p class="guide-callout">Inštalátory sú veľké. Pri pomalom pripojení môže sťahovanie trvať niekoľko minút; pred inštaláciou sa uisti, že máš dostatok voľného miesta na stiahnutý súbor aj na rozbalenú aplikáciu.</p>
       </div>
       <div class="checksums-panel" id="kontrolne-sucty">
         <h3>Kontrolné súčty SHA-256 vydania 2.0.26</h3>
@@ -832,7 +871,7 @@
         <code class="verification-code">Get-FileHash .\Linsoft-Browser-Setup-2.0.26.exe -Algorithm SHA256</code>
         <p>Debian / Ubuntu:</p>
         <code class="verification-code">sha256sum Linsoft-Browser-2.0.26-amd64.deb</code>
-        <p class="guide-callout">Hash pomáha odhaliť poškodené alebo neúplné stiahnutie, ale sám osebe nepotvrdzuje identitu vydavateľa. Inštalátor Windows nemusí byť digitálne podpísaný; porovnávaj hash len s dôveryhodným zdrojom.</p>
+        <p class="guide-callout">Tieto SHA-256 hodnoty sú prevzaté z metadát toho istého GitHub vydania, z ktorého sa sťahujú balíky; nejde o nezávisle podpísaný manifest. Hash pomáha odhaliť poškodené alebo neúplné stiahnutie, ale sám osebe nepotvrdzuje identitu vydavateľa. Inštalátor Windows nemusí byť digitálne podpísaný; porovnávaj hash len s dôveryhodným zdrojom.</p>
       </div>
       <p class="guide-links">Zdrojový kód a postup na zostavenie aplikácie sú nižšie v sekcii <a href="#zdroj">Zdrojový kód a prispievanie</a>.</p>
     </div>
@@ -936,7 +975,7 @@
           <div class="release-version">v2.0.23</div>
           <div>
             <div class="release-date">3. októbra 2026</div>
-            <p class="release-summary">Vydanie nemá samostatné podrobné poznámky; presný rozdiel kódu je v porovnaní zmien.</p>
+            <p class="release-summary">Upravené interné rozhranie Onion Chatu; samostatné poznámky k vydaniu neuvádzajú ďalšie používateľské zmeny.</p>
           </div>
           <div class="release-links">
             <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.23" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
@@ -989,6 +1028,7 @@ npm start</code></pre>
           <a href="https://github.com/Linsoft1/v2.0.1" target="_blank" rel="noopener noreferrer">Otvoriť repozitár projektu ↗</a>
         </p>
         <p>Nikdy neprikladaj heslá, prístupové tokeny, privátne kľúče ani celé súkromné pozvánky. Do verejných hlásení patria iba technické údaje, ktoré možno bezpečne zverejniť.</p>
+        <p><strong>Bezpečnostný problém?</strong> Repozitár momentálne neuvádza samostatnú bezpečnostnú politiku ani overený súkromný kanál. Nezverejňuj funkčný exploit ani citlivé podrobnosti vo verejnom hlásení; najprv požiadaj správcu o súkromný spôsob nahlásenia cez <a href="https://github.com/Linsoft1" target="_blank" rel="noopener noreferrer">profil správcu na GitHube ↗</a>.</p>
       </div>
     </div>
   </section>
@@ -1050,7 +1090,7 @@ npm start</code></pre>
       <div class="download-card windows" id="download-windows">
         <svg viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
         <h3>Windows</h3>
-        <p>Windows 10 / 11 (64-bit) • v2.0.26</p>
+        <p>Windows 10 / 11 (64-bit) • v2.0.26 • približne 145 MiB</p>
         <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.26/Linsoft-Browser-Setup-2.0.26.exe" class="btn btn-primary">Stiahnuť .exe</a>
       </div>
 
@@ -1058,7 +1098,7 @@ npm start</code></pre>
       <div class="download-card linux" id="download-linux">
         <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
         <h3>Linux</h3>
-        <p>Debian / Ubuntu (amd64) • v2.0.26</p>
+        <p>Debian / Ubuntu (amd64) • v2.0.26 • približne 175 MiB</p>
         <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.26/Linsoft-Browser-2.0.26-amd64.deb" class="btn btn-secondary">Stiahnuť .deb</a>
       </div>
     </div>
@@ -1109,6 +1149,47 @@ npm start</code></pre>
 
   <!-- JAVASCRIPT -->
   <script>
+    // Zväčšenie screenshotov galérie
+    const screenshotDialog = document.getElementById('screenshotDialog');
+    const screenshotDialogImage = document.getElementById('screenshotDialogImage');
+    const screenshotDialogViewport = document.getElementById('screenshotDialogViewport');
+    let screenshotDialogReturnFocus = null;
+
+    document.querySelectorAll('[data-screenshot-zoom]').forEach(button => {
+      button.addEventListener('click', () => {
+        screenshotDialogReturnFocus = button;
+        screenshotDialogImage.src = button.dataset.image;
+        screenshotDialogImage.alt = button.dataset.alt;
+        screenshotDialogViewport.classList.remove('is-actual-size');
+        screenshotDialog.showModal();
+        screenshotDialog.querySelector('[data-dialog-close]').focus();
+      });
+    });
+
+    screenshotDialog.querySelector('[data-image-fit]').addEventListener('click', () => {
+      screenshotDialogViewport.classList.remove('is-actual-size');
+      screenshotDialogViewport.scrollTo({ top: 0, left: 0 });
+    });
+    screenshotDialog.querySelector('[data-image-actual]').addEventListener('click', () => {
+      screenshotDialogViewport.classList.add('is-actual-size');
+      screenshotDialogViewport.scrollTo({ top: 0, left: 0 });
+    });
+    screenshotDialog.querySelector('[data-dialog-close]').addEventListener('click', () => screenshotDialog.close());
+    screenshotDialog.addEventListener('cancel', event => {
+      event.preventDefault();
+      screenshotDialog.close();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && screenshotDialog.open) {
+        event.preventDefault();
+        screenshotDialog.close();
+      }
+    }, true);
+    screenshotDialog.addEventListener('click', event => {
+      if (event.target === screenshotDialog) screenshotDialog.close();
+    });
+    screenshotDialog.addEventListener('close', () => screenshotDialogReturnFocus?.focus());
+
     // 1. Mobilné menu
     const menuToggle = document.getElementById('menuToggle');
     const navLinks = document.getElementById('navLinks');
