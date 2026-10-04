@@ -258,6 +258,7 @@
     .screenshots-heading { text-align: center; max-width: 680px; margin: 0 auto 40px; }
     .screenshots-heading h2 { font-size: clamp(2rem, 4vw, 2.8rem); letter-spacing: -0.045em; margin-bottom: 12px; }
     .screenshots-heading p { color: var(--text-muted); font-size: 1.05rem; }
+    .screenshots-note { max-width: 840px; margin: -19px auto 30px; text-align: center; color: #c6d3dc; font-size: 0.88rem; }
     .screenshot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
     .screenshot-card {
       min-width: 0;
@@ -350,6 +351,48 @@
     .audience-card h3 { margin-bottom: 9px; font-size: 1.05rem; }
     .audience-card p { color: var(--text-muted); font-size: 0.93rem; line-height: 1.7; }
     .audience-note { max-width: 860px; margin: 24px auto 0; padding: 16px 20px; border-left: 3px solid var(--accent-yellow); border-radius: 0 12px 12px 0; color: #c6d3dc; background: rgba(255, 184, 92, 0.07); font-size: 0.9rem; }
+
+    /* --- INSTALACIA --- */
+    .guide-section { padding: 88px 20px; }
+    .guide-inner { max-width: 1100px; margin: 0 auto; }
+    .guide-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+    .guide-card { min-width: 0; padding: clamp(22px, 4vw, 34px); border: 1px solid var(--border); border-radius: 18px; background: linear-gradient(145deg, rgba(18, 42, 59, 0.92), rgba(11, 30, 44, 0.97)); }
+    .guide-card h3 { margin-bottom: 10px; font-size: 1.3rem; }
+    .guide-card > p { margin-bottom: 16px; color: var(--text-muted); }
+    .step-list { display: grid; gap: 12px; list-style: none; counter-reset: guide; }
+    .step-list li { position: relative; min-height: 32px; padding-left: 42px; color: #c6d5df; counter-increment: guide; }
+    .step-list li::before { position: absolute; top: 0; left: 0; display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid rgba(85, 197, 242, 0.35); border-radius: 50%; background: rgba(85, 197, 242, 0.1); color: #9be1fb; font-size: 0.8rem; font-weight: 800; content: counter(guide); }
+    .guide-card a, .guide-links a { color: #8edcff; text-underline-offset: 3px; overflow-wrap: anywhere; }
+    .guide-callout { margin-top: 16px; padding: 13px 15px; border-radius: 11px; background: rgba(255, 184, 92, 0.08); color: #d4c8b1; font-size: 0.87rem; line-height: 1.65; }
+    .guide-callout strong { color: #ffe0a6; }
+    .guide-code { display: block; margin: 18px 0 10px; padding: 14px 16px; overflow-x: auto; border: 1px solid var(--border); border-radius: 11px; background: #071722; color: #d2f1ff; font: 0.87rem/1.6 Consolas, "Courier New", monospace; white-space: pre; }
+    .guide-links { margin-top: 16px; color: var(--text-muted); font-size: 0.9rem; }
+    .guide-links a { margin-right: 15px; }
+
+    /* --- OCHRANA SUKROMIA --- */
+    .privacy-section { padding: 88px 20px; background: linear-gradient(180deg, rgba(6, 20, 31, 0.72), rgba(6, 20, 31, 0.24)); }
+    .privacy-inner { max-width: 1000px; margin: 0 auto; }
+    .privacy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .privacy-card { padding: 21px 23px; border: 1px solid var(--border); border-radius: 15px; background: rgba(18, 42, 59, 0.72); }
+    .privacy-card h3 { margin-bottom: 8px; font-size: 1.03rem; }
+    .privacy-card p { color: var(--text-muted); font-size: 0.92rem; line-height: 1.75; }
+    .privacy-footnote { margin-top: 20px; color: #bfd0da; font-size: 0.9rem; line-height: 1.75; }
+
+    /* --- HISTORIA VYDANI --- */
+    .release-section { padding: 88px 20px; }
+    .release-inner { max-width: 1040px; margin: 0 auto; }
+    .release-list { display: grid; gap: 13px; margin-top: 32px; }
+    .release-row { display: grid; grid-template-columns: minmax(115px, 0.65fr) 1fr auto; gap: 18px; align-items: center; padding: 19px 22px; border: 1px solid var(--border); border-radius: 15px; background: rgba(18, 42, 59, 0.74); }
+    .release-version { color: #b9eaff; font-size: 1.08rem; font-weight: 800; }
+    .release-date { color: var(--text-muted); font-size: 0.88rem; }
+    .release-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 14px; }
+    .release-links a { color: #8edcff; font-size: 0.88rem; font-weight: 600; text-decoration: none; }
+    .release-links a:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+    .source-panel { max-width: 1040px; margin: 32px auto 0; padding: clamp(22px, 4vw, 32px); border: 1px solid var(--border); border-radius: 18px; background: rgba(18, 42, 59, 0.72); }
+    .source-panel h3 { margin-bottom: 8px; font-size: 1.2rem; }
+    .source-panel p { color: var(--text-muted); line-height: 1.7; }
+    .source-panel pre { margin: 18px 0; padding: 17px 20px; overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: #071722; color: #d2f1ff; font: 0.9rem/1.75 Consolas, "Courier New", monospace; }
+    .source-panel a { color: #8edcff; text-underline-offset: 3px; }
 
     /* --- OPEN SOURCE A LICENCIA --- */
     .license-section { padding: 84px 20px; }
@@ -467,16 +510,17 @@
       .footer-grid { grid-template-columns: 1fr 1fr; }
     }
 
-    @media (max-width: 768px) {
+    @media (max-width: 980px) {
       nav { padding: 16px 20px; }
       nav.scrolled { padding: 12px 20px; }
       .logo { font-size: 1.25rem; }
       .nav-links {
-        position: fixed; top: 0; right: -100%; height: 100vh; width: 70%;
-        background: rgba(8, 25, 38, 0.98); flex-direction: column; padding: 80px 40px;
-        transition: right 0.3s ease; border-left: 1px solid var(--border);
+        position: fixed; top: 0; right: 0; height: 100vh; width: min(70%, 320px);
+        box-sizing: border-box; transform: translateX(100%);
+        background: rgba(8, 25, 38, 0.98); flex-direction: column; padding: 80px 32px;
+        transition: transform 0.3s ease; border-left: 1px solid var(--border);
       }
-      .nav-links.active { right: 0; }
+      .nav-links.active { transform: translateX(0); }
       .menu-toggle { display: block; z-index: 1001; }
       .hero { padding: 130px 20px 52px; }
       .hero-buttons { flex-direction: column; align-items: center; }
@@ -485,6 +529,9 @@
       .screenshots { padding: 64px 16px 76px; }
       .screenshot-grid { grid-template-columns: 1fr; gap: 18px; }
       .screenshot-caption { padding: 16px 18px 18px; }
+      .guide-grid, .privacy-grid { grid-template-columns: 1fr; }
+      .release-row { grid-template-columns: 1fr; gap: 7px; }
+      .release-links { justify-content: flex-start; margin-top: 6px; }
       .section-title { font-size: 2rem; }
       .stats { gap: 22px; }
       .license-permissions { grid-template-columns: 1fr; }
@@ -511,8 +558,11 @@
       <li><a href="#funkcie">Funkcie</a></li>
       <li><a href="#ukazky">Ukážky</a></li>
       <li><a href="#publikum">Pre koho</a></li>
+      <li><a href="#instalacia">Inštalácia</a></li>
+      <li><a href="#sukromie">Súkromie</a></li>
+      <li><a href="#vydania">Vydania</a></li>
       <li><a href="#o-nas">O nás</a></li>
-      <li><a href="#licencia">Licencia</a></li>
+      <li><a href="#zdroj">Zdrojový kód</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="#stiahnut">Stiahnuť</a></li>
     </ul>
@@ -556,47 +606,48 @@
       <div class="screenshots-heading">
         <p class="eyebrow">Pozrite sa dovnútra</p>
         <h2 id="screenshots-title">Všetko, čo hľadáte. Prehľadne.</h2>
-        <p>Jasné výsledky na webe, obrázky, videá aj správy — v jednom prehliadači a v jednotnom dizajne.</p>
+        <p>Ukážka toho, ako možno prehliadať web, obrázky, videá a správy v jednom prehliadači.</p>
       </div>
+      <p class="screenshots-note">Nasledujúce náhľady sú vlastné ilustrácie s vymysleným ukážkovým obsahom. Nie sú to živé výsledky vyhľadávania ani skutočné články, fotografie či videá.</p>
       <div class="screenshot-grid">
         <article class="screenshot-card">
-          <a class="screenshot-link" href="images/search-web.webp" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku webového vyhľadávania vo väčšom">
-            <img src="images/search-web.webp" alt="Linsoft Browser zobrazuje výsledky webového vyhľadávania a informačný panel o Slovensku" width="1800" height="758" loading="lazy" decoding="async">
+          <a class="screenshot-link" href="images/search-web.svg" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku webového vyhľadávania vo väčšom">
+            <img src="images/search-web.svg" alt="Ilustračný vzhľad webového vyhľadávania v Linsoft Browseri na tému slnečnej sústavy; všetky výsledky sú vymyslené" width="1200" height="675" loading="lazy" decoding="async">
           </a>
           <div class="screenshot-caption">
             <h3>Webové vyhľadávanie</h3>
-            <p>Užitočné výsledky a dôležité informácie na prvý pohľad.</p>
-            <a class="screenshot-open" href="images/search-web.webp" target="_blank" rel="noopener noreferrer">Zobraziť obrázok ↗</a>
+            <p>Vymyslené výsledky a informačný panel ukazujú rozloženie vyhľadávania.</p>
+            <a class="screenshot-open" href="images/search-web.svg" target="_blank" rel="noopener noreferrer">Zobraziť ilustračný náhľad ↗</a>
           </div>
         </article>
         <article class="screenshot-card">
-          <a class="screenshot-link" href="images/search-images.webp" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku vyhľadávania obrázkov vo väčšom">
-            <img src="images/search-images.webp" alt="Linsoft Browser zobrazuje mriežku obrázkov nájdených pri vyhľadávaní" width="1800" height="755" loading="lazy" decoding="async">
+          <a class="screenshot-link" href="images/search-images.svg" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ilustračný náhľad vyhľadávania obrázkov vo väčšom">
+          <img src="images/search-images.svg" alt="Ilustračná mriežka vlastných vektorových obrázkov prírody v Linsoft Browseri; nejde o fotografie z internetu" width="1200" height="675" loading="lazy" decoding="async">
           </a>
           <div class="screenshot-caption">
             <h3>Obrázky pre každú tému</h3>
-            <p>Vizuálne výsledky prehľadne usporiadané na jednom mieste.</p>
-            <a class="screenshot-open" href="images/search-images.webp" target="_blank" rel="noopener noreferrer">Zobraziť obrázok ↗</a>
+            <p>Vlastné vektorové ilustrácie namiesto prevzatých internetových obrázkov.</p>
+            <a class="screenshot-open" href="images/search-images.svg" target="_blank" rel="noopener noreferrer">Zobraziť ilustračný náhľad ↗</a>
           </div>
         </article>
         <article class="screenshot-card">
-          <a class="screenshot-link" href="images/search-videos.webp" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku vyhľadávania videí vo väčšom">
-            <img src="images/search-videos.webp" alt="Linsoft Browser zobrazuje výsledky vyhľadávania videí s náhľadmi" width="1800" height="753" loading="lazy" decoding="async">
+          <a class="screenshot-link" href="images/search-videos.svg" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ilustračný náhľad vyhľadávania videí vo väčšom">
+            <img src="images/search-videos.svg" alt="Ilustračné karty vymyslených náučných videí v rozhraní Linsoft Browsera; video výsledky sú fiktívne" width="1200" height="675" loading="lazy" decoding="async">
           </a>
           <div class="screenshot-caption">
             <h3>Videá na jednom mieste</h3>
-            <p>Prezrite si video výsledky a ich náhľady bez zbytočného hľadania.</p>
-            <a class="screenshot-open" href="images/search-videos.webp" target="_blank" rel="noopener noreferrer">Zobraziť obrázok ↗</a>
+            <p>Vymyslené náhľady ukazujú, ako môžu byť výsledky videí usporiadané.</p>
+            <a class="screenshot-open" href="images/search-videos.svg" target="_blank" rel="noopener noreferrer">Zobraziť ilustračný náhľad ↗</a>
           </div>
         </article>
         <article class="screenshot-card">
-          <a class="screenshot-link" href="images/search-news.webp" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku vyhľadávania správ vo väčšom">
-            <img src="images/search-news.webp" alt="Linsoft Browser zobrazuje správy s obrázkami, titulkami a informačným panelom" width="1800" height="756" loading="lazy" decoding="async">
+          <a class="screenshot-link" href="images/search-news.svg" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ilustračný náhľad vyhľadávania správ vo väčšom">
+            <img src="images/search-news.svg" alt="Ilustračná spravodajská karta s vymyslenou správou o počasí v Linsoft Browseri" width="1200" height="675" loading="lazy" decoding="async">
           </a>
           <div class="screenshot-caption">
             <h3>Aktuálne správy</h3>
-            <p>Prečítajte si prehľadné spravodajské výsledky a súvisiace články.</p>
-            <a class="screenshot-open" href="images/search-news.webp" target="_blank" rel="noopener noreferrer">Zobraziť obrázok ↗</a>
+            <p>Fiktívne neutrálne titulky ukazujú podobu spravodajských kariet.</p>
+            <a class="screenshot-open" href="images/search-news.svg" target="_blank" rel="noopener noreferrer">Zobraziť ilustračný náhľad ↗</a>
           </div>
         </article>
       </div>
@@ -681,6 +732,77 @@
     </div>
   </section>
 
+  <section class="privacy-section reveal" id="sukromie" aria-labelledby="privacy-title">
+    <div class="privacy-inner">
+      <div class="screenshots-heading">
+        <p class="eyebrow">Bez prázdnych sľubov</p>
+        <h2 id="privacy-title">Ako funguje súkromie</h2>
+        <p>Otvorený kód pomáha s kontrolou. Tu je tiež jasne uvedené, s kým aplikácia komunikuje.</p>
+      </div>
+      <div class="privacy-grid">
+        <article class="privacy-card">
+          <h3>Vyhľadávanie ide zvolenému poskytovateľovi</h3>
+          <p>Predvolený vyhľadávač je Google; v nastaveniach možno zvoliť aj Bing alebo DuckDuckGo. Dopyt sa odošle vybranému poskytovateľovi, ktorý ho môže spojiť s IP adresou a spracúvať podľa svojich pravidiel ochrany súkromia.</p>
+        </article>
+        <article class="privacy-card">
+          <h3>Ochrana reklám a sledovania</h3>
+          <p>Ochrany sú predvolene zapnuté. Pri ochrane pred sledovaním prehliadač odosiela signály DNT a Global Privacy Control a blokuje rozpoznané požiadavky na sledovanie. Blokovanie nie je úplné a negarantuje ochranu pred každým sledovacím prvkom.</p>
+        </article>
+        <article class="privacy-card">
+          <h3>Údaje prehliadača zostávajú v profile zariadenia</h3>
+          <p>História, záložky, nastavenia a ďalšie údaje prehliadača sa ukladajú do lokálneho používateľského profilu. Linsoft Browser ich automaticky nesynchronizuje cez cloudové konto.</p>
+        </article>
+        <article class="privacy-card">
+          <h3>Aktualizácie cez GitHub</h3>
+          <p>Nainštalovaná verzia pre Windows môže kontrolovať dostupné aktualizácie cez GitHub. Kontrola môže odoslať sieťové údaje potrebné na spojenie; aktualizácia sa nestiahne automaticky bez potvrdenia.</p>
+        </article>
+        <article class="privacy-card">
+          <h3>Tor je samostatná voliteľná funkcia</h3>
+          <p>Tor hosting a Onion Chat nie sú automatickou VPN pre ostatné karty. Bežné prehliadanie, vyhľadávanie ani návštevy webov sa automaticky nesmerujú cez Tor a aplikácia negarantuje anonymitu.</p>
+        </article>
+        <article class="privacy-card">
+          <h3>Samotný web bez analytických skriptov</h3>
+          <p>Táto stránka používa statické súbory na GitHub Pages; nepripája Google Fonts ani analytické skripty. GitHub ako poskytovateľ hostingu môže pri načítaní stránky spracovať bežné sieťové údaje.</p>
+        </article>
+      </div>
+      <p class="privacy-footnote">Navštívené stránky a poskytovateľ vyhľadávania majú vlastné zásady ochrany súkromia. Ak potrebujete citlivé prehliadanie, oboznámte sa s tým, čo robia vyhľadávacie služby, webové stránky aj váš operačný systém.</p>
+    </div>
+  </section>
+
+  <section class="guide-section reveal" id="instalacia" aria-labelledby="install-title">
+    <div class="guide-inner">
+      <div class="screenshots-heading">
+        <p class="eyebrow">Prvé spustenie</p>
+        <h2 id="install-title">Nainštalujte Linsoft Browser</h2>
+        <p>Oficiálne balíky pre Windows x64 a Debian/Ubuntu Linux amd64 sú v sekcii vydaní.</p>
+      </div>
+      <div class="guide-grid">
+        <article class="guide-card">
+          <h3>Windows 10 / 11 · 64-bit</h3>
+          <p>Inštalátor stiahnite výhradne z oficiálneho vydania projektu.</p>
+          <ol class="step-list">
+            <li>Stiahnite inštalátor <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.26/Linsoft-Browser-Setup-2.0.26.exe">Linsoft-Browser-Setup-2.0.26.exe</a>.</li>
+            <li>Otvorte súbor a v sprievodcovi vyberte priečinok inštalácie.</li>
+            <li>Po dokončení spustite Linsoft Browser z nainštalovaného priečinka.</li>
+          </ol>
+          <p class="guide-callout"><strong>Upozornenie:</strong> inštalátor nemusí byť digitálne podpísaný. Ak Windows zobrazí upozornenie na neznámeho vydavateľa, pred spustením skontrolujte, že súbor pochádza z oficiálneho vydania Linsoftu.</p>
+        </article>
+        <article class="guide-card">
+          <h3>Debian / Ubuntu · amd64</h3>
+          <p>Balík `.deb` stiahnite z oficiálneho vydania. Inštaláciu môžete spustiť aj cez aplikáciu na inštaláciu balíkov systému.</p>
+          <ol class="step-list">
+            <li>Stiahnite <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.26/Linsoft-Browser-2.0.26-amd64.deb">Linsoft-Browser-2.0.26-amd64.deb</a>.</li>
+            <li>Otvorte Terminál v priečinku so stiahnutým súborom.</li>
+            <li>Spustite príkaz nižšie a potvrďte systémovú inštaláciu.</li>
+          </ol>
+          <code class="guide-code">sudo apt install ./Linsoft-Browser-2.0.26-amd64.deb</code>
+          <p class="guide-callout">Príkaz použite v priečinku, kam sa balík stiahol (zvyčajne `~/Downloads`). Správca balíkov nainštaluje potrebné závislosti.</p>
+        </article>
+      </div>
+      <p class="guide-links">Zdrojový kód a postup na zostavenie aplikácie sú nižšie v sekcii <a href="#zdroj">Zdrojový kód a prispievanie</a>.</p>
+    </div>
+  </section>
+
   <!-- SEKCIA O NÁS -->
   <section id="o-nas" class="about-section reveal">
     <div class="about-content">
@@ -713,6 +835,76 @@
     </div>
   </section>
 
+  <section id="vydania" class="release-section reveal" aria-labelledby="release-title">
+    <div class="release-inner">
+      <div class="screenshots-heading">
+        <p class="eyebrow">Vývoj sa dá sledovať</p>
+        <h2 id="release-title">Vydania a zmeny</h2>
+        <p>Vyberte si konkrétne vydanie alebo si pozrite porovnanie jeho zmien so staršou verziou.</p>
+      </div>
+      <div class="release-list">
+        <article class="release-row">
+          <div class="release-version">v2.0.26</div>
+          <div class="release-date">3. októbra 2026 · najnovšie vydanie</div>
+          <div class="release-links">
+            <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.26" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
+            <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.25...v2.0.26" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.25 ↗</a>
+          </div>
+        </article>
+        <article class="release-row">
+          <div class="release-version">v2.0.25</div>
+          <div class="release-date">3. októbra 2026</div>
+          <div class="release-links">
+            <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.25" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
+            <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.24...v2.0.25" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.24 ↗</a>
+          </div>
+        </article>
+        <article class="release-row">
+          <div class="release-version">v2.0.24</div>
+          <div class="release-date">3. októbra 2026</div>
+          <div class="release-links">
+            <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.24" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
+            <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.23...v2.0.24" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.23 ↗</a>
+          </div>
+        </article>
+        <article class="release-row">
+          <div class="release-version">v2.0.23</div>
+          <div class="release-date">3. októbra 2026</div>
+          <div class="release-links">
+            <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.23" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
+            <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.22...v2.0.23" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.22 ↗</a>
+          </div>
+        </article>
+      </div>
+      <p class="guide-links">Úplnú históriu nájdete na <a href="https://github.com/Linsoft1/v2.0.1/releases" target="_blank" rel="noopener noreferrer">všetkých vydaniach na GitHube ↗</a>.</p>
+    </div>
+  </section>
+
+  <section class="release-section reveal" id="zdroj" aria-labelledby="source-title">
+    <div class="release-inner">
+      <div class="screenshots-heading">
+        <p class="eyebrow">Verejný projekt</p>
+        <h2 id="source-title">Zdrojový kód a prispievanie</h2>
+        <p>Prezrite si kód, navrhnite zlepšenie alebo nahláste chybu priamo v GitHub repozitári.</p>
+      </div>
+      <div class="source-panel">
+        <h3>Spustite si Linsoft zo zdrojového kódu</h3>
+        <p>Na zostavenie a lokálne spustenie potrebujete Node.js 24 a npm. V termináli vykonajte:</p>
+        <pre><code>git clone https://github.com/Linsoft1/v2.0.1.git
+cd v2.0.1
+npm ci
+npm start</code></pre>
+        <p>Pred odoslaním zmien spustite testy cez <code>npm test</code>. Pri chybe uveďte kroky na jej zopakovanie, verziu aplikácie a operačný systém; nezverejňujte heslá, súkromné onion pozvánky ani osobné údaje.</p>
+        <p class="guide-links">
+          <a href="https://github.com/Linsoft1/v2.0.1" target="_blank" rel="noopener noreferrer">Zdrojový kód ↗</a>
+          <a href="https://github.com/Linsoft1/v2.0.1/issues/new/choose" target="_blank" rel="noopener noreferrer">Nahlásiť chybu ↗</a>
+          <a href="https://github.com/Linsoft1/v2.0.1/compare" target="_blank" rel="noopener noreferrer">Navrhnúť zmenu ↗</a>
+          <a href="https://github.com/Linsoft1/v2.0.1/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">Licencia MIT ↗</a>
+        </p>
+      </div>
+    </div>
+  </section>
+
   <!-- FAQ SEKCIA -->
   <section id="faq" class="faq-section reveal">
     <h2 class="section-title">Časté otázky</h2>
@@ -725,6 +917,14 @@
     <details class="faq-item">
       <summary>Čo na Linsoft Browseri vyniká?</summary>
       <div class="faq-content">Okrem bežných funkcií prehliadača ponúka aj voliteľný Tor hosting a 1 : 1 chat. Pozvánka do chatu je jednorazová, prijme jedného hosťa a pri nepoužití vyprší po 15 minútach. Súbory sú end-to-end šifrované a majú limit 2 MiB; video hovor prenáša iba obraz, bez zvuku. Tieto funkcie samy osebe nesmerujú cez Tor všetko vaše bežné prehliadanie.</div>
+    </details>
+    <details class="faq-item">
+      <summary>Aký vyhľadávač Linsoft používa?</summary>
+      <div class="faq-content">Predvolený je Google; nastavenie možno zmeniť na Bing alebo DuckDuckGo. Zvolený poskytovateľ dostane váš vyhľadávací dopyt a spracúva ho podľa vlastných podmienok.</div>
+    </details>
+    <details class="faq-item">
+      <summary>Čo potrebujem na inštaláciu?</summary>
+      <div class="faq-content">Linsoft Browser ponúka inštalátor pre Windows 10/11 x64 a balík `.deb` pre Debian/Ubuntu amd64. Podrobný postup je v sekcii <a href="#instalacia">Inštalácia</a>.</div>
     </details>
     <details class="faq-item">
       <summary>Je Linsoft úplne open source?</summary>
@@ -776,6 +976,9 @@
         <a href="#funkcie">Funkcie</a>
         <a href="#ukazky">Ukážky</a>
         <a href="#publikum">Pre koho je určený</a>
+        <a href="#instalacia">Inštalácia</a>
+        <a href="#sukromie">Súkromie</a>
+        <a href="#vydania">Vydania</a>
         <a href="#stiahnut">Stiahnuť</a>
         <a href="#faq">FAQ</a>
       </div>
@@ -788,6 +991,7 @@
         <a href="https://github.com/Linsoft1/v2.0.1" target="_blank" rel="noopener noreferrer">GitHub projektu ↗</a>
         <a href="https://github.com/Linsoft1/v2.0.1/releases" target="_blank" rel="noopener noreferrer">Vydania a stiahnutie ↗</a>
         <a href="https://github.com/Linsoft1/v2.0.1/issues" target="_blank" rel="noopener noreferrer">Nahlásiť chybu ↗</a>
+        <a href="#zdroj">Zdrojový kód a prispievanie</a>
         <a href="#licencia">Licencia MIT</a>
       </div>
     </div>
