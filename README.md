@@ -32,6 +32,14 @@ npm install
 npm start
 ```
 
+## Website hosting
+
+The static website is in [`docs/`](./docs/). GitHub Actions deploys it to
+[GitHub Pages](https://linsoft1.github.io/v2.0.1/) when changes to that folder
+are pushed to `main`. Before the first deployment, enable GitHub Pages in the
+repository settings under **Settings > Pages**, with **GitHub Actions** as the
+build and deployment source.
+
 ## Validate the project
 
 ```powershell
