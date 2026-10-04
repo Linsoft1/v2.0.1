@@ -12,27 +12,33 @@
 
   <style>
     :root {
-      --bg-dark: #08090d;
-      --bg-card: #12141c;
-      --bg-card-hover: #1a1d26;
+      --bg-dark: #0d2030;
+      --bg-card: #122a3b;
+      --bg-card-hover: #18374c;
       --text-main: #ffffff;
-      --text-muted: #8b92a5;
-      --accent-blue: #3b82f6;
-      --accent-blue-hover: #2563eb;
-      --accent-green: #10b981;
-      --accent-yellow: #f59e0b;
-      --border: #1f2330;
+      --text-muted: #a7bac8;
+      --accent-blue: #55c5f2;
+      --accent-blue-hover: #2eabe0;
+      --accent-green: #49d8ad;
+      --accent-yellow: #ffb85c;
+      --border: rgba(158, 197, 218, 0.16);
       --font: 'Inter', system-ui, sans-serif;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; scroll-padding-top: 90px; }
     body {
       font-family: var(--font);
       background-color: var(--bg-dark);
       color: var(--text-main);
       line-height: 1.6;
       overflow-x: hidden;
+      background-image: radial-gradient(ellipse at 50% -20%, rgba(46, 119, 158, 0.17), transparent 55%);
+    }
+
+    a:focus-visible, button:focus-visible, summary:focus-visible {
+      outline: 3px solid var(--accent-blue);
+      outline-offset: 4px;
     }
 
     /* --- ANIMÁCIE PRI SCROLLOVANÍ --- */
@@ -55,7 +61,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      background: rgba(8, 9, 13, 0.8);
+      background: rgba(8, 25, 38, 0.88);
       backdrop-filter: blur(12px);
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       z-index: 1000;
@@ -113,9 +119,9 @@
       top: -20%;
       left: 50%;
       transform: translateX(-50%);
-      width: 800px;
+      width: min(800px, 100vw);
       height: 800px;
-      background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, rgba(8, 9, 13, 0) 70%);
+      background: radial-gradient(circle, rgba(59, 160, 205, 0.19) 0%, rgba(8, 25, 38, 0) 70%);
       z-index: -1;
       pointer-events: none;
     }
@@ -126,7 +132,7 @@
       border-radius: 20px;
       background: rgba(59, 130, 246, 0.1);
       border: 1px solid rgba(59, 130, 246, 0.2);
-      color: var(--accent-blue);
+      color: #8edcff;
       font-size: 0.85rem;
       font-weight: 600;
       margin-bottom: 24px;
@@ -174,11 +180,12 @@
 
     .btn-primary {
       background: var(--accent-blue);
-      color: white;
+      color: #08202d;
       box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);
     }
     .btn-primary:hover {
       background: var(--accent-blue-hover);
+      color: #061b27;
       transform: translateY(-2px);
       box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6);
     }
@@ -197,23 +204,34 @@
     .btn svg { width: 20px; height: 20px; fill: currentColor; }
 
     /* --- SEKCIA SO SCREENSHOTMI --- */
-    .showcase { padding: 60px 20px; max-width: 1200px; margin: 0 auto; }
+    .showcase { padding: 32px 24px 92px; max-width: 1200px; margin: 0 auto; }
+    .showcase-intro { text-align: center; max-width: 680px; margin: 0 auto 28px; }
+    .eyebrow {
+      color: var(--accent-green);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .showcase-intro h2 { font-size: clamp(1.7rem, 4vw, 2.5rem); letter-spacing: -0.045em; margin-bottom: 10px; }
+    .showcase-intro p { color: var(--text-muted); }
 
     .browser-mockup {
-      background: var(--bg-card);
+      background: #091a28;
       border: 1px solid var(--border);
-      border-radius: 16px;
+      border-radius: 20px;
       overflow: hidden;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 32px 90px -36px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(117, 195, 230, 0.08);
       transition: transform 0.5s ease, box-shadow 0.5s ease;
     }
     .browser-mockup:hover {
-      transform: translateY(-5px);
-      box-shadow: 0 30px 60px -10px rgba(59, 130, 246, 0.2);
+      transform: translateY(-3px);
+      box-shadow: 0 36px 90px -34px rgba(0, 0, 0, 0.95), 0 0 35px rgba(59, 160, 205, 0.14);
     }
 
     .browser-header {
-      background: #1a1d26;
+      background: #10283a;
       padding: 12px 16px;
       display: flex;
       align-items: center;
@@ -227,7 +245,7 @@
     .dot.green { background: #27c93f; }
 
     .browser-url {
-      background: #08090d;
+      background: #0a1e2c;
       color: var(--text-muted);
       font-size: 0.8rem;
       padding: 4px 16px;
@@ -235,10 +253,45 @@
       margin-left: 16px;
       flex: 1;
       text-align: center;
-      border: 1px solid #1f2330;
+      border: 1px solid var(--border);
     }
 
-    .browser-content img { width: 100%; height: auto; display: block; object-fit: cover; }
+    .browser-content img { width: 100%; height: auto; display: block; }
+
+    .screenshots { padding: 84px 24px 104px; background: linear-gradient(180deg, rgba(6, 20, 31, 0.68), rgba(6, 20, 31, 0.12)); }
+    .screenshots-inner { max-width: 1200px; margin: 0 auto; }
+    .screenshots-heading { text-align: center; max-width: 680px; margin: 0 auto 40px; }
+    .screenshots-heading h2 { font-size: clamp(2rem, 4vw, 2.8rem); letter-spacing: -0.045em; margin-bottom: 12px; }
+    .screenshots-heading p { color: var(--text-muted); font-size: 1.05rem; }
+    .screenshot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .screenshot-card {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: linear-gradient(145deg, rgba(23, 54, 75, 0.88), rgba(12, 32, 47, 0.96));
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.2);
+      transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+    }
+    .screenshot-card:hover {
+      transform: translateY(-5px);
+      border-color: rgba(85, 197, 242, 0.56);
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.34);
+    }
+    .screenshot-link { display: block; overflow: hidden; aspect-ratio: 16 / 9; background: #091a28; }
+    .screenshot-link img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      transition: transform 0.35s ease;
+    }
+    .screenshot-card:hover .screenshot-link img { transform: scale(1.025); }
+    .screenshot-caption { padding: 20px 22px 22px; }
+    .screenshot-caption h3 { font-size: 1.08rem; margin-bottom: 5px; }
+    .screenshot-caption p { color: var(--text-muted); font-size: 0.92rem; line-height: 1.6; }
+    .screenshot-open { display: inline-block; margin-top: 12px; color: #8edcff; font-size: 0.86rem; font-weight: 600; text-decoration: none; }
+    .screenshot-open:hover { color: #fff; }
 
     /* --- SEKCIA FUNKCIÍ --- */
     .features { padding: 100px 20px; background: linear-gradient(180deg, var(--bg-dark) 0%, #0d0f14 100%); }
@@ -248,7 +301,7 @@
 
     .features-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
       gap: 24px;
       max-width: 1100px;
       margin: 0 auto;
@@ -280,13 +333,14 @@
     .feature-card p { color: var(--text-muted); font-size: 0.95rem; line-height: 1.7; }
 
     /* --- SEKCIA O NÁS --- */
-    .about-section { padding: 100px 20px; max-width: 1200px; margin: 0 auto; }
-    .about-content { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
-    .about-text h2 { text-align: left; font-size: 2.5rem; font-weight: 800; margin-bottom: 24px; letter-spacing: -1px; }
+    .about-section { padding: 100px 20px; max-width: 920px; margin: 0 auto; }
+    .about-content { display: grid; grid-template-columns: 1fr; gap: 0; align-items: center; }
+    .about-text { text-align: center; }
+    .about-text h2 { text-align: center; font-size: 2.5rem; font-weight: 800; margin-bottom: 24px; letter-spacing: -1px; }
     .about-text p { color: var(--text-muted); font-size: 1.05rem; margin-bottom: 20px; line-height: 1.8; }
     .about-text strong { color: var(--text-main); font-weight: 600; }
 
-    .stats { display: flex; gap: 40px; margin-top: 40px; border-top: 1px solid var(--border); padding-top: 30px; }
+    .stats { display: flex; justify-content: center; gap: 40px; margin-top: 40px; border-top: 1px solid var(--border); padding-top: 30px; }
     .stat { font-size: 0.9rem; color: var(--text-muted); font-weight: 500; }
     .stat span { display: block; font-size: 2rem; font-weight: 800; color: var(--accent-blue); margin-bottom: 4px; }
 
@@ -347,11 +401,11 @@
     footer {
       padding: 60px 20px 30px;
       border-top: 1px solid var(--border);
-      background: #0a0b10;
+      background: #091a28;
     }
     .footer-grid {
       display: grid;
-      grid-template-columns: 2fr 1fr 1fr 1fr;
+      grid-template-columns: 2fr 1fr 1fr;
       gap: 40px;
       max-width: 1200px;
       margin: 0 auto 40px;
@@ -384,26 +438,40 @@
 
     /* --- RESPONZIVITA --- */
     @media (max-width: 900px) {
-      .about-content { grid-template-columns: 1fr; gap: 40px; }
-      .about-text h2 { text-align: center; }
-      .stats { justify-content: center; }
+      .screenshot-grid { gap: 18px; }
       .footer-grid { grid-template-columns: 1fr 1fr; }
     }
 
     @media (max-width: 768px) {
       nav { padding: 16px 20px; }
       nav.scrolled { padding: 12px 20px; }
+      .logo { font-size: 1.25rem; }
       .nav-links {
         position: fixed; top: 0; right: -100%; height: 100vh; width: 70%;
-        background: var(--bg-dark); flex-direction: column; padding: 80px 40px;
+        background: rgba(8, 25, 38, 0.98); flex-direction: column; padding: 80px 40px;
         transition: right 0.3s ease; border-left: 1px solid var(--border);
       }
       .nav-links.active { right: 0; }
       .menu-toggle { display: block; z-index: 1001; }
-      .hero { padding: 120px 20px 60px; }
+      .hero { padding: 130px 20px 52px; }
       .hero-buttons { flex-direction: column; align-items: center; }
       .btn { width: 100%; justify-content: center; }
+      .showcase { padding: 24px 16px 64px; }
+      .screenshots { padding: 64px 16px 76px; }
+      .screenshot-grid { grid-template-columns: 1fr; gap: 18px; }
+      .screenshot-caption { padding: 16px 18px 18px; }
+      .section-title { font-size: 2rem; }
+      .stats { gap: 22px; }
       .footer-grid { grid-template-columns: 1fr; text-align: center; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
     }
   </style>
 </head>
@@ -412,9 +480,10 @@
   <!-- NAVIGÁCIA -->
   <nav id="navbar">
     <div class="logo">Linsoft <span>Browser</span></div>
-    <button class="menu-toggle" id="menuToggle">☰</button>
+    <button class="menu-toggle" id="menuToggle" type="button" aria-label="Otvoriť navigáciu" aria-expanded="false" aria-controls="navLinks">☰</button>
     <ul class="nav-links" id="navLinks">
       <li><a href="#funkcie">Funkcie</a></li>
+      <li><a href="#ukazky">Ukážky</a></li>
       <li><a href="#o-nas">O nás</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="#stiahnut">Stiahnuť</a></li>
@@ -437,15 +506,71 @@
   </header>
 
   <!-- SEKCIA SO SCREENSHOTMI -->
-  <section class="showcase reveal">
+  <section class="showcase reveal" aria-label="Ukážka domovskej stránky Linsoft Browser">
+    <div class="showcase-intro">
+      <p class="eyebrow">Váš nový priestor na webe</p>
+      <h2>Prehliadanie, ktoré je príjemné od prvej chvíle.</h2>
+      <p>Prehľadná domovská stránka, rýchle vyhľadávanie a všetko dôležité vždy poruke.</p>
+    </div>
     <div class="browser-mockup">
       <div class="browser-header">
         <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
         <div class="browser-url">linsoft://start</div>
       </div>
       <div class="browser-content">
-        <!-- SEM VLOŽ SVOJ PRVÝ OBRÁZOK -->
-        <img src="img/screenshot-start.png" alt="Linsoft Browser 2.0.26 - Domovská stránka" onerror="this.src='https://via.placeholder.com/1200x600/12141c/3b82f6?text=Sem+vloz+svoj+screenshot+(img/screenshot-start.png)'">
+        <img src="images/linsoft-home.webp" alt="Domovská stránka Linsoft Browser s rýchlym vyhľadávaním a obľúbenými stránkami" width="1109" height="768" fetchpriority="high">
+      </div>
+    </div>
+  </section>
+
+  <section id="ukazky" class="screenshots reveal" aria-labelledby="screenshots-title">
+    <div class="screenshots-inner">
+      <div class="screenshots-heading">
+        <p class="eyebrow">Pozrite sa dovnútra</p>
+        <h2 id="screenshots-title">Všetko, čo hľadáte. Prehľadne.</h2>
+        <p>Jasné výsledky na webe, obrázky, videá aj správy — v jednom prehliadači a v jednotnom dizajne.</p>
+      </div>
+      <div class="screenshot-grid">
+        <article class="screenshot-card">
+          <a class="screenshot-link" href="images/search-web.webp" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku webového vyhľadávania vo väčšom">
+            <img src="images/search-web.webp" alt="Linsoft Browser zobrazuje výsledky webového vyhľadávania a informačný panel o Slovensku" width="1800" height="758" loading="lazy" decoding="async">
+          </a>
+          <div class="screenshot-caption">
+            <h3>Webové vyhľadávanie</h3>
+            <p>Užitočné výsledky a dôležité informácie na prvý pohľad.</p>
+            <a class="screenshot-open" href="images/search-web.webp" target="_blank" rel="noopener noreferrer">Zobraziť obrázok ↗</a>
+          </div>
+        </article>
+        <article class="screenshot-card">
+          <a class="screenshot-link" href="images/search-images.webp" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku vyhľadávania obrázkov vo väčšom">
+            <img src="images/search-images.webp" alt="Linsoft Browser zobrazuje mriežku obrázkov nájdených pri vyhľadávaní" width="1800" height="755" loading="lazy" decoding="async">
+          </a>
+          <div class="screenshot-caption">
+            <h3>Obrázky pre každú tému</h3>
+            <p>Vizuálne výsledky prehľadne usporiadané na jednom mieste.</p>
+            <a class="screenshot-open" href="images/search-images.webp" target="_blank" rel="noopener noreferrer">Zobraziť obrázok ↗</a>
+          </div>
+        </article>
+        <article class="screenshot-card">
+          <a class="screenshot-link" href="images/search-videos.webp" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku vyhľadávania videí vo väčšom">
+            <img src="images/search-videos.webp" alt="Linsoft Browser zobrazuje výsledky vyhľadávania videí s náhľadmi" width="1800" height="753" loading="lazy" decoding="async">
+          </a>
+          <div class="screenshot-caption">
+            <h3>Videá na jednom mieste</h3>
+            <p>Prezrite si video výsledky a ich náhľady bez zbytočného hľadania.</p>
+            <a class="screenshot-open" href="images/search-videos.webp" target="_blank" rel="noopener noreferrer">Zobraziť obrázok ↗</a>
+          </div>
+        </article>
+        <article class="screenshot-card">
+          <a class="screenshot-link" href="images/search-news.webp" target="_blank" rel="noopener noreferrer" aria-label="Otvoriť ukážku vyhľadávania správ vo väčšom">
+            <img src="images/search-news.webp" alt="Linsoft Browser zobrazuje správy s obrázkami, titulkami a informačným panelom" width="1800" height="756" loading="lazy" decoding="async">
+          </a>
+          <div class="screenshot-caption">
+            <h3>Aktuálne správy</h3>
+            <p>Prečítajte si prehľadné spravodajské výsledky a súvisiace články.</p>
+            <a class="screenshot-open" href="images/search-news.webp" target="_blank" rel="noopener noreferrer">Zobraziť obrázok ↗</a>
+          </div>
+        </article>
       </div>
     </div>
   </section>
@@ -469,7 +594,7 @@
       <div class="feature-card">
         <div class="feature-icon" style="color: var(--accent-yellow); background: rgba(245, 158, 11, 0.1);"><svg viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg></div>
         <h3>Multiplatformový</h3>
-        <p>Či už používate Windows alebo Linux, Linsoft Browser vám poskytne rovnaký zážitok a synchronizáciu.</p>
+        <p>Či už používate Windows alebo Linux, Linsoft Browser vám ponúkne pohodlné a prehľadné prostredie na každodenné prehliadanie webu.</p>
       </div>
     </div>
   </section>
@@ -486,18 +611,6 @@
           <div class="stat"><span>2+</span> Platformy</div>
           <div class="stat"><span>100%</span> Súkromie</div>
           <div class="stat"><span>24/7</span> Vývoj</div>
-        </div>
-      </div>
-      <div class="about-image">
-        <div class="browser-mockup">
-          <div class="browser-header">
-            <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
-            <div class="browser-url">linsoft://about</div>
-          </div>
-          <div class="browser-content">
-             <!-- SEM VLOŽ SVOJ DRUHÝ OBRÁZOK -->
-             <img src="img/screenshot-about.png" alt="Linsoft Browser 2.0.26 - O aplikácii" onerror="this.src='https://via.placeholder.com/600x400/12141c/3b82f6?text=Sem+vloz+screenshot+o+aplikacii'">
-          </div>
         </div>
       </div>
     </div>
@@ -566,14 +679,12 @@
       <div class="footer-col">
         <h4>Spoločnosť</h4>
         <a href="#o-nas">O nás</a>
-        <a href="#">Kontakt</a>
-        <a href="#">Kariéra</a>
       </div>
       <div class="footer-col">
-        <h4>Právne</h4>
-        <a href="#">Ochrana súkromia</a>
-        <a href="#">Podmienky používania</a>
-        <a href="#">Licencie</a>
+        <h4>Projekt</h4>
+        <a href="https://github.com/Linsoft1/v2.0.1" target="_blank" rel="noopener noreferrer">GitHub projektu ↗</a>
+        <a href="https://github.com/Linsoft1/v2.0.1/releases" target="_blank" rel="noopener noreferrer">Vydania a stiahnutie ↗</a>
+        <a href="https://github.com/Linsoft1/v2.0.1/issues" target="_blank" rel="noopener noreferrer">Nahlásiť chybu ↗</a>
       </div>
     </div>
     <div class="footer-bottom">
@@ -592,17 +703,29 @@
     const menuToggle = document.getElementById('menuToggle');
     const navLinks = document.getElementById('navLinks');
 
+    const setMenuOpen = (isOpen) => {
+      navLinks.classList.toggle('active', isOpen);
+      menuToggle.textContent = isOpen ? '✕' : '☰';
+      menuToggle.setAttribute('aria-expanded', String(isOpen));
+      menuToggle.setAttribute('aria-label', isOpen ? 'Zavrieť navigáciu' : 'Otvoriť navigáciu');
+    };
+
     menuToggle.addEventListener('click', () => {
-      navLinks.classList.toggle('active');
-      menuToggle.textContent = navLinks.classList.contains('active') ? '✕' : '☰';
+      setMenuOpen(!navLinks.classList.contains('active'));
     });
 
     // Zatvorenie menu po kliknutí na odkaz
     document.querySelectorAll('.nav-links a').forEach(link => {
       link.addEventListener('click', () => {
-        navLinks.classList.remove('active');
-        menuToggle.textContent = '☰';
+        setMenuOpen(false);
       });
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && navLinks.classList.contains('active')) {
+        setMenuOpen(false);
+        menuToggle.focus();
+      }
     });
 
     // 2. Animácie pri scrollovaní (Scroll Reveal)
