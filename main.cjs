@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, Menu, Tray, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, WebContentsView, webContents, Menu, Tray, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const net = require('node:net');
@@ -7,12 +7,15 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const QRCode = require('qrcode');
 const { pathToFileURL } = require('node:url');
-const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getUpdateStatus, isSafeLocalDocumentUrl, isSafeLocalPdfUrl, isSafeWebUrl, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
+const { canAutoCheckForUpdates, formatUpdateFailure, getPermissionDecision, getStorageTypesToClearOnExit, getUpdateStatus, isSafeLocalDocumentUrl, isSafeLocalPdfUrl, isSafeWebUrl, linsoftSearchQueryFromUrl, linsoftSearchInitializationScript, normalizePermissionOrigin } = require('./lib/browser-policies.cjs');
 const { createTorStaticRequestHandler, loadSavedTorHostingState, requestOnionService, resolveHostedFile, saveTorHostingAutoStart, saveTorHostingFolder, waitForOnionService } = require('./lib/tor-hosting.cjs');
 const { clearTorChatFileTransfer, createTorChatRoom, createTorChatServer, enqueueTorChatFileChunk, enqueueTorChatMessage, enqueueTorChatVideoFrame, getTorChatFileChunks, getTorChatFileTransfer, getTorChatReceipts, getTorChatVideoState, isValidTorChatEnvelope, isValidTorChatFileChunk, markTorChatMessagesDelivered, markTorChatMessagesRead, stopTorChatVideo } = require('./lib/tor-chat-protocol.cjs');
 const { createPermissionCheckHandler, createPermissionRequestHandler, mediaTypesFromDetails } = require('./lib/permission-handlers.cjs');
 const { NativeTabManager } = require('./lib/native-tab-manager.cjs');
-app.setName('Linsoft Browser');
+const { tabInspectionScript, scrollRestorationScript } = require('./lib/browser-algorithms.js');
+const { createGoogleSignInRecovery, findSignInBrowser, openSignInWebsite } = require('./lib/google-signin.cjs');
+const browserName = 'Linsoft Browser';
+app.setName(browserName);
 const isPackagedBuild = app.isPackaged && process.env.LINSOFT_DEV_LAUNCH !== '1';
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { autoUpdater = null; }
@@ -22,8 +25,11 @@ const isLinux = process.platform === 'linux';
 const browserUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36 LinsoftBrowser/${app.getVersion()}`;
 app.userAgentFallback = browserUserAgent;
 const writableDataPath = process.env.LINSOFT_BROWSER_USER_DATA || path.join(app.getPath('appData'), 'Linsoft Browser');
+const browserCachePath = process.env.LINSOFT_BROWSER_USER_DATA
+  ? path.join(writableDataPath, 'Cache')
+  : app.getPath('cache');
 app.setPath('userData', writableDataPath);
-app.setPath('cache', path.join(writableDataPath, 'Cache'));
+app.setPath('cache', browserCachePath);
 const windowStatePath = path.join(writableDataPath, 'window-state.json');
 const passwordVaultPath = path.join(writableDataPath, 'password-vault.json');
 const downloadHistoryPath = path.join(writableDataPath, 'download-history.json');
@@ -33,6 +39,41 @@ const torHostingHostnamePath = path.join(writableDataPath, 'tor-hosting', 'hidde
 /** @type {Set<import('electron').BrowserWindow>} */
 const browserWindows = new Set();
 let certificateErrorHandlerRegistered = false;
+const googleSignInRecoveries = new WeakMap();
+
+function googleSignInRecoveryFor(window) {
+  if (!googleSignInRecoveries.has(window)) {
+    googleSignInRecoveries.set(window, createGoogleSignInRecovery({
+      onError: (error) => console.warn('Linsoft Browser sign-in recovery failed:', error.message),
+      onBlocked: async (contents, website) => {
+        if (window.isDestroyed() || contents.isDestroyed()) return;
+        const browser = findSignInBrowser();
+        const result = await dialog.showMessageBox(window, {
+          type: 'warning',
+          title: 'Linsoft Browser - prihlásenie cez Google',
+          message: 'Google odmietol toto prihlasovacie prostredie.',
+          detail: `Nejde o chýbajúci ovládač zariadenia. Prihlásenie alebo registráciu dokonči na pôvodnom webe v podporovanom prehliadači.\n\nWeb: ${website}\n\nOtvorí sa iba domovská adresa webu, nie prihlasovací odkaz s tokenmi. Heslá, cookies ani prihlásenie sa neprenesú do Linsoft Browser. Použije sa profil druhého prehliadača, aj keď je táto karta v režime hosťa.`,
+          buttons: browser ? [`Otvoriť v ${browser.name}`, 'Skopírovať adresu webu', 'Zrušiť'] : ['Skopírovať adresu webu', 'Zrušiť'],
+          defaultId: browser ? 0 : 1,
+          cancelId: browser ? 2 : 1
+        });
+        if (window.isDestroyed() || contents.isDestroyed()) return;
+        if (browser && result.response === 0) {
+          try {
+            await openSignInWebsite(browser, website);
+          } catch (error) {
+            console.warn('Linsoft Browser could not launch the sign-in browser:', error.message);
+            if (!window.isDestroyed()) await dialog.showMessageBox(window, {
+              type: 'error', title: 'Linsoft Browser', message: 'Prehliadač sa nepodarilo otvoriť.',
+              detail: 'Skús to znova alebo skopíruj adresu webu a otvor ju ručne.', buttons: ['OK']
+            });
+          }
+        } else if (result.response === (browser ? 1 : 0)) clipboard.writeText(website);
+      }
+    }));
+  }
+  return googleSignInRecoveries.get(window);
+}
 
 function publishUpdateState(state) {
   updateState = state;
@@ -65,6 +106,48 @@ let mainWindow = null;
 let openVpnProcess = null;
 let openVpnProfile = '';
 const activeDownloads = new Map();
+const pageActivities = new WeakMap();
+const pageDownloads = new WeakMap();
+
+function protectBrowserDownload(contents, item) {
+  let downloads = pageDownloads.get(contents);
+  if (!downloads) { downloads = new Set(); pageDownloads.set(contents, downloads); }
+  downloads.add(item);
+  const release = () => downloads.delete(item);
+  item.once('done', release);
+  return release;
+}
+
+function trackedPageReason(contents) {
+  if (pageDownloads.get(contents)?.size) return 'download';
+  const states = pageActivities.get(contents);
+  if (!states) return '';
+  for (const [frame, state] of states) {
+    if (frame.detached || frame.isDestroyed()) { states.delete(frame); continue; }
+    for (const reason of ['edited', 'call', 'capture', 'transfer']) if (state[reason]) return reason;
+  }
+  return '';
+}
+
+function ownedTabContents(event, target) {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner || !target || !Number.isSafeInteger(target.tabId)) throw new Error('Invalid browser tab request');
+  const native = owner.__nativeTabs?.views.get(target.tabId)?.webContents;
+  if (native) return native;
+  if (!Number.isSafeInteger(target.webContentsId)) throw new Error('The tab has no live website');
+  const contents = webContents.fromId(target.webContentsId);
+  if (!contents || contents.isDestroyed() || contents.getType() !== 'webview' || contents.hostWebContents !== event.sender) throw new Error('Website does not belong to this browser window');
+  return contents;
+}
+
+ipcMain.on('page-activity-state', (event, state) => {
+  const frame = event.senderFrame;
+  if (!frame || !/^https?:\/\//i.test(frame.url) || !state ||
+      !['edited', 'call', 'capture', 'transfer'].every(key => typeof state[key] === 'boolean')) return;
+  let states = pageActivities.get(event.sender);
+  if (!states) { states = new Map(); pageActivities.set(event.sender, states); }
+  states.set(frame, { edited: states.get(frame)?.edited === true || state.edited, call: state.call, capture: state.capture, transfer: state.transfer });
+});
 let torProxyProcess = null;
 let torHostingProcess = null;
 let torServer = null;
@@ -442,6 +525,8 @@ function openVpnExecutable() {
 function externalUrlFromArgs(args) {
   const explicitUrl = args.find((value) => /^linsoft:\/\/(?:apps|centrum|install\?|uninstall\?)/i.test(value) || /^file:\/\//i.test(value));
   if (explicitUrl) return explicitUrl;
+  const webUrl = args.find((value) => /^https?:\/\//i.test(value) && supportedWebUrl(value));
+  if (webUrl) return webUrl;
   const documentFile = args.find((value) => /\.(?:html?|pdf)$/i.test(value) && !String(value).startsWith('-'));
   return documentFile ? pathToFileURL(path.resolve(documentFile)).href : undefined;
 }
@@ -564,7 +649,7 @@ function showMouseEditContextMenu(window, contents, params, menuData) {
   return true;
 }
 
-function dispatchExternalUrl(window, url) {
+function dispatchExternalUrl(window, url, { openInNewTab = false } = {}) {
   if (!window || !url) return;
   if (/^file:\/\//i.test(url) && !isSafeLocalDocumentUrl(url)) return;
   if (/^linsoft:\/\/install\?/i.test(url)) {
@@ -587,13 +672,16 @@ function dispatchExternalUrl(window, url) {
     window.webContents.send('open-app-center');
     return;
   }
-  window.webContents.send('open-external-url', url);
+  window.webContents.send(openInNewTab && supportedWebUrl(url) ? 'open-external-url-in-tab' : 'open-external-url', url);
 }
 
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) app.quit();
 
 function configureGuestSession(guestSession) {
+  guestSession.on('will-download', (_event, item, contents) => { protectBrowserDownload(contents, item); });
+  guestSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'search-page-preload.cjs') });
+  guestSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'page-activity-preload.cjs') });
   configureCertificateErrorHandling(guestSession);
   guestSession.setPermissionRequestHandler(createPermissionRequestHandler(requestSitePermission));
   guestSession.setPermissionCheckHandler(createPermissionCheckHandler(({ permission, requestingUrl, mediaTypes }) => {
@@ -625,6 +713,8 @@ function configureGuestSession(guestSession) {
 }
 
 function configureNativeTabContents(window, tabId, contents) {
+  const signInRecovery = googleSignInRecoveryFor(window);
+  signInRecovery.watch(contents);
   contents.on('enter-html-full-screen', () => { if (!window.isDestroyed()) { window.setFullScreen(true); window.webContents.send('webview-fullscreen', true); } });
   contents.on('leave-html-full-screen', () => { if (!window.isDestroyed()) { window.setFullScreen(false); window.webContents.send('webview-fullscreen', false); } });
   contents.on('before-input-event', (inputEvent, input) => {
@@ -665,10 +755,28 @@ function configureNativeTabContents(window, tabId, contents) {
     window.webContents.send('webview-context-menu', menuData);
   });
   contents.setUserAgent(browserUserAgent);
-  contents.on('will-navigate', (event, url) => { if (!supportedNavigationUrl(url)) event.preventDefault(); });
-  contents.setWindowOpenHandler(({ url, disposition }) => {
+  contents.on('will-navigate', (event, url) => {
+    if (!supportedNavigationUrl(url)) { event.preventDefault(); return; }
+    if (!isOnionUrl(url) || torState.proxyEnabled) return;
+    event.preventDefault();
+    if (contents.__torNavigationPending === url) return;
+    contents.__torNavigationPending = url;
+    void enableTorProxy().then((result) => {
+      if (!result.ok) {
+        window.webContents.send('tor-navigation-error', result.message || 'Tor proxy sa nepodarilo spustiť.');
+        return;
+      }
+      if (!contents.isDestroyed()) return contents.loadURL(url).catch((error) => window.webContents.send('tor-navigation-error', `Onion stránku sa nepodarilo načítať: ${error.message}`));
+    }).catch((error) => {
+      window.webContents.send('tor-navigation-error', `Tor proxy sa nepodarilo spustiť: ${error.message}`);
+    }).finally(() => {
+      if (contents.__torNavigationPending === url) contents.__torNavigationPending = '';
+    });
+  });
+  contents.setWindowOpenHandler(({ url }) => {
     if (!supportedWebUrl(url)) return { action: 'deny' };
-    window.webContents.send(disposition === 'new-window' ? 'open-link-in-window' : 'open-link-in-tab', url);
+    signInRecovery.rememberPopup(url, contents.getURL());
+    window.webContents.send('open-link-in-tab', url);
     return { action: 'deny' };
   });
 }
@@ -688,7 +796,7 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
     icon: path.join(__dirname, 'assets', isLinux ? 'linsoft-icon-256.png' : 'linsoft-icon.ico'),
     minWidth: 960,
     minHeight: 640,
-    title: guest ? 'Linsoft Browser - hosť' : 'Linsoft Browser',
+    title: guest ? `${browserName} - hosť` : browserName,
     backgroundColor: '#0b1118',
     frame: false,
     titleBarStyle: 'hidden',
@@ -707,6 +815,9 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
   });
   window.__guest = guest;
   window.__nativeTabsEnabled = useNativeTabs;
+  window.webContents.on('did-attach-webview', (_event, contents) => {
+    googleSignInRecoveryFor(window).watch(contents);
+  });
   try {
     const spellSession = window.webContents.session;
     const availableLanguages = spellSession.availableSpellCheckerLanguages || [];
@@ -719,9 +830,11 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
     window.__nativeTabs = new NativeTabManager({
       window,
       WebContentsView,
-      createWebPreferences: () => ({ contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: true, partition: partition || undefined }),
+      createWebPreferences: (url) => ({ contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: true, plugins: isPdfDocumentUrl(url), partition: partition || undefined }),
       configureWebContents: (tabId, contents) => configureNativeTabContents(window, tabId, contents),
-      onEvent: (tabId, type, data) => window.webContents.send('native-tab-event', { tabId, type, ...data })
+      onEvent: (tabId, type, data) => {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('native-tab-event', { tabId, type, ...data });
+      }
     });
   }
 
@@ -747,7 +860,10 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
     window.on('close', () => saveWindowState(window));
   }
   window.on('close', (event) => {
-    if (window.__closeConfirmed) return;
+    if (window.__closeConfirmed) {
+      window.__nativeTabs?.destroyAll();
+      return;
+    }
     event.preventDefault();
     window.webContents.send('window-close-request', { keepHosting: torState.autoStart === true });
   });
@@ -761,7 +877,7 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
   });
   window.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
-    window.setTitle('Linsoft Browser');
+    window.setTitle(browserName);
   });
   browserWindows.add(window);
   window.on('closed', () => {
@@ -778,12 +894,12 @@ if (hasLock) {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
-      if (url) dispatchExternalUrl(mainWindow, url);
+      if (url) dispatchExternalUrl(mainWindow, url, { openInNewTab: true });
     }
   });
   app.on('open-url', (event, url) => {
     event.preventDefault();
-    if (mainWindow) dispatchExternalUrl(mainWindow, url);
+    if (mainWindow) dispatchExternalUrl(mainWindow, url, { openInNewTab: true });
   });
 }
 
@@ -823,24 +939,53 @@ ipcMain.handle('select-download-folder', async (event) => {
   const result = await dialog.showOpenDialog(parentWindow, { title: 'Vybrať priečinok na sťahovanie', properties: ['openDirectory', 'createDirectory'] });
   return result.canceled ? '' : result.filePaths[0] || '';
 });
-ipcMain.on('open-download-file', (_event, filePath) => shell.openPath(filePath));
-ipcMain.on('show-download-file', (_event, filePath) => shell.showItemInFolder(filePath));
-ipcMain.on('cancel-download', (_event, id) => { const download = activeDownloads.get(id); if (download) { download.cancel(); activeDownloads.delete(id); } });
-ipcMain.on('pause-download', (_event, id) => { const download = activeDownloads.get(id); if (download && !download.isPaused()) download.pause(); });
-ipcMain.on('resume-download', (_event, id) => { const download = activeDownloads.get(id); if (download?.canResume?.() && download.isPaused()) download.resume(); });
-ipcMain.handle('download-list', () => downloadHistory);
-ipcMain.handle('download-remove', (_event, id) => {
+function completedDownloadPath(filePath) {
+  if (typeof filePath !== 'string' || !filePath) return null;
+  const requestedPath = path.resolve(filePath);
+  const normalize = (value) => process.platform === 'win32' ? value.toLowerCase() : value;
+  const download = downloadHistory.find((entry) => entry.status === 'Stiahnuté'
+    && typeof entry.filePath === 'string'
+    && normalize(path.resolve(entry.filePath)) === normalize(requestedPath));
+  return download && require('node:fs').existsSync(requestedPath) ? requestedPath : null;
+}
+ipcMain.handle('open-download-file', async (event, filePath) => {
+  if (isGuestWebContents(event.sender)) return { ok: false, message: 'Sťahovania nie sú dostupné v okne hosťa.' };
+  const safePath = completedDownloadPath(filePath);
+  if (!safePath) return { ok: false, message: 'Súbor nie je v histórii dokončených sťahovaní.' };
+  const error = await shell.openPath(safePath);
+  return error ? { ok: false, message: error } : { ok: true };
+});
+ipcMain.handle('show-download-file', (event, filePath) => {
+  if (isGuestWebContents(event.sender)) return { ok: false, message: 'Sťahovania nie sú dostupné v okne hosťa.' };
+  const safePath = completedDownloadPath(filePath);
+  if (!safePath) return { ok: false, message: 'Súbor nie je v histórii dokončených sťahovaní.' };
+  shell.showItemInFolder(safePath);
+  return { ok: true };
+});
+ipcMain.on('cancel-download', (event, id) => { if (isGuestWebContents(event.sender)) return; const download = activeDownloads.get(id); if (download) { download.cancel(); activeDownloads.delete(id); } });
+ipcMain.on('pause-download', (event, id) => { if (isGuestWebContents(event.sender)) return; const download = activeDownloads.get(id); if (download && !download.isPaused()) download.pause(); });
+ipcMain.on('resume-download', (event, id) => { if (isGuestWebContents(event.sender)) return; const download = activeDownloads.get(id); if (download?.canResume?.() && download.isPaused()) download.resume(); });
+ipcMain.handle('download-list', (event) => isGuestWebContents(event.sender) ? [] : downloadHistory);
+ipcMain.handle('download-remove', (event, id) => {
+  if (isGuestWebContents(event.sender)) return { ok: false, message: 'História sťahovaní sa v okne hosťa nemení.' };
   downloadHistory = downloadHistory.filter((download) => download.id !== id);
   saveDownloadHistory();
   return { ok: true };
 });
-ipcMain.handle('download-clear', () => {
+ipcMain.handle('download-clear', (event) => {
+  if (isGuestWebContents(event.sender)) return { ok: false, message: 'História sťahovaní sa v okne hosťa nemení.' };
   downloadHistory = [];
   saveDownloadHistory();
   return { ok: true };
 });
 ipcMain.on('set-browser-preferences', (event, preferences) => {
   if (!preferences || typeof preferences !== 'object') return;
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (owner && Array.isArray(preferences.neverSuspendOrigins)) {
+    owner.__neverSuspendOrigins = preferences.neverSuspendOrigins.filter(origin => normalizePermissionOrigin(origin) === origin);
+    owner.__suspensionEnabled = preferences.suspendInactiveTabs === true;
+  }
+  if (isGuestWebContents(event.sender)) return;
   const enablingAutoUpdates = browserPreferences.autoUpdateCheck === false && preferences.autoUpdateCheck === true;
   for (const key of Object.keys(browserPreferences)) {
     if (typeof preferences[key] === typeof browserPreferences[key]) browserPreferences[key] = preferences[key];
@@ -874,7 +1019,8 @@ ipcMain.handle('site-permission-clear', (event) => {
   sitePermissions = {};
   try { saveSitePermissions(); return { ok: true }; } catch { return { ok: false }; }
 });
-ipcMain.handle('clear-cache', async () => {
+ipcMain.handle('clear-cache', async (event) => {
+  if (isGuestWebContents(event.sender)) return { ok: false, message: 'Vymazanie vyrovnávacej pamäte nie je dostupné v okne hosťa.' };
   try { await session.defaultSession.clearCache(); return { ok: true }; } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
 });
 ipcMain.handle('save-page-pdf', async (event, webContentsId) => {
@@ -1060,13 +1206,13 @@ function showMainBrowserWindow() {
 function updateTorHostingTray() {
   if (!torHostingTray) return;
   const active = torState.status === 'running' || torState.status === 'starting' || torState.autoStart;
-  torHostingTray.setToolTip(torState.status === 'running' ? 'Linsoft Browser - Tor hosting online' : 'Linsoft Browser - Tor hosting na pozadí');
+  torHostingTray.setToolTip(torState.status === 'running' ? `${browserName} - Tor hosting online` : `${browserName} - Tor hosting na pozadí`);
   torHostingTray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Otvoriť Linsoft Browser', click: showMainBrowserWindow },
+    { label: `Otvoriť ${browserName}`, click: showMainBrowserWindow },
     { label: torState.status === 'running' ? 'Tor hosting je online' : torState.message || 'Tor hosting sa obnovuje', enabled: false },
     { label: 'Zastaviť hosting', enabled: active, click: async () => { await stopTorHosting(); showMainBrowserWindow(); } },
     { type: 'separator' },
-    { label: 'Ukončiť Linsoft Browser', click: () => app.quit() }
+    { label: `Ukončiť ${browserName}`, click: () => app.quit() }
   ]));
 }
 
@@ -1997,7 +2143,7 @@ ipcMain.handle('set-manual-proxy', async (_event, { protocol = 'socks5', host = 
   publishTorState({ proxyEnabled: true, proxyStatus: 'manual', proxyMessage: `Manuálna ${normalizedProtocol.toUpperCase()} proxy je zapnutá: ${normalizedHost}:${normalizedPort}` });
   return { ok: true, ...torState };
 });
-ipcMain.on('open-browser-window', (_event, url) => { if (!supportedWebUrl(url)) return; if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); dispatchExternalUrl(mainWindow, url); } else if (hasLock) createWindow(url); });
+ipcMain.on('open-browser-window', (_event, url) => { if (!supportedWebUrl(url)) return; if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.focus(); dispatchExternalUrl(mainWindow, url, { openInNewTab: true }); } else if (hasLock) createWindow(url); });
 ipcMain.on('open-detached-window', (_event, url) => { if (hasLock) createWindow(url || 'linsoft://start'); });
 ipcMain.on('open-guest-window', () => { if (hasLock) createWindow('linsoft://start', { guest: true }); });
 function nativeTabsForEvent(event) {
@@ -2005,6 +2151,44 @@ function nativeTabsForEvent(event) {
   return window?.__nativeTabsEnabled ? window.__nativeTabs : null;
 }
 ipcMain.handle('native-tabs-enabled', (event) => BrowserWindow.fromWebContents(event.sender)?.__nativeTabsEnabled === true);
+ipcMain.handle('browser-memory', (event) => {
+  if (!BrowserWindow.fromWebContents(event.sender)) throw new Error('Memory measurement is only available to browser windows.');
+  return { free: os.freemem(), total: os.totalmem() };
+});
+ipcMain.handle('browser-tab-inspect', async (event, target) => {
+  const contents = ownedTabContents(event, target);
+  const url = contents.getURL();
+  const result = await contents.executeJavaScript(tabInspectionScript);
+  if (contents.isDestroyed() || contents.getURL() !== url) throw new Error('The page changed during inspection');
+  return { ...result, reason: trackedPageReason(contents) || result.reason };
+});
+ipcMain.handle('browser-tab-restore-scroll', async (event, { target, position } = {}) => {
+  const contents = ownedTabContents(event, target);
+  if (position?.url !== contents.getURL()) return { ok: false, changed: true };
+  const result = await contents.executeJavaScript(scrollRestorationScript(position));
+  return { ok: result === true, cancelled: result === null };
+});
+ipcMain.handle('browser-tab-metrics', (event, targets) => {
+  if (!Array.isArray(targets) || targets.length > 1000) throw new Error('Invalid tab measurement request');
+  const processes = new Map(app.getAppMetrics().map(metric => [metric.pid, metric]));
+  const rows = targets.map(target => {
+    const contents = ownedTabContents(event, target);
+    const pid = contents.getOSProcessId();
+    const metric = processes.get(pid);
+    const size = metric?.memory?.workingSetSize;
+    return {
+      tabId: target.tabId, pid, memoryBytes: Number.isFinite(size) ? size * 1024 : null,
+      reason: trackedPageReason(contents), cpu: metric?.cpu?.percentCPUUsage ?? null
+    };
+  });
+  const processTabs = new Map();
+  for (const contents of webContents.getAllWebContents()) {
+    if (contents.isDestroyed() || !['webview', 'window'].includes(contents.getType())) continue;
+    const pid = contents.getOSProcessId();
+    processTabs.set(pid, (processTabs.get(pid) || 0) + 1);
+  }
+  return rows.map(row => ({ ...row, sharedTabs: processTabs.get(row.pid) || 1 }));
+});
 ipcMain.handle('spellchecker-languages', (event) => {
   const ownerWindow = BrowserWindow.fromWebContents(event.sender);
   const spellSession = ownerWindow?.webContents.session || event.sender.session;
@@ -2015,16 +2199,36 @@ ipcMain.on('native-tab-layout', (event, bounds) => {
   if (!manager || !bounds || !Number.isFinite(bounds.x) || !Number.isFinite(bounds.y) || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) return;
   manager.setBounds({ x: Math.max(0, Math.round(bounds.x)), y: Math.max(0, Math.round(bounds.y)), width: Math.max(1, Math.round(bounds.width)), height: Math.max(1, Math.round(bounds.height)) });
 });
-ipcMain.handle('native-tab-load', (event, { tabId, url } = {}) => {
+ipcMain.handle('native-tab-load', (event, { tabId, url, muted = false } = {}) => {
   const manager = nativeTabsForEvent(event);
-  if (!manager || !Number.isInteger(tabId) || !supportedWebUrl(url)) return { ok: false };
-  manager.load(tabId, url);
-  manager.activate(tabId);
-  return { ok: true };
+  if (!manager || !Number.isInteger(tabId) || typeof muted !== 'boolean' || !(supportedWebUrl(url) || isSafeLocalDocumentUrl(url))) return { ok: false };
+  manager.load(tabId, url, { muted });
+  return { ok: manager.activate(tabId) };
 });
 ipcMain.handle('native-tab-activate', (event, tabId) => ({ ok: nativeTabsForEvent(event)?.activate(tabId) === true }));
 ipcMain.handle('native-tab-deactivate', (event) => { nativeTabsForEvent(event)?.deactivate(); return { ok: true }; });
 ipcMain.handle('native-tab-destroy', (event, tabId) => { nativeTabsForEvent(event)?.destroy(tabId); return { ok: true }; });
+ipcMain.handle('native-tab-suspend', async (event, tabId) => {
+  const manager = nativeTabsForEvent(event);
+  const view = manager?.views.get(tabId);
+  if (!view || manager.activeTabId === tabId) return { ok: false };
+  try {
+    const url = view.webContents.getURL();
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const protectedSite = () => owner?.__suspensionEnabled === false || owner?.__neverSuspendOrigins?.includes(normalizePermissionOrigin(url));
+    if (protectedSite()) return { ok: false };
+    if (view.webContents.isLoading() || view.webContents.isCurrentlyAudible()) return { ok: false, reason: 'loading' };
+    const snapshot = await view.webContents.executeJavaScript(tabInspectionScript);
+    const reason = trackedPageReason(view.webContents) || snapshot.reason;
+    if (reason) return { ok: false, reason };
+    if (protectedSite() || manager.views.get(tabId) !== view || view.webContents.getURL() !== url || view.webContents.isLoading() || view.webContents.isCurrentlyAudible()) return { ok: false };
+    if (trackedPageReason(view.webContents)) return { ok: false, reason: trackedPageReason(view.webContents) };
+    return { ok: manager.suspend(tabId), snapshot };
+  } catch (error) {
+    console.warn('Linsoft Browser could not check an inactive native tab:', error.message);
+    return { ok: false, message: error.message };
+  }
+});
 ipcMain.handle('native-tab-command', async (event, { tabId, command, value, fromContextMenu } = {}) => {
   const view = nativeTabsForEvent(event)?.views.get(tabId);
   if (!view) return { ok: false };
@@ -2033,6 +2237,7 @@ ipcMain.handle('native-tab-command', async (event, { tabId, command, value, from
   else if (command === 'back' && contents.canGoBack()) contents.goBack();
   else if (command === 'forward' && contents.canGoForward()) contents.goForward();
   else if (command === 'zoom' && Number.isFinite(value)) contents.setZoomFactor(value);
+  else if (command === 'mute' && typeof value === 'boolean') contents.setAudioMuted(value);
   else if (command === 'paste' && fromContextMenu) {
     if (!(await pasteAtContextPoint(contents, event.sender.__lastContextPoint))) {
       const text = String(clipboard.readText() || '');
@@ -2141,6 +2346,8 @@ ipcMain.on('openvpn-connect', (_event, profile) => {
 ipcMain.on('openvpn-disconnect', () => { if (openVpnProcess) { openVpnProcess.kill(); openVpnProcess = null; } sendVpnStatus('disconnected', 'VPN je odpojená.'); });
 
 app.whenReady().then(() => {
+  session.defaultSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'search-page-preload.cjs') });
+  session.defaultSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'page-activity-preload.cjs') });
   if (process.platform === 'win32' || process.platform === 'linux') app.setAsDefaultProtocolClient('linsoft');
   app.commandLine.appendSwitch('enable-features', 'ParallelDownloading');
   app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -2177,6 +2384,21 @@ app.whenReady().then(() => {
     webPreferences.plugins = isSafeLocalPdfUrl(params.src) || isPdfDocumentUrl(params.src);
   });
   app.on('web-contents-created', (_event, contents) => {
+    contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) pageActivities.delete(contents);
+    });
+    contents.on('dom-ready', () => {
+      const url = contents.getURL();
+      const query = linsoftSearchQueryFromUrl(url);
+      if (!query) return;
+      void contents.executeJavaScript(linsoftSearchInitializationScript(url)).catch((error) => {
+        console.warn('Linsoft Browser could not submit a Linsoft Search query:', error.message);
+        if (contents.isDestroyed() || contents.getURL() !== url) return;
+        const owner = contents.hostWebContents || BrowserWindow.fromWebContents(contents)?.webContents ||
+          BrowserWindow.getAllWindows().find(window => [...(window.__nativeTabs?.views.values() || [])].some(view => view.webContents === contents))?.webContents;
+        if (owner && !owner.isDestroyed()) owner.send('search-error', 'Linsoft Search sa nepodarilo spustiť. Skús vyhľadávanie znova alebo zvoľ iný vyhľadávač.');
+      });
+    });
     if (contents.getType() !== 'webview') return;
     contents.on('before-input-event', (inputEvent, input) => {
       const key = String(input.key || '').toLowerCase();
@@ -2230,13 +2452,16 @@ app.whenReady().then(() => {
         if (!contents.isDestroyed()) void contents.loadURL(url).catch((error) => contents.hostWebContents?.send('tor-navigation-error', `Onion stránku sa nepodarilo načítať: ${error.message}`));
       }).catch((error) => contents.hostWebContents?.send('tor-navigation-error', `Tor proxy sa nepodarilo spustiť: ${error.message}`));
     });
-    contents.setWindowOpenHandler(({ url, disposition }) => {
+    contents.setWindowOpenHandler(({ url }) => {
       if (!supportedWebUrl(url)) return { action: 'deny' };
-      contents.hostWebContents?.send(disposition === 'new-window' ? 'open-link-in-window' : 'open-link-in-tab', url);
+      const owner = BrowserWindow.fromWebContents(contents.hostWebContents);
+      if (owner) googleSignInRecoveryFor(owner).rememberPopup(url, contents.getURL());
+      contents.hostWebContents?.send('open-link-in-tab', url);
       return { action: 'deny' };
     });
   });
   session.defaultSession.on('will-download', async (event, item, webContents) => {
+    const releaseProtection = protectBrowserDownload(webContents, item);
     let folder = configuredDownloadFolder();
     const downloadId = crypto.randomUUID();
     try {
@@ -2250,7 +2475,7 @@ app.whenReady().then(() => {
     if (dangerousDownloadExtensions.has(extension.toLowerCase())) {
       const parentWindow = BrowserWindow.fromWebContents(webContents) || undefined;
       const warning = await dialog.showMessageBox(parentWindow, { type: 'warning', title: 'Rizikové sťahovanie', message: `Súbor ${rawName} môže obsahovať spustiteľný kód.`, detail: 'Ulož ho iba vtedy, ak dôveruješ zdroju.', buttons: ['Zrušiť', 'Uložiť aj tak'], defaultId: 0, cancelId: 0 });
-      if (warning.response !== 1) { event.preventDefault(); return; }
+      if (warning.response !== 1) { releaseProtection(); event.preventDefault(); return; }
     }
     const stem = extension ? rawName.slice(0, -extension.length) : rawName;
     let downloadPath = path.join(folder, rawName);
@@ -2259,7 +2484,7 @@ app.whenReady().then(() => {
     if (browserPreferences.askDownload) {
       const parentWindow = BrowserWindow.fromWebContents(webContents) || undefined;
       const result = await dialog.showSaveDialog(parentWindow, { defaultPath: downloadPath, title: 'Uložiť stiahnutý súbor' });
-      if (result.canceled || !result.filePath) { event.preventDefault(); return; }
+      if (result.canceled || !result.filePath) { releaseProtection(); event.preventDefault(); return; }
       downloadPath = result.filePath;
     }
     const sender = BrowserWindow.fromWebContents(webContents)?.webContents || webContents.hostWebContents || webContents;
@@ -2269,6 +2494,7 @@ app.whenReady().then(() => {
       const message = error instanceof Error ? error.message : String(error);
       sender?.send('download-update', { id: downloadId, fileName: item.getFilename(), filePath: downloadPath, sourceUrl: item.getURL(), status: `Sťahovanie zlyhalo: ${message}`, received: 0, total: item.getTotalBytes(), startedAt: Date.now(), percent: 0 });
       event.preventDefault();
+      releaseProtection();
       return;
     }
     const fileName = item.getFilename();
@@ -2325,8 +2551,10 @@ app.on('before-quit', async (event) => {
   if (!browserPreferences.clearExit || clearingExitData) return;
   event.preventDefault();
   clearingExitData = true;
-    try {
-    await session.defaultSession.clearStorageData({ storages: ['cookies', 'filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage'] });
+  try {
+    await session.defaultSession.clearStorageData({ storages: getStorageTypesToClearOnExit() });
+  } catch (error) {
+    console.warn('Linsoft Browser could not clear selected site data on exit:', error.message);
   } finally {
     app.quit();
   }

@@ -3,6 +3,8 @@ const content = document.getElementById('content');
 const tabTitle = document.getElementById('tabTitle');
 const isGuestWindow = new URLSearchParams(window.location.search).has('guest');
 const isNativeTabs = new URLSearchParams(window.location.search).has('nativeTabs');
+const tabState = window.LinsoftTabState;
+const browserAlgorithms = window.LinsoftBrowserAlgorithms;
 document.getElementById('guestIndicator').hidden = !isGuestWindow;
 const torChatUi = { role: '', onion: '', invite: '', inviteQr: '', expiresAt: 0, expiryTimer: null, guestConnected: false, pendingReadIds: [], reconnectAttempts: 0, scanning: false, videoActive: false, videoStarting: false, videoStream: null, videoSendTimer: null, videoPollTimer: null, videoLastId: 0, videoGeneration: 0, videoSending: false, videoPolling: false, videoStatus: 'Video-only cez Tor; kvalita prispôsobená sieti.', fileTimer: null, fileGeneration: 0, filePolling: false, fileSending: false, outgoingFileId: '', fileCursor: -1, incomingFile: null, key: null, lastId: 0, messages: [], pollTimer: null, polling: false, busy: false, generation: 0, status: 'stopped', statusMessage: 'Onion chat je vypnutý.' };
 let torChatPanel = null;
@@ -586,11 +588,14 @@ let historyIndex = 0;
 let activeTabId = 1;
 let nextTabId = 2;
 const tabs = new Map([[1, { id: 1, url: 'linsoft://start', title: 'Linsoft Browser', history: ['linsoft://start'], historyIndex: 0 }]]);
+const playingAudioTabs = new Set();
+const suspendingTabs = new Set();
 const closedTabs = [];
 const tabGroupColors = ['', 'blue', 'green', 'orange', 'red'];
 const suspendedTabs = new Set();
 let lastTabDragPosition = { x: 0, y: 0 };
 const boundViewers = new WeakSet();
+const readyViewers = new WeakSet();
 let savedBookmarks = [];
 try {
   const storedBookmarks = JSON.parse(localStorage.getItem('linsoft-bookmarks') || '[]');
@@ -655,6 +660,21 @@ const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://star
 let settingsFromStorage = {};
 try { settingsFromStorage = JSON.parse(localStorage.getItem('linsoft-settings') || '{}'); } catch { settingsFromStorage = {}; }
 const settingsState = Object.assign({}, defaultSettings, settingsFromStorage);
+defaultSettings.learnSuggestions = true;
+settingsState.learnSuggestions = settingsFromStorage.learnSuggestions !== false;
+let learnedSuggestions = [];
+try {
+  learnedSuggestions = browserAlgorithms.normalizeSuggestionLearning(JSON.parse(localStorage.getItem('linsoft-suggestion-learning') || '[]'));
+} catch (error) {
+  console.warn('Linsoft Browser could not read suggestion learning:', error.message);
+}
+const tabScrollPositions = new Map();
+const tabMeasurements = new Map();
+const tabProtectionReasons = new Map();
+defaultSettings.neverSuspendOrigins = [];
+settingsState.neverSuspendOrigins = Array.isArray(settingsFromStorage.neverSuspendOrigins) ? settingsFromStorage.neverSuspendOrigins.filter(origin => {
+  try { const url = new URL(origin); return ['http:', 'https:'].includes(url.protocol) && url.origin === origin; } catch { return false; }
+}) : [];
 const pageLoadStarts = new Map();
 let recentPageLoadMetrics = [];
 try {
@@ -758,7 +778,18 @@ function updateTabDensity() {
   document.querySelector('.tabs-bar')?.classList.toggle('many-tabs', count >= 7);
 }
 
-function setTabIcon(id, iconUrl = '', brandIcon = false) { const icon = document.querySelector(`.managed-tab[data-tab-id="${id}"] .tab-logo`); if (!icon) return; icon.textContent = iconUrl || brandIcon ? '' : 'L'; icon.style.backgroundImage = iconUrl ? `url("${iconUrl}")` : brandIcon ? 'url("assets/linsoft-icon.svg")' : ''; }
+function setTabIcon(id, iconUrl = '', brandIcon = false) {
+  const icon = document.querySelector(`.managed-tab[data-tab-id="${id}"] .tab-logo`);
+  if (!icon) return;
+  let safeIconUrl = '';
+  try {
+    const parsed = new URL(String(iconUrl));
+    if (['http:', 'https:'].includes(parsed.protocol) && parsed.hostname && !parsed.username && !parsed.password) safeIconUrl = parsed.href;
+    else if (parsed.protocol === 'data:' && /^data:image\/(?:png|gif|jpeg|webp|x-icon);base64,[A-Za-z0-9+/]+=*$/i.test(String(iconUrl))) safeIconUrl = String(iconUrl);
+  } catch {}
+  icon.textContent = safeIconUrl || brandIcon ? '' : 'L';
+  icon.style.backgroundImage = safeIconUrl ? `url("${safeIconUrl}")` : brandIcon ? 'url("assets/linsoft-icon.svg")' : '';
+}
 
 function setTabAudioIcon(id, muted = false, playing = false) { const audio = document.querySelector(`.managed-tab[data-tab-id="${id}"] .tab-audio`); if (!audio) return; audio.textContent = muted ? '🔇' : playing ? '🔊' : ''; audio.title = muted ? 'Zapnúť zvuk' : 'Stlmiť kartu'; audio.setAttribute('aria-label', audio.title); }
 function setTabLoading(id, loading) { document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.classList.toggle('loading', loading); }
@@ -769,6 +800,26 @@ function syncNativeTabLayout() {
 }
 function hideNativeTab() { if (isNativeTabs) window.linsoftBrowser?.deactivateNativeTab?.(); }
 new ResizeObserver(syncNativeTabLayout).observe(content);
+
+function loadNativeTab(tabId, url) {
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  tab.loaded = true;
+  const request = window.linsoftBrowser?.loadNativeTab?.({ tabId, url, muted: tab.muted === true });
+  if (!request) {
+    tab.loaded = false;
+    showToast('Natívna karta nie je dostupná.');
+    return;
+  }
+  request.then((result) => {
+    if (result?.ok) return;
+    tab.loaded = false;
+    if (activeTabId === tabId) showToast('Stránku sa nepodarilo otvoriť v karte.');
+  }).catch((error) => {
+    tab.loaded = false;
+    if (activeTabId === tabId) showToast(`Stránku sa nepodarilo otvoriť: ${error.message}`);
+  });
+}
 
 function bindTabButton(button, id) {
   button.addEventListener('click', (event) => { if (event.target.classList.contains('tab-close')) { event.preventDefault(); event.stopPropagation(); closeTab(id); } else if (event.target.classList.contains('tab-audio')) { event.preventDefault(); event.stopPropagation(); toggleTabMute(id); } else selectTab(id); });
@@ -809,8 +860,24 @@ function toggleTabMute(id) {
   const tab = tabs.get(id); const button = document.querySelector(`.managed-tab[data-tab-id="${id}"]`); const viewer = content.querySelector(`.tab-surface[data-tab-id="${id}"] webview`);
   if (!tab || !button) return;
   tab.muted = !tab.muted;
-  if (viewer?.setAudioMuted) viewer.setAudioMuted(tab.muted);
-  setTabAudioIcon(id, tab.muted, false);
+  if (isNativeTabs && tab.loaded) {
+    const request = window.linsoftBrowser?.nativeTabCommand?.({ tabId: id, command: 'mute', value: tab.muted });
+    if (!request) {
+      tab.muted = !tab.muted;
+      showToast('Stlmenie karty nie je dostupné.');
+    } else request.then((result) => {
+      if (result?.ok) return;
+      throw new Error(result?.message || 'Príkaz nebol vykonaný.');
+    }).catch((error) => {
+      if (tabs.get(id) !== tab) return;
+      tab.muted = !tab.muted;
+      setTabAudioIcon(id, tab.muted, playingAudioTabs.has(id));
+      saveSession();
+      showToast(`Stlmenie karty zlyhalo: ${error.message}`);
+    });
+  }
+  else if (viewer?.setAudioMuted) viewer.setAudioMuted(tab.muted);
+  setTabAudioIcon(id, tab.muted, playingAudioTabs.has(id));
   saveSession();
 }
 
@@ -832,6 +899,8 @@ function showTabContextMenu(x, y, id) {
   const menu = document.createElement('div'); menu.className = 'tab-context-menu';
   menu.setAttribute('role', 'menu');
   const actions = [['group', 'Zmeniť skupinu/farbu'], ['groupName', 'Pomenovať skupinu'], ['mute', tabs.get(id)?.muted ? 'Zapnúť zvuk karty' : 'Stlmiť kartu'], ['lock', tabs.get(id)?.locked ? 'Odomknúť kartu' : 'Zamknúť kartu'], ['detach', 'Otvoriť kópiu v novom okne'], ['pin', tabs.get(id)?.pinned ? 'Odpnúť kartu' : 'Pripnúť kartu'], ['duplicate', 'Duplikovať kartu'], ['close', 'Zatvoriť kartu'], ['closeOthers', 'Zatvoriť ostatné karty'], ['closeRight', 'Zatvoriť karty napravo']];
+  const origin = tabWebOrigin(id);
+  if (origin) actions.unshift(['protect', settingsState.neverSuspendOrigins.includes(origin) ? 'Povoliť uspávanie tejto stránky' : 'Túto stránku nikdy neuspávať']);
   menu.innerHTML = actions.map(([action, label]) => `<button role="menuitem" data-tab-action="${action}">${label}</button>`).join('');
   menu.style.left = `${Math.min(x, window.innerWidth - 220)}px`; menu.style.top = `${Math.min(y, window.innerHeight - 220)}px`; document.body.appendChild(menu);
   const closeMenu = () => { menu.remove(); document.removeEventListener('pointerdown', closeFromOutside, true); document.removeEventListener('click', closeFromOutside, true); document.removeEventListener('keydown', closeFromEscape, true); };
@@ -847,7 +916,20 @@ function showTabContextMenu(x, y, id) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const direction = event.key === 'ArrowDown' ? 1 : -1; buttons[(current + direction + buttons.length) % buttons.length]?.focus(); }
   });
   menu.querySelector('button')?.focus();
-  menu.addEventListener('click', (event) => { const action = event.target.closest('[data-tab-action]')?.dataset.tabAction; if (!action) return; closeMenu(); if (action === 'group') cycleTabGroup(id); if (action === 'groupName') setTabGroupName(id); if (action === 'mute') toggleTabMute(id); if (action === 'lock') toggleTabLock(id); if (action === 'detach') detachTab(id); if (action === 'pin') togglePinnedTab(id); if (action === 'duplicate') duplicateTab(id); if (action === 'close') closeTab(id); if (action === 'closeOthers') [...tabs.keys()].filter((tabId) => tabId !== id && !tabs.get(tabId)?.pinned).forEach(closeTab); if (action === 'closeRight') closeTabsRight(id); });
+  menu.addEventListener('click', (event) => { const action = event.target.closest('[data-tab-action]')?.dataset.tabAction; if (!action) return; closeMenu(); if (action === 'protect') toggleSiteSuspensionProtection(id); if (action === 'group') cycleTabGroup(id); if (action === 'groupName') setTabGroupName(id); if (action === 'mute') toggleTabMute(id); if (action === 'lock') toggleTabLock(id); if (action === 'detach') detachTab(id); if (action === 'pin') togglePinnedTab(id); if (action === 'duplicate') duplicateTab(id); if (action === 'close') closeTab(id); if (action === 'closeOthers') [...tabs.keys()].filter((tabId) => tabId !== id && !tabs.get(tabId)?.pinned).forEach(closeTab); if (action === 'closeRight') closeTabsRight(id); });
+}
+
+function tabWebOrigin(id) {
+  try { const url = new URL(tabs.get(id)?.url); return ['http:', 'https:'].includes(url.protocol) ? url.origin : ''; } catch { return ''; }
+}
+
+function toggleSiteSuspensionProtection(id) {
+  const origin = tabWebOrigin(id);
+  if (!origin) return showToast('Ochranu možno nastaviť iba pre webovú stránku.');
+  const protectedSite = settingsState.neverSuspendOrigins.includes(origin);
+  settingsState.neverSuspendOrigins = protectedSite ? settingsState.neverSuspendOrigins.filter(item => item !== origin) : [...settingsState.neverSuspendOrigins, origin];
+  saveSettings();
+  showToast(protectedSite ? 'Uspávanie stránky je opäť povolené.' : 'Všetky karty tejto stránky sú chránené pred uspávaním.');
 }
 
 function showInputContextMenu(input, x, y) {
@@ -969,6 +1051,7 @@ function updateBookmarksBar() {
 }
 
 function addTab(initialUrl = 'linsoft://start') {
+  markTabInactive(activeTabId);
   const id = nextTabId++;
   const initialTitle = initialUrl === 'linsoft://start' ? 'Linsoft Browser' : initialUrl === 'linsoft://tor-chat' ? 'Onion Chat' : initialUrl.replace(/^https?:\/\//, '').split('/')[0];
   tabs.set(id, { id, url: initialUrl, title: initialTitle, history: [initialUrl], historyIndex: 0 });
@@ -999,6 +1082,8 @@ function openBackgroundTab(url) {
 function selectTab(id) {
   const tab = tabs.get(id);
   if (!tab) return;
+  if (activeTabId !== id) markTabInactive(activeTabId);
+  delete tab.inactiveSince;
   if (tab.url !== 'linsoft://tor-chat') {
     if (torChatUi.scanning) void stopTorChatQrScanner();
     if (torChatUi.videoActive || torChatUi.videoStarting) void stopTorChatVideoCall();
@@ -1007,7 +1092,9 @@ function selectTab(id) {
   updateActiveTab(tab.url, tab.title);
   addressInput.value = tab.url;
   tabTitle.textContent = tab.title;
-  if (suspendedTabs.has(id) || tab.crashed) {
+  if (tab.crashed) {
+    showCrashedTab(id);
+  } else if (suspendedTabs.has(id)) {
     suspendedTabs.delete(id);
     tab.suspended = false;
     tab.crashed = false;
@@ -1028,39 +1115,199 @@ function selectTab(id) {
     activateSurface(id);
     if (isNativeTabs) {
       syncNativeTabLayout();
-      window.linsoftBrowser?.activateNativeTab?.(id);
+      const activation = window.linsoftBrowser?.activateNativeTab?.(id);
+      if (!activation) {
+        handleTabCrash(id, 'unavailable');
+      } else activation.then((result) => {
+        if (!result?.ok && activeTabId === id && !suspendedTabs.has(id)) {
+          handleTabCrash(id, 'unavailable');
+        }
+      }).catch((error) => showToast(`Kartu sa nepodarilo aktivovať: ${error.message}`));
     }
   }
   updateNavigationButtons();
 }
 
-function closeTab(id) { const tab = tabs.get(id); if (!tab || tab.pinned || tab.locked) return; if (tab.url === 'linsoft://tor-chat') { torChatUi.generation += 1; clearTorChatUi(); void window.linsoftBrowser?.stopTorChat?.(); } const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`); if (isNativeTabs) window.linsoftBrowser?.destroyNativeTab?.(id); else surface?.querySelectorAll('webview').forEach((viewer) => viewer.remove()); if (tabs.size === 1) { activeTabId = id; tabs.get(id).url = 'linsoft://start'; tabs.get(id).title = 'Linsoft Browser'; tabs.get(id).history = ['linsoft://start']; tabs.get(id).historyIndex = 0; startPage(); return; } closedTabs.unshift({ ...tab }); closedTabs.splice(10); const ids = [...tabs.keys()]; const closedIndex = ids.indexOf(id); const fallbackId = ids[Math.max(0, closedIndex - 1)]; surface?.remove(); document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.remove(); tabs.delete(id); updateTabDensity(); saveSession(); if (activeTabId === id) selectTab(fallbackId); }
+function closeTab(id) {
+  const tab = tabs.get(id);
+  if (!tab || tab.pinned || tab.locked) return;
+  playingAudioTabs.delete(id);
+  tabScrollPositions.delete(id);
+  tabMeasurements.delete(id);
+  tabProtectionReasons.delete(id);
+  suspendedTabs.delete(id);
+  if (tab.url === 'linsoft://tor-chat') { torChatUi.generation += 1; clearTorChatUi(); void window.linsoftBrowser?.stopTorChat?.(); }
+  const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`);
+  if (isNativeTabs) window.linsoftBrowser?.destroyNativeTab?.(id);
+  else surface?.querySelectorAll('webview').forEach(viewer => viewer.remove());
+  if (tabs.size === 1) {
+    activeTabId = id;
+    Object.assign(tab, { url: 'linsoft://start', title: 'Linsoft Browser', history: ['linsoft://start'], historyIndex: 0, crashed: false, suspended: false });
+    startPage();
+    return;
+  }
+  closedTabs.unshift({ ...tab });
+  closedTabs.splice(10);
+  const ids = [...tabs.keys()];
+  const closedIndex = ids.indexOf(id);
+  const fallbackId = ids[Math.max(0, closedIndex - 1)];
+  surface?.remove();
+  document.querySelector(`.managed-tab[data-tab-id="${id}"]`)?.remove();
+  tabs.delete(id);
+  updateTabDensity();
+  saveSession();
+  if (activeTabId === id) selectTab(fallbackId);
+}
 
 function restoreClosedTab() { const tab = closedTabs.shift(); if (!tab) return; const id = nextTabId++; tab.id = id; tabs.set(id, tab); createTabButton(tab); activeTabId = id; navigate(tab.url, false); saveSession(); }
 
 function activeViewer() { return isNativeTabs ? null : content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"] .webview`); }
 function ensureActiveTabLoaded() { const tab = tabs.get(activeTabId); if (tab && suspendedTabs.has(activeTabId)) { suspendedTabs.delete(activeTabId); tab.suspended = false; navigate(tab.url, false); return null; } return activeViewer(); }
-function updateNavigationButtons() { const tab = tabs.get(activeTabId); const viewer = activeViewer(); const back = document.getElementById('backButton'); const forward = document.getElementById('forwardButton'); if (back) back.disabled = !(viewer?.canGoBack?.() || (tab?.historyIndex > 0)); if (forward) forward.disabled = !(viewer?.canGoForward?.() || (tab && tab.historyIndex < tab.history.length - 1)); }
+
+function liveTabTarget(id) {
+  if (isNativeTabs) return tabs.get(id)?.loaded && !tabs.get(id)?.crashed ? { tabId: id } : null;
+  const viewer = content.querySelector(`.tab-surface[data-tab-id="${id}"] webview`);
+  return viewer && readyViewers.has(viewer) && !tabs.get(id)?.crashed ? { tabId: id, webContentsId: viewer.getWebContentsId() } : null;
+}
+
+async function measureLiveTabs() {
+  for (const cache of [tabScrollPositions, tabProtectionReasons]) {
+    for (const id of cache.keys()) if (!tabs.has(id)) cache.delete(id);
+  }
+  const targets = [...tabs.keys()].map(liveTabTarget).filter(Boolean);
+  const measurements = await window.linsoftBrowser.getTabMetrics(targets);
+  tabMeasurements.clear();
+  for (const row of measurements) tabMeasurements.set(row.tabId, row);
+  return measurements;
+}
+
+const protectionLabels = {
+  edited: 'Rozpracované úpravy', call: 'WebRTC hovor/spojenie', capture: 'Kamera, mikrofón alebo zdieľanie',
+  transfer: 'Prenos na web', download: 'Sťahovanie', media: 'Prehrávanie', form: 'Formulár alebo editor',
+  frame: 'Vnorenú stránku nemožno bezpečne skontrolovať', loading: 'Načítava sa'
+};
+
+function clearSuggestionLearning(announce = true) {
+  learnedSuggestions = [];
+  localStorage.removeItem('linsoft-suggestion-learning');
+  if (announce) showToast('Naučené poradie návrhov bolo vymazané.');
+}
+
+function renderTabPerformance() {
+  const list = document.getElementById('tabPerformanceList');
+  if (!list) return;
+  list.innerHTML = [...tabs.values()].map(tab => {
+    const measurement = tabMeasurements.get(tab.id);
+    const tracked = measurement?.reason || tabProtectionReasons.get(tab.id);
+    const origin = tabWebOrigin(tab.id);
+    const status = tab.crashed ? 'Karta spadla — vyžaduje obnovu' : tab.suspended ? 'Uspaná' :
+      tab.id === activeTabId ? 'Aktívna karta' :
+      tab.pinned ? 'Pripnutá' : tab.locked ? 'Zamknutá' :
+      settingsState.neverSuspendOrigins.includes(origin) ? 'Vlastná ochrana stránky' :
+      tab.loading ? 'Načítava sa' : playingAudioTabs.has(tab.id) ? 'Prehrávanie' :
+      tracked ? protectionLabels[tracked] || tracked :
+      !browserAlgorithms.canSuspendTab({ ...tab, inactiveSince: 0 }, { activeTabId, now: 1200001 }) ? 'Chránený web alebo interná stránka' :
+      !settingsState.suspendInactiveTabs ? 'Uspávanie je vypnuté' : 'Čaká na hranicu nečinnosti a kontrolu stránky';
+    const memory = tab.crashed || tab.suspended ? 'Bez aktívneho procesu karty' : Number.isFinite(measurement?.memoryBytes) ?
+      `${(measurement.memoryBytes / 1048576).toFixed(1)} MB · proces ${measurement.pid}${measurement.sharedTabs > 1 ? ` · zdieľaný (${measurement.sharedTabs})` : ''}` : 'Pamäť nie je dostupná';
+    return `<div class="setting-card"><div><strong>${escapeHtml(tab.title)}</strong><small>${escapeHtml(status)}</small><small>${escapeHtml(memory)}</small></div><button class="settings-control" data-performance-tab="${tab.id}">Prepnúť</button></div>`;
+  }).join('');
+  list.querySelectorAll('[data-performance-tab]').forEach(button => button.addEventListener('click', () => selectTab(Number(button.dataset.performanceTab))));
+}
+
+async function refreshTabPerformance() {
+  const list = document.getElementById('tabPerformanceList');
+  if (!list) return;
+  list.textContent = 'Meriam karty...';
+  try {
+    await measureLiveTabs();
+    await Promise.all([...tabs.keys()].map(async id => {
+      const target = liveTabTarget(id);
+      if (!target) return;
+      const result = await window.linsoftBrowser.inspectTab(target);
+      tabProtectionReasons.set(id, result.reason);
+    }));
+    renderTabPerformance();
+  } catch (error) {
+    if (list.isConnected) list.textContent = `Meranie zlyhalo: ${error.message}`;
+    showToast(`Výkon kariet sa nepodarilo zmerať: ${error.message}`);
+  }
+}
+
+async function restoreSuspendedScroll(id) {
+  const position = tabScrollPositions.get(id);
+  if (!position) return;
+  const target = liveTabTarget(id);
+  if (!target) return;
+  tabScrollPositions.delete(id);
+  try {
+    const result = await window.linsoftBrowser.restoreTabScroll(target, position);
+    if (!result.ok && !result.cancelled && !result.changed) showToast('Stránka zmenila rozloženie; pôvodnú pozíciu sa nepodarilo obnoviť.');
+  } catch (error) {
+    showToast(`Pozíciu stránky sa nepodarilo obnoviť: ${error.message}`);
+  }
+}
+
+function handleTabCrash(id, reason = 'unknown') {
+  const tab = tabs.get(id);
+  if (!tab) return;
+  tab.crashed = true;
+  tab.suspended = false;
+  suspendedTabs.delete(id);
+  tab.crashReason = reason;
+  tab.loaded = false;
+  playingAudioTabs.delete(id);
+  pageLoadStarts.delete(id);
+  setTabAudioIcon(id, tab.muted, false);
+  updateTabLoading(id, false);
+  content.querySelector(`.tab-surface[data-tab-id="${id}"] webview`)?.remove();
+  saveSession();
+  if (activeTabId === id) showCrashedTab(id);
+  else showToast('Jedna karta sa neočakávane ukončila. Obnovu ponúkne po výbere karty.');
+}
+
+function showCrashedTab(id) {
+  const tab = tabs.get(id);
+  if (!tab || activeTabId !== id) return;
+  hideNativeTab();
+  const surface = getActiveSurface();
+  surface.innerHTML = `<section class="library-page" role="alert"><h1>Karta sa neočakávane ukončila</h1><p>${escapeHtml(tab.title)}</p><p>Neuložené úpravy na webe sa mohli stratiť. Karta sa neobnoví automaticky.</p><small>Dôvod: ${escapeHtml(tab.crashReason || 'neznámy')}</small><div><button type="button" class="settings-control" data-recover-tab="${id}">Obnoviť túto kartu</button></div></section>`;
+  surface.querySelector('[data-recover-tab]').addEventListener('click', () => {
+    if (tabs.get(id) !== tab || activeTabId !== id) return;
+    tab.crashed = false;
+    tab.suspended = false;
+    suspendedTabs.delete(id);
+    tabScrollPositions.delete(id);
+    surface.innerHTML = '';
+    navigate(tab.url, false);
+  });
+}
+function updateNavigationButtons() { const tab = tabs.get(activeTabId); const candidate = activeViewer(); const viewer = candidate && readyViewers.has(candidate) ? candidate : null; const back = document.getElementById('backButton'); const forward = document.getElementById('forwardButton'); if (back) back.disabled = !(viewer?.canGoBack?.() || (tab?.historyIndex > 0)); if (forward) forward.disabled = !(viewer?.canGoForward?.() || (tab && tab.historyIndex < tab.history.length - 1)); }
 async function navigateTabHistory(direction) {
   const tab = tabs.get(activeTabId);
   const viewer = ensureActiveTabLoaded();
   if (!tab) return;
+  const currentHistoryIndex = tab.historyIndex;
+  const nextIndex = currentHistoryIndex + direction;
   if (viewer) {
     const canNavigate = direction < 0 ? viewer.canGoBack?.() : viewer.canGoForward?.();
     if (canNavigate) {
+      if (nextIndex >= 0 && nextIndex < tab.history.length) tab.historyIndex = nextIndex;
       if (direction < 0) viewer.goBack();
       else viewer.goForward();
       return;
     }
   }
   if (isNativeTabs) {
+    if (nextIndex >= 0 && nextIndex < tab.history.length) tab.historyIndex = nextIndex;
     const result = await window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: direction < 0 ? 'back' : 'forward' });
     if (result?.ok) return;
+    tab.historyIndex = currentHistoryIndex;
   }
-  const nextIndex = tab.historyIndex + direction;
-  if (nextIndex >= 0 && nextIndex < tab.history.length) {
-    tab.historyIndex = nextIndex;
-    navigate(tab.history[nextIndex], false);
+  const fallbackIndex = tab.historyIndex + direction;
+  if (fallbackIndex >= 0 && fallbackIndex < tab.history.length) {
+    tab.historyIndex = fallbackIndex;
+    navigate(tab.history[fallbackIndex], false);
   }
 }
 function navigationErrorMessage(errorCode, description = '') { const messages = { '-105': 'Server sa nenašiel (DNS).', '-106': 'Nie ste pripojení k internetu.', '-102': 'Server odmietol pripojenie.', '-118': 'Pripojenie vypršalo.', '-116': 'Spojenie bolo odmietnuté.' }; return messages[String(errorCode)] || (description ? `Načítanie zlyhalo: ${description}.` : 'Stránku sa nepodarilo načítať.'); }
@@ -1099,6 +1346,97 @@ function replaceFailedUrlInTabHistory(tab, failedUrl, fallbackUrl) {
   tab.url = fallbackUrl;
 }
 
+function isRestorableTabUrl(value) {
+  if (tabState.internalUrls.has(value)) return true;
+  try {
+    const url = new URL(value);
+    if (['http:', 'https:'].includes(url.protocol)) return Boolean(url.hostname && !url.username && !url.password);
+    return url.protocol === 'file:' && /\.(?:html?|pdf)$/i.test(decodeURIComponent(url.pathname));
+  } catch {
+    return false;
+  }
+}
+
+function updateTabNavigation(tabId, url, { sameDocument = false } = {}) {
+  const tab = tabs.get(tabId);
+  if (!tab || !isRestorableTabUrl(url)) return;
+  tabState.recordNavigation(tab, url);
+  const label = url.replace(/^https?:\/\//, '').split('/')[0] || tab.title;
+  tab.title = label;
+  tab.loaded = true;
+  applyTabZoom(tabId, url);
+  if (tabId === activeTabId) {
+    addressInput.value = url;
+    tabTitle.textContent = label;
+    updateActiveTab(url, label);
+    updateConnectionIndicator(url);
+    setInstallAppAvailable(/^https?:\/\//i.test(url));
+  }
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      tab.icon ||= `https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(url).hostname)}&sz=32`;
+      setTabIcon(tabId, tab.icon);
+    } catch {}
+    if (!isGuestWindow && !sameDocument) recordBrowserHistoryVisit(url, label);
+  }
+  saveSession();
+}
+
+function recordBrowserHistoryVisit(url, title) {
+  let visits = [];
+  try {
+    const stored = JSON.parse(localStorage.getItem('linsoft-history') || '[]');
+    visits = Array.isArray(stored) ? stored.filter((item) => item && typeof item.url === 'string') : [];
+  } catch {}
+  const previous = visits.find((item) => item.url === url);
+  const visitCount = Math.min(1000000, Math.max(0, Number(previous?.visitCount) || 0) + 1);
+  visits = [{ url, title, visitedAt: Date.now(), visitCount }, ...visits.filter((item) => item.url !== url)].slice(0, 200);
+  localStorage.setItem('linsoft-history', JSON.stringify(visits));
+}
+
+function updateBrowserHistoryTitle(url, title) {
+  if (isGuestWindow || !url || !title) return;
+  try {
+    const stored = JSON.parse(localStorage.getItem('linsoft-history') || '[]');
+    if (!Array.isArray(stored)) return;
+    const visit = stored.find((item) => item?.url === url);
+    if (!visit) return;
+    visit.title = title;
+    localStorage.setItem('linsoft-history', JSON.stringify(stored));
+  } catch {}
+}
+
+function updateTabLoading(tabId, loading) {
+  const tab = tabs.get(tabId);
+  if (tab) tab.loading = loading;
+  if (loading) beginPageLoadMeasurement(tabId, tabs.get(tabId)?.url);
+  else finishPageLoadMeasurement(tabId);
+  setTabLoading(tabId, loading);
+  if (tabId === activeTabId) {
+    document.getElementById('loadingTrack').classList.toggle('loading', loading);
+    document.getElementById('securityButton').classList.toggle('address-loading', loading);
+  }
+}
+
+function handleTabNavigationFailure(tabId, errorCode, errorDescription, validatedURL, retry) {
+  if (Number(errorCode) === -3) return;
+  const tab = tabs.get(tabId);
+  const failedUrl = validatedURL || tab?.url || '';
+  const fallbackUrl = httpFallbackForTlsError(errorCode, failedUrl) || httpsFallbackForIpConnectionRefused(errorCode, failedUrl);
+  if (fallbackUrl && tab) {
+    replaceFailedUrlInTabHistory(tab, failedUrl, fallbackUrl);
+    saveSession();
+    if (tabId === activeTabId) {
+      addressInput.value = fallbackUrl;
+      updateConnectionIndicator(fallbackUrl);
+      showToast(fallbackUrl.startsWith('https:') ? 'HTTP pripojenie odmietnuté; skúšam HTTPS.' : [-200, -201, -202].includes(Number(errorCode)) ? 'Certifikát súkromnej IP adresy nie je dôveryhodný; skúšam HTTP.' : 'Web nepodporuje HTTPS; otváram nezabezpečené HTTP pripojenie.');
+    }
+    retry(fallbackUrl);
+    return;
+  }
+  if (tabId === activeTabId) showToast(navigationErrorMessage(errorCode, errorDescription));
+}
+
 function activateSurface(id) { content.querySelectorAll('.tab-surface').forEach((surface) => { const active = Number(surface.dataset.tabId) === id; surface.hidden = false; surface.classList.toggle('inactive-surface', !active); }); }
 
 function getActiveSurface() {
@@ -1130,25 +1468,126 @@ function openTorChatPage() {
 
 function saveSession() { localStorage.setItem('linsoft-session', JSON.stringify([...tabs.values()])); localStorage.setItem('linsoft-active-tab', String(activeTabId)); localStorage.setItem('linsoft-session-clean', '0'); updateNavigationButtons(); }
 
-function suspendInactiveTabs() { if (!settingsState.suspendInactiveTabs) return; for (const [id, tab] of tabs) { if (id === activeTabId || tab.pinned || suspendedTabs.has(id) || !tab.url || !/^https?:/i.test(tab.url) || /(?:youtube\.com|youtu\.be)/i.test(tab.url)) continue; const viewer = content.querySelector(`.tab-surface[data-tab-id="${id}"] webview`); if (!viewer) continue; viewer.executeJavaScript('document.querySelectorAll("video,audio").forEach((media) => media.pause())').catch(() => {}); viewer.remove(); content.querySelector(`.tab-surface[data-tab-id="${id}"]`)?.remove(); suspendedTabs.add(id); tab.suspended = true; } }
+function markTabInactive(id) {
+  const tab = tabs.get(id);
+  if (tab) tab.inactiveSince = Date.now();
+}
+
+let suspensionCheckRunning = false;
+async function suspendInactiveTabs() {
+  if (!settingsState.suspendInactiveTabs || suspensionCheckRunning) return;
+  suspensionCheckRunning = true;
+  try {
+    const memory = await window.linsoftBrowser.getMemoryStatus();
+    const delay = browserAlgorithms.suspensionDelay(memory);
+    const measurements = await measureLiveTabs();
+    for (const row of measurements) tabProtectionReasons.set(row.tabId, row.reason);
+    const eligible = (tab, pending = true) => settingsState.suspendInactiveTabs && browserAlgorithms.canSuspendTab(tab, {
+      activeTabId, playing: playingAudioTabs.has(tab.id),
+      pending: pending && (suspendedTabs.has(tab.id) || suspendingTabs.has(tab.id)),
+      delay, protectedOrigins: settingsState.neverSuspendOrigins
+    });
+    const candidates = browserAlgorithms.rankSuspensionCandidates([...tabs.values()].filter(tab => eligible(tab) && !tabMeasurements.get(tab.id)?.reason), measurements).slice(0, 2);
+    for (const tab of candidates) {
+      const id = tab.id;
+      if (!eligible(tab)) continue;
+      const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`);
+      if (isNativeTabs) {
+        if (!surface || !tab.loaded) continue;
+        suspendingTabs.add(id);
+        try {
+          const result = await window.linsoftBrowser.suspendNativeTab(id);
+          tabProtectionReasons.set(id, result?.reason || '');
+          if (result?.message) showToast(`Neaktívnu kartu sa nepodarilo uspať: ${result.message}`);
+          if (!result?.ok || tabs.get(id) !== tab) continue;
+          tabScrollPositions.set(id, result.snapshot);
+          suspendedTabs.add(id);
+          tab.suspended = true;
+          tab.loaded = false;
+          playingAudioTabs.delete(id);
+          updateTabLoading(id, false);
+          surface.remove();
+          if (activeTabId === id) {
+            suspendedTabs.delete(id);
+            tab.suspended = false;
+            navigate(tab.url, false);
+          } else saveSession();
+        } catch (error) {
+          showToast(`Neaktívnu kartu sa nepodarilo uspať: ${error.message}`);
+        } finally {
+          suspendingTabs.delete(id);
+        }
+        continue;
+      }
+      const viewer = surface?.querySelector('webview');
+      if (!viewer) continue;
+      suspendingTabs.add(id);
+      try {
+        const url = tab.url;
+        const snapshot = await window.linsoftBrowser.inspectTab(liveTabTarget(id));
+        tabProtectionReasons.set(id, snapshot.reason);
+        if (snapshot.reason || tabs.get(id) !== tab || tab.url !== url || !eligible(tab, false) || surface.querySelector('webview') !== viewer) continue;
+        tabScrollPositions.set(id, snapshot);
+        viewer.remove();
+        surface.remove();
+        suspendedTabs.add(id);
+        tab.suspended = true;
+        saveSession();
+      } catch (error) {
+        showToast(`Neaktívnu kartu sa nepodarilo skontrolovať: ${error.message}`);
+      } finally {
+        suspendingTabs.delete(id);
+      }
+    }
+    renderTabPerformance();
+  } catch (error) {
+    showToast(`Správu pamäte sa nepodarilo vykonať: ${error.message}`);
+  } finally {
+    suspensionCheckRunning = false;
+  }
+}
 
 function restoreSession() {
   if (!settingsState.restoreTabs) return startPage();
-  let sessionTabs = [];
-  try { sessionTabs = JSON.parse(localStorage.getItem('linsoft-session') || '[]'); } catch { sessionTabs = []; }
-  if (!sessionTabs.length) return startPage();
-  const first = sessionTabs[0]; const firstTab = tabs.get(1); Object.assign(firstTab, first, { id: 1 }); const firstButton = document.querySelector('.managed-tab[data-tab-id="1"]'); firstButton?.classList.toggle('pinned', firstTab.pinned === true); if (firstTab.group) firstButton?.classList.add(`tab-group-${firstTab.group}`); if (firstTab.muted) setTabAudioIcon(1, true, false); if (first.url === 'linsoft://start') startPage(); else navigate(first.url, false);
-  sessionTabs.slice(1).forEach((tab) => { const id = nextTabId++; const restoredTab = Object.assign({ history: [tab.url], historyIndex: 0, pinned: false, suspended: true }, tab, { id }); tabs.set(id, restoredTab); suspendedTabs.add(id); createTabButton(restoredTab); });
   const savedActiveTab = Number(localStorage.getItem('linsoft-active-tab'));
-  if (tabs.has(savedActiveTab)) selectTab(savedActiveTab);
+  let sessionTabs = [];
+  try {
+    const storedTabs = JSON.parse(localStorage.getItem('linsoft-session') || '[]');
+    sessionTabs = tabState.normalizeSessionTabs(storedTabs, isRestorableTabUrl);
+  } catch { sessionTabs = []; }
+  if (!sessionTabs.length) return startPage();
+  const restoredIds = new Map();
+  const first = sessionTabs[0];
+  const firstTab = tabs.get(1);
+  Object.assign(firstTab, first, { id: 1 });
+  sessionTabs.forEach((tab) => restoredIds.set(tab.id, tab.id));
+  const firstButton = document.querySelector('.managed-tab[data-tab-id="1"]');
+  firstButton?.classList.toggle('pinned', firstTab.pinned === true);
+  if (firstTab.group) firstButton?.classList.add(`tab-group-${firstTab.group}`);
+  if (firstTab.muted) setTabAudioIcon(1, true, false);
+  if (firstTab.icon) setTabIcon(1, firstTab.icon);
+  if (first.crashed) selectTab(1);
+  else if (first.url === 'linsoft://start') startPage();
+  else navigate(first.url, false);
+  sessionTabs.slice(1).forEach((tab) => {
+    nextTabId = Math.max(nextTabId, tab.id + 1);
+    const restoredTab = { ...tab, suspended: true };
+    tabs.set(restoredTab.id, restoredTab);
+    suspendedTabs.add(restoredTab.id);
+    createTabButton(restoredTab);
+    if (restoredTab.icon) setTabIcon(restoredTab.id, restoredTab.icon);
+  });
+  const restoredActiveTab = restoredIds.get(savedActiveTab);
+  if (restoredActiveTab && tabs.has(restoredActiveTab)) selectTab(restoredActiveTab);
   updateTabDensity();
+  saveSession();
 }
 
 const hadCrash = localStorage.getItem('linsoft-session-clean') === '0';
 localStorage.setItem('linsoft-session-clean', '0');
 window.addEventListener('beforeunload', () => { saveSession(); localStorage.setItem('linsoft-session-clean', '1'); });
 window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveSession(); });
-window.setInterval(suspendInactiveTabs, 5 * 60 * 1000);
+window.setInterval(suspendInactiveTabs, 60 * 1000);
 
 function startPage() {
   addressInput.value = 'linsoft://start';
@@ -1209,6 +1648,7 @@ function searchUrl(query) {
   const encoded = encodeURIComponent(query);
   if (settingsState.search === 'Bing') return `https://www.bing.com/search?q=${encoded}`;
   if (settingsState.search === 'DuckDuckGo') return `https://duckduckgo.com/?q=${encoded}`;
+  if (settingsState.search === 'Linsoft Search') return `https://linsoft.ddns.net/linsoft-search/?q=${encoded}`;
   return `https://www.google.com/search?q=${encoded}`;
 }
 
@@ -1223,23 +1663,6 @@ function translateWebPage(value = tabs.get(activeTabId)?.url || addressInput.val
     return;
   }
   navigate(`https://translate.google.com/translate?sl=auto&tl=sk&u=${encodeURIComponent(pageUrl)}`);
-}
-
-function normalizeNetworkAddress(input) {
-  const value = String(input || '').trim();
-  const localhost = /^localhost(?::(\d+))?(\/.*)?$/i.exec(value);
-  if (localhost) return { value: `http://localhost${localhost[1] ? `:${localhost[1]}` : ''}${localhost[2] || ''}`, isIp: true };
-  const ipv4 = value.match(/^((?:\d{1,3}\.){3}\d{1,3})(?::(\d+))?(\/.*)?$/);
-  if (ipv4) {
-    const validPort = !ipv4[2] || Number(ipv4[2]) <= 65535;
-    const valid = validPort && ipv4[1].split('.').every((part) => Number(part) >= 0 && Number(part) <= 255);
-    if (valid) return { value: `http://${ipv4[1]}${ipv4[2] ? `:${ipv4[2]}` : ''}${ipv4[3] || ''}`, isIp: true };
-  }
-  const bracketedIpv6 = /^\[([0-9a-f:]+)\](?::(\d+))?(\/.*)?$/i.exec(value);
-  if (bracketedIpv6 && (!bracketedIpv6[2] || Number(bracketedIpv6[2]) <= 65535)) return { value: `http://[${bracketedIpv6[1]}]${bracketedIpv6[2] ? `:${bracketedIpv6[2]}` : ''}${bracketedIpv6[3] || ''}`, isIp: true };
-  const rawIpv6 = /^[0-9a-f:]+$/i.test(value) && value.includes(':');
-  if (rawIpv6) return { value: `http://[${value}]`, isIp: true };
-  return { value, isIp: false };
 }
 
 function updateConnectionIndicator(url) {
@@ -1330,8 +1753,8 @@ function closeInstallDialog() { document.getElementById('installDialog').hidden 
 
 function openAppCenter() {
   addressInput.value = 'linsoft://apps';
-  tabTitle.textContent = 'Linsoft App Centrum';
-  updateActiveTab('linsoft://apps', 'Linsoft App Centrum');
+  tabTitle.textContent = 'App Centrum · Linsoft Browser';
+  updateActiveTab('linsoft://apps', 'App Centrum · Linsoft Browser');
   saveSession();
   setInstallAppAvailable(false);
   const surface = getActiveSurface();
@@ -1494,7 +1917,7 @@ function applyTheme() {
 function saveSettings() {
   localStorage.setItem('linsoft-settings', JSON.stringify(settingsState));
   applyTheme();
-  window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, spellcheckLanguages: settingsState.spellcheckLanguages, clearExit: settingsState.clearExit, autoUpdateCheck: settingsState.autoUpdateCheck });
+  window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, spellcheckLanguages: settingsState.spellcheckLanguages, clearExit: settingsState.clearExit, autoUpdateCheck: settingsState.autoUpdateCheck, neverSuspendOrigins: settingsState.neverSuspendOrigins, suspendInactiveTabs: settingsState.suspendInactiveTabs });
   applyDefaultZoomToTabs();
 }
 
@@ -1536,7 +1959,7 @@ function openLibrary(mode) {
   const surface = getActiveSurface();
   surface.innerHTML = `<div class="library-page"><div class="settings-heading"><div><span class="settings-eyebrow">LINSOFT BROWSER</span><h1>${mode === 'bookmarks' ? 'Záložky' : 'História'}</h1><p>${mode === 'bookmarks' ? 'Uložené stránky na jednom mieste.' : 'Nedávno navštívené stránky.'}</p></div><div class="library-actions">${mode === 'history' ? '<button class="danger-button" id="clearHistoryPage">Vymazať históriu</button>' : ''}</div></div><div class="library-list">${items.length ? items.map((item, index) => { const title = String(item.title || item.url); const iconUrl = mode === 'bookmarks' ? bookmarkFaviconUrl(item.url) : ''; const isPinned = mode === 'bookmarks' && startFavorites.some((favorite) => favorite.url === item.url); return `<div class="library-row${mode === 'bookmarks' ? ' library-bookmark-row' : ''}"><button class="library-open" data-url="${escapeHtml(item.url)}">${mode === 'bookmarks' ? `<span class="library-icon library-bookmark-icon">${iconUrl ? `<img class="library-favicon" src="${escapeHtml(iconUrl)}" alt=""><span class="library-favicon-fallback" hidden>${escapeHtml(title.slice(0, 1).toUpperCase())}</span>` : escapeHtml(title.slice(0, 1).toUpperCase())}</span>` : '<span class="library-icon">◷</span>'}<span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(item.url)}</small></span><span>→</span></button>${mode === 'bookmarks' ? `<button class="library-pin${isPinned ? ' active' : ''}" data-start-favorite-url="${escapeHtml(item.url)}" aria-label="${isPinned ? 'Odopnúť zo štartovacej stránky' : 'Pripnúť na štartovaciu stránku'}" title="${isPinned ? 'Odopnúť zo štartovacej stránky' : 'Pripnúť na štartovaciu stránku'}"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-bookmark${isPinned ? '-check' : ''}"></use></svg></button><button class="library-delete" data-bookmark-index="${index}" aria-label="Odstrániť záložku">×</button>` : ''}</div>`; }).join('') : '<div class="empty-library">Zatiaľ tu nič nie je.</div>'}</div></div>`;
   surface.querySelectorAll('.library-favicon').forEach((icon) => icon.addEventListener('error', () => { icon.hidden = true; icon.nextElementSibling.hidden = false; }));
-  surface.querySelector('#clearHistoryPage')?.addEventListener('click', () => { localStorage.removeItem('linsoft-history'); showToast('História bola vymazaná.'); openLibrary('history'); }); surface.querySelectorAll('[data-url]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.url))); surface.querySelectorAll('[data-start-favorite-url]').forEach((button) => button.addEventListener('click', () => { const favoriteUrl = button.dataset.startFavoriteUrl; const index = startFavorites.findIndex((favorite) => favorite.url === favoriteUrl); if (index >= 0) startFavorites.splice(index, 1); else { const bookmark = savedBookmarks.find((item) => item.url === favoriteUrl); if (bookmark) startFavorites.push({ title: String(bookmark.title || bookmark.url), url: bookmark.url }); } localStorage.setItem('linsoft-start-favorites', JSON.stringify(startFavorites)); openLibrary('bookmarks'); })); surface.querySelectorAll('[data-bookmark-index]').forEach((button) => button.addEventListener('click', () => { savedBookmarks.splice(Number(button.dataset.bookmarkIndex), 1); localStorage.setItem('linsoft-bookmarks', JSON.stringify(savedBookmarks)); renderSavedBookmarks(); openLibrary('bookmarks'); }));
+  surface.querySelector('#clearHistoryPage')?.addEventListener('click', () => { localStorage.removeItem('linsoft-history'); clearSuggestionLearning(false); showToast('História bola vymazaná.'); openLibrary('history'); }); surface.querySelectorAll('[data-url]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.url))); surface.querySelectorAll('[data-start-favorite-url]').forEach((button) => button.addEventListener('click', () => { const favoriteUrl = button.dataset.startFavoriteUrl; const index = startFavorites.findIndex((favorite) => favorite.url === favoriteUrl); if (index >= 0) startFavorites.splice(index, 1); else { const bookmark = savedBookmarks.find((item) => item.url === favoriteUrl); if (bookmark) startFavorites.push({ title: String(bookmark.title || bookmark.url), url: bookmark.url }); } localStorage.setItem('linsoft-start-favorites', JSON.stringify(startFavorites)); openLibrary('bookmarks'); })); surface.querySelectorAll('[data-bookmark-index]').forEach((button) => button.addEventListener('click', () => { savedBookmarks.splice(Number(button.dataset.bookmarkIndex), 1); localStorage.setItem('linsoft-bookmarks', JSON.stringify(savedBookmarks)); renderSavedBookmarks(); openLibrary('bookmarks'); }));
 }
 
 const passwordPromptCache = new Map();
@@ -1587,7 +2010,7 @@ function openSettings(section = 'general') {
   updateActiveTab('linsoft://settings', 'Nastavenia');
   saveSession();
   const surface = getActiveSurface();
-  surface.innerHTML = `<div class="settings-page"><div class="settings-heading"><div><span class="settings-eyebrow">LINSOFT BROWSER</span><h1>Nastavenia</h1><p>Prispôsob si browser podľa svojho spôsobu práce.</p></div></div><div class="settings-layout"><nav class="settings-nav"><button data-settings-section="general">⚙ <span>Všeobecné</span></button><button data-settings-section="appearance">◐ <span>Vzhľad</span></button><button data-settings-section="privacy">♢ <span>Súkromie a bezpečnosť</span></button><button data-settings-section="about">ⓘ <span>O aplikácii</span></button></nav><div class="settings-panels"><section data-settings-panel="general"><p class="settings-label">VŠEOBECNÉ</p><h2>Správanie browsera</h2><div class="setting-card"><div><strong>Pri spustení</strong><small>Vyber, čo sa zobrazí po otvorení Linsoft Browsera.</small></div><select id="startupSetting"><option value="start">Nová karta Linsoft</option><option value="home">Domovská stránka</option></select></div><div class="setting-card"><div><strong>Domovská stránka</strong><small>Adresa, ktorú otvorí tlačidlo Domov.</small></div><input class="settings-input" id="homeSetting" value="${escapeHtml(settingsState.home)}" /></div><div class="setting-card"><div><strong>Vyhľadávač</strong><small>Predvolený vyhľadávač pre otázky v adresnom riadku.</small></div><select id="searchSetting"><option>Google</option><option>Bing</option><option>DuckDuckGo</option></select></div></section><section data-settings-panel="appearance"><p class="settings-label">VZHĽAD</p><h2>Vzhľad aplikácie</h2><div class="setting-card"><div><strong>Farebná téma</strong><small>Vyber, ako má Linsoft Browser vyzerať.</small></div><select id="themeSetting"><option value="dark">Tmavá</option><option value="light">Svetlá</option></select></div><div class="setting-card"><div><strong>Kompaktný panel</strong><small>Zmenší výšku navigačných panelov pre viac priestoru.</small></div><button class="settings-toggle" data-setting-toggle="compact"><i></i></button></div></section><section data-settings-panel="privacy"><p class="settings-label">SÚKROMIE</p><h2>Súkromie a bezpečnosť</h2><div class="setting-card"><div><strong>Bezpečné prehliadanie</strong><small>Upozorní pred známymi nebezpečnými stránkami.</small></div><button class="settings-toggle ${settingsState.safe ? 'on' : ''}" data-setting-toggle="safe"><i></i></button></div><div class="setting-card"><div><strong>Blokovať vyskakovacie okná</strong><small>Obmedzí automatické otváranie nových okien.</small></div><button class="settings-toggle ${settingsState.popups ? 'on' : ''}" data-setting-toggle="popups"><i></i></button></div><div class="setting-card"><div><strong>Posielať požiadavku Do Not Track</strong><small>Požiada weby, aby nesledovali tvoju aktivitu.</small></div><button class="settings-toggle ${settingsState.tracking ? 'on' : ''}" data-setting-toggle="tracking"><i></i></button></div><button class="danger-button" id="clearBrowserData">Vymazať históriu a údaje prehliadania</button></section><section data-settings-panel="about"><p class="settings-label">O APLIKÁCII</p><h2>Linsoft Browser</h2><div class="about-card"><span class="about-logo">L</span><div><strong>Linsoft Browser 1.0.0</strong><small>Desktopový prehliadač pre Windows postavený na Electron + Chromium.</small><small>© 2026 Linsoft</small></div></div></section><div class="settings-actions"><button class="settings-reset" id="resetSettings">Obnoviť predvolené</button><button class="save-settings" id="saveSettings">Uložiť zmeny</button></div></div></div></div>`;
+  surface.innerHTML = `<div class="settings-page"><div class="settings-heading"><div><span class="settings-eyebrow">LINSOFT BROWSER</span><h1>Nastavenia</h1><p>Prispôsob si browser podľa svojho spôsobu práce.</p></div></div><div class="settings-layout"><nav class="settings-nav"><button data-settings-section="general">⚙ <span>Všeobecné</span></button><button data-settings-section="appearance">◐ <span>Vzhľad</span></button><button data-settings-section="privacy">♢ <span>Súkromie a bezpečnosť</span></button><button data-settings-section="about">ⓘ <span>O aplikácii</span></button></nav><div class="settings-panels"><section data-settings-panel="general"><p class="settings-label">VŠEOBECNÉ</p><h2>Správanie browsera</h2><div class="setting-card"><div><strong>Pri spustení</strong><small>Vyber, čo sa zobrazí po otvorení Linsoft Browsera.</small></div><select id="startupSetting"><option value="start">Nová karta Linsoft</option><option value="home">Domovská stránka</option></select></div><div class="setting-card"><div><strong>Domovská stránka</strong><small>Adresa, ktorú otvorí tlačidlo Domov.</small></div><input class="settings-input" id="homeSetting" value="${escapeHtml(settingsState.home)}" /></div><div class="setting-card"><div><strong>Vyhľadávač</strong><small>Predvolený vyhľadávač pre otázky v adresnom riadku. Linsoft Search odošle dopyt a zobrazí výsledky.</small></div><select id="searchSetting"><option>Google</option><option>Bing</option><option>DuckDuckGo</option><option>Linsoft Search</option></select></div></section><section data-settings-panel="appearance"><p class="settings-label">VZHĽAD</p><h2>Vzhľad aplikácie</h2><div class="setting-card"><div><strong>Farebná téma</strong><small>Vyber, ako má Linsoft Browser vyzerať.</small></div><select id="themeSetting"><option value="dark">Tmavá</option><option value="light">Svetlá</option></select></div><div class="setting-card"><div><strong>Kompaktný panel</strong><small>Zmenší výšku navigačných panelov pre viac priestoru.</small></div><button class="settings-toggle" data-setting-toggle="compact"><i></i></button></div></section><section data-settings-panel="privacy"><p class="settings-label">SÚKROMIE</p><h2>Súkromie a bezpečnosť</h2><div class="setting-card"><div><strong>Bezpečné prehliadanie</strong><small>Upozorní pred známymi nebezpečnými stránkami.</small></div><button class="settings-toggle ${settingsState.safe ? 'on' : ''}" data-setting-toggle="safe"><i></i></button></div><div class="setting-card"><div><strong>Blokovať vyskakovacie okná</strong><small>Obmedzí automatické otváranie nových okien.</small></div><button class="settings-toggle ${settingsState.popups ? 'on' : ''}" data-setting-toggle="popups"><i></i></button></div><div class="setting-card"><div><strong>Posielať požiadavku Do Not Track</strong><small>Požiada weby, aby nesledovali tvoju aktivitu.</small></div><button class="settings-toggle ${settingsState.tracking ? 'on' : ''}" data-setting-toggle="tracking"><i></i></button></div><button class="danger-button" id="clearBrowserData">Vymazať históriu a údaje prehliadania</button></section><section data-settings-panel="about"><p class="settings-label">O APLIKÁCII</p><h2>Linsoft Browser</h2><div class="about-card"><span class="about-logo">L</span><div><strong>Linsoft Browser 1.0.0</strong><small>Desktopový prehliadač pre Windows postavený na Electron + Chromium.</small><small>© 2026 Linsoft</small></div></div></section><div class="settings-actions"><button class="settings-reset" id="resetSettings">Obnoviť predvolené</button><button class="save-settings" id="saveSettings">Uložiť zmeny</button></div></div></div></div>`;
   const startup = surface.querySelector('#startupSetting'); const theme = surface.querySelector('#themeSetting'); const search = surface.querySelector('#searchSetting'); const home = surface.querySelector('#homeSetting');
   theme.insertAdjacentHTML('beforeend', '<option value="glass-blue">Glass Blue</option>');
   startup.value = settingsState.startup; theme.value = settingsState.theme; search.value = settingsState.search;
@@ -1598,7 +2021,7 @@ function openSettings(section = 'general') {
   surface.querySelectorAll('[data-setting-toggle]').forEach((toggle) => toggle.addEventListener('click', () => { toggle.classList.toggle('on'); if (toggle.dataset.settingToggle === 'autoUpdateCheck') { settingsState.autoUpdateCheck = toggle.classList.contains('on'); saveSettings(); const note = surface.querySelector('[data-update-note]'); if (note) note.textContent = settingsState.autoUpdateCheck ? 'Automatická kontrola je zapnutá.' : 'Automatická kontrola je vypnutá.'; } }));
   surface.querySelector('#saveSettings').addEventListener('click', () => { settingsState.startup = startup.value; settingsState.theme = theme.value; settingsState.search = search.value; settingsState.home = home.value.trim() || 'linsoft://start'; settingsState.safe = surface.querySelector('[data-setting-toggle="safe"]').classList.contains('on'); settingsState.popups = surface.querySelector('[data-setting-toggle="popups"]').classList.contains('on'); settingsState.tracking = surface.querySelector('[data-setting-toggle="tracking"]').classList.contains('on'); ['camera', 'microphone', 'webNotifications'].forEach((key) => { const toggle = surface.querySelector(`[data-setting-toggle="${key}"]`); if (toggle) settingsState[key] = toggle.classList.contains('on'); }); const spellcheckOptions = surface.querySelector('#spellcheckLanguageOptions'); if (spellcheckOptions?.dataset.ready === 'true') settingsState.spellcheckLanguages = [...spellcheckOptions.querySelectorAll('input:checked')].map((input) => input.value); saveSettings(); showToast('Nastavenia boli uložené.'); });
   surface.querySelector('#resetSettings').addEventListener('click', () => { localStorage.removeItem('linsoft-settings'); Object.assign(settingsState, defaultSettings); saveSettings(); openSettings(section); showToast('Nastavenia boli obnovené.'); });
-  surface.querySelector('#clearBrowserData').addEventListener('click', () => { localStorage.removeItem('linsoft-history'); localStorage.removeItem('linsoft-session'); localStorage.removeItem('linsoft-bookmarks'); localStorage.removeItem('linsoft-start-favorites'); localStorage.removeItem('linsoft-apps'); savedBookmarks.splice(0); startFavorites.splice(0); installedApps.splice(0); renderSavedBookmarks(); showToast('História a údaje boli vymazané.'); });
+  surface.querySelector('#clearBrowserData').addEventListener('click', () => { localStorage.removeItem('linsoft-history'); clearSuggestionLearning(false); localStorage.removeItem('linsoft-session'); localStorage.removeItem('linsoft-bookmarks'); localStorage.removeItem('linsoft-start-favorites'); localStorage.removeItem('linsoft-apps'); savedBookmarks.splice(0); startFavorites.splice(0); installedApps.splice(0); renderSavedBookmarks(); showToast('História a údaje boli vymazané.'); });
   addAdvancedSettings();
   addSecuritySettings();
 }
@@ -1721,11 +2144,22 @@ function addAdvancedSettings() {
   const navigation = surface.querySelector('.settings-nav');
   const panels = surface.querySelector('.settings-panels');
   navigation.insertAdjacentHTML('beforeend', '<button data-settings-section="advanced">⌘ <span>Pokročilé</span></button>');
-  panels.insertAdjacentHTML('beforeend', '<section data-settings-panel="advanced" hidden><p class="settings-label">POKROČILÉ</p><h2>Ďalšie možnosti</h2><div class="setting-card"><div><strong>Blokovanie reklám</strong><small>Blokuje reklamné siete a učí sa z opakovaných reklamných požiadaviek lokálne.</small></div><button class="settings-toggle" data-setting-toggle="adBlock"><i></i></button></div><div class="setting-card"><div><strong>Ochrana proti sledovaniu</strong><small>Obmedzí trackery, analytické pixely a odošle signál Do Not Track.</small></div><button class="settings-toggle" data-setting-toggle="trackingProtection"><i></i></button></div><div class="setting-card"><div><strong>Priečinok na stiahnuté súbory</strong><small>Miesto, kam Linsoft Browser ukladá stiahnuté súbory.</small></div><select id="downloadsSetting"><option value="Downloads">Downloads</option><option value="Desktop">Plocha</option><option value="Documents">Dokumenty</option></select></div><div class="setting-card"><div><strong>Vždy sa opýtať pred stiahnutím</strong><small>Zobrazí potvrdenie pred každým stiahnutím.</small></div><button class="settings-toggle" data-setting-toggle="askDownload"><i></i></button></div><div class="setting-card"><div><strong>Obnoviť karty po spustení</strong><small>Po otvorení obnoví poslednú pracovnú reláciu.</small></div><button class="settings-toggle" data-setting-toggle="restoreTabs"><i></i></button></div><div class="setting-card"><div><strong>Predvolené priblíženie</strong><small>Veľkosť obsahu webových stránok.</small></div><select id="zoomSetting"><option value="80">80 %</option><option value="90">90 %</option><option value="100">100 %</option><option value="110">110 %</option><option value="125">125 %</option></select></div><div class="setting-card"><div><strong>Vymazať údaje pri ukončení</strong><small>Po zatvorení browsera vymaže lokálnu históriu.</small></div><button class="settings-toggle" data-setting-toggle="clearExit"><i></i></button></div><div class="setting-card"><div><strong>Aktualizovať reklamný zoznam</strong><small>Stiahne nový zoznam reklamných domén z verejného zdroja.</small></div><button class="settings-control" id="updateAdblockList">Aktualizovať</button></div></section>');
+  panels.insertAdjacentHTML('beforeend', '<section data-settings-panel="advanced" hidden><p class="settings-label">POKROČILÉ</p><h2>Ďalšie možnosti</h2><div class="setting-card"><div><strong>Blokovanie reklám</strong><small>Blokuje reklamné siete a učí sa z opakovaných reklamných požiadaviek lokálne.</small></div><button class="settings-toggle" data-setting-toggle="adBlock"><i></i></button></div><div class="setting-card"><div><strong>Ochrana proti sledovaniu</strong><small>Obmedzí trackery, analytické pixely a odošle signál Do Not Track.</small></div><button class="settings-toggle" data-setting-toggle="trackingProtection"><i></i></button></div><div class="setting-card"><div><strong>Priečinok na stiahnuté súbory</strong><small>Miesto, kam Linsoft Browser ukladá stiahnuté súbory.</small></div><select id="downloadsSetting"><option value="Downloads">Downloads</option><option value="Desktop">Plocha</option><option value="Documents">Dokumenty</option></select></div><div class="setting-card"><div><strong>Vždy sa opýtať pred stiahnutím</strong><small>Zobrazí potvrdenie pred každým stiahnutím.</small></div><button class="settings-toggle" data-setting-toggle="askDownload"><i></i></button></div><div class="setting-card"><div><strong>Obnoviť karty po spustení</strong><small>Po otvorení obnoví poslednú pracovnú reláciu.</small></div><button class="settings-toggle" data-setting-toggle="restoreTabs"><i></i></button></div><div class="setting-card"><div><strong>Predvolené priblíženie</strong><small>Veľkosť obsahu webových stránok.</small></div><select id="zoomSetting"><option value="80">80 %</option><option value="90">90 %</option><option value="100">100 %</option><option value="110">110 %</option><option value="125">125 %</option></select></div><div class="setting-card"><div><strong>Vymazať údaje pri ukončení</strong><small>Vymaže cookies a dočasnú shader cache. Lokálne dokumenty a údaje webov vrátane úložiska a IndexedDB zostanú zachované.</small></div><button class="settings-toggle" data-setting-toggle="clearExit"><i></i></button></div><div class="setting-card"><div><strong>Aktualizovať reklamný zoznam</strong><small>Stiahne nový zoznam reklamných domén z verejného zdroja.</small></div><button class="settings-control" id="updateAdblockList">Aktualizovať</button></div></section>');
   navigation.insertAdjacentHTML('beforeend', '<button data-settings-section="vpn">⌁ <span>OpenVPN</span></button>');
   panels.insertAdjacentHTML('beforeend', '<section data-settings-panel="vpn" hidden><p class="settings-label">OPENVPN</p><h2>VPN pripojenie</h2><div class="vpn-card"><div><strong>OpenVPN profil</strong><small id="openVpnProfileName">Nie je vybraný žiadny .ovpn súbor.</small></div><button class="settings-control" id="chooseOpenVpn">Vybrať profil</button></div><div class="vpn-card"><div><strong>Stav pripojenia</strong><small id="openVpnStatus">VPN je odpojená.</small></div><span class="vpn-status-dot" id="openVpnDot"></span></div><div class="vpn-actions"><button class="save-settings" id="connectOpenVpn">Pripojiť VPN</button><button class="settings-reset" id="disconnectOpenVpn">Odpojiť</button></div><div class="vpn-log-wrap"><div class="vpn-log-title">Živý log</div><pre id="openVpnLog">Čaká sa na operáciu...</pre></div><p class="update-note">Vyžaduje nainštalovaný OpenVPN klient vo Windowse a platný .ovpn profil.</p></section>');
   panels.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">SPRÁVA A VÝKON</p><div class="setting-card"><div><strong>Potvrdiť zatvorenie viacerých kariet</strong><small>Zobrazí potvrdenie pred zatvorením okna s viacerými kartami.</small></div><button class="settings-toggle" data-setting-toggle="confirmClose"><i></i></button></div><div class="setting-card"><div><strong>Pozastavovať neaktívne karty</strong><small>Šetrí pamäť; aktívne, pripnuté a YouTube karty zostanú aktívne.</small></div><button class="settings-toggle" data-setting-toggle="suspendInactiveTabs"><i></i></button></div><div class="setting-card"><div><strong>Vymazať cache</strong><small>Vyčistí dočasné Chromium dáta bez odstránenia záložiek a kariet.</small></div><button class="settings-control" id="clearCacheButton">Vymazať</button></div></div>');
   const advancedButton = navigation.querySelector('[data-settings-section="advanced"]'); const advancedPanel = panels.querySelector('[data-settings-panel="advanced"]'); const downloads = surface.querySelector('#downloadsSetting'); const zoom = surface.querySelector('#zoomSetting'); downloads.value = settingsState.downloads; zoom.value = settingsState.zoom;
+  advancedPanel.insertAdjacentHTML('afterbegin', '<div class="security-subsection"><p class="settings-label">LOKÁLNE NÁVRHY</p><div class="setting-card"><div><strong>Učiť poradie z mojich výberov</strong><small>Len v tomto počítači. Vypnutie zastaví učenie aj použitie naučeného poradia.</small></div><button class="settings-toggle" id="learnSuggestionsToggle"><i></i></button></div><button class="settings-control" id="clearSuggestionLearning">Vymazať naučené poradie</button></div><div class="security-subsection"><p class="settings-label">VÝKON KARIET</p><p>Spotreba je meraná pre proces Chromia; viac kariet môže zdieľať jeden proces. Meranie prebieha len lokálne.</p><button class="settings-control" id="refreshTabPerformance">Obnoviť prehľad</button><div id="tabPerformanceList" class="password-list" aria-live="polite"></div></div>');
+  const learningToggle = advancedPanel.querySelector('#learnSuggestionsToggle');
+  learningToggle.classList.toggle('on', settingsState.learnSuggestions);
+  learningToggle.addEventListener('click', () => {
+    settingsState.learnSuggestions = !settingsState.learnSuggestions;
+    learningToggle.classList.toggle('on', settingsState.learnSuggestions);
+    saveSettings();
+  });
+  advancedPanel.querySelector('#clearSuggestionLearning').addEventListener('click', clearSuggestionLearning);
+  advancedPanel.querySelector('#refreshTabPerformance').addEventListener('click', refreshTabPerformance);
+  void refreshTabPerformance();
   advancedPanel.insertAdjacentHTML('afterbegin', '<div class="security-subsection"><p class="settings-label">KONTROLA PRAVOPISU</p><div class="setting-card"><div><strong>Jazyky kontroly</strong><small>Označ slovenčinu alebo angličtinu. Dostupné sú iba slovníky nainštalované v systéme.</small></div><div class="spellcheck-language-options" id="spellcheckLanguageOptions"><small>Načítavam slovníky...</small></div></div></div>');
   const spellcheckOptions = advancedPanel.querySelector('#spellcheckLanguageOptions');
   window.linsoftBrowser?.getSpellcheckerLanguages?.().then((result) => {
@@ -1898,6 +2332,20 @@ function addAdvancedSettings() {
   surface.querySelector('#disconnectOpenVpn').addEventListener('click', () => window.linsoftBrowser?.disconnectOpenVpn()); window.linsoftBrowser?.onOpenVpnStatus(showVpnStatus);
   vpnButton.addEventListener('click', () => { navigation.querySelectorAll('[data-settings-section]').forEach((item) => item.classList.toggle('active', item === vpnButton)); panels.querySelectorAll('[data-settings-panel]').forEach((panel) => { panel.hidden = panel !== vpnPanel; }); });
   ['adBlock', 'trackingProtection', 'askDownload', 'restoreTabs', 'clearExit', 'confirmClose', 'suspendInactiveTabs'].forEach((key) => { const toggle = surface.querySelector(`[data-setting-toggle="${key}"]`); if (!toggle) return; toggle.classList.toggle('on', settingsState[key]); toggle.addEventListener('click', () => toggle.classList.toggle('on')); });
+  surface.querySelector('[data-setting-toggle="suspendInactiveTabs"]').closest('.setting-card').querySelector('small').textContent = 'Podľa voľnej RAM uspáva po 5, 10 alebo 20 minútach. Chránené a rozpracované karty zostanú zachované. Pravým kliknutím na kartu môžeš stránku vylúčiť z uspávania.';
+  const suspensionCard = surface.querySelector('[data-setting-toggle="suspendInactiveTabs"]').closest('.setting-card');
+  const protectionList = document.createElement('div');
+  protectionList.className = 'password-list';
+  suspensionCard.after(protectionList);
+  const renderProtectedSites = () => {
+    protectionList.innerHTML = '<strong>Stránky chránené pred uspávaním</strong>' + (settingsState.neverSuspendOrigins.map(origin => `<div class="setting-card"><small>${escapeHtml(origin)}</small><button class="settings-control" data-unprotect-origin="${escapeHtml(origin)}">Odobrať ochranu</button></div>`).join('') || '<small>Žiadne vlastné výnimky.</small>');
+    protectionList.querySelectorAll('[data-unprotect-origin]').forEach(button => button.addEventListener('click', () => {
+      settingsState.neverSuspendOrigins = settingsState.neverSuspendOrigins.filter(origin => origin !== button.dataset.unprotectOrigin);
+      saveSettings();
+      renderProtectedSites();
+    }));
+  };
+  renderProtectedSites();
   advancedButton.addEventListener('click', () => { navigation.querySelectorAll('[data-settings-section]').forEach((item) => item.classList.toggle('active', item === advancedButton)); panels.querySelectorAll('[data-settings-panel]').forEach((panel) => { panel.hidden = panel !== advancedPanel; }); });
   surface.querySelector('#updateAdblockList').addEventListener('click', async (event) => { const button = event.currentTarget; button.disabled = true; button.textContent = 'Aktualizujem...'; const result = await window.linsoftBrowser?.updateAdblockList(); button.disabled = false; button.textContent = 'Aktualizovať'; showToast(result?.ok ? `Zoznam aktualizovaný: ${result.count} domén.` : `Aktualizácia zlyhala: ${result?.message || 'neznáma chyba'}`); });
   surface.querySelector('#clearCacheButton').addEventListener('click', async () => { const result = await window.linsoftBrowser?.clearCache(); showToast(result?.ok ? 'Cache bola vymazaná.' : `Cache sa nepodarilo vymazať: ${result?.message || 'neznáma chyba'}`); });
@@ -1939,20 +2387,20 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
   if (input.toLowerCase() === 'linsoft://history') { hideNativeTab(); openLibrary('history'); return; }
   if (!input || input === 'linsoft://start' || input.toLowerCase() === 'home') { hideNativeTab(); startPage(); return; }
   if (/^(javascript|data|vbscript):/i.test(input)) { showToast('Tento typ adresy je z bezpečnostných dôvodov zablokovaný.'); return; }
-  const explicitHttp = /^https?:\/\//i.test(input);
-  const networkAddress = normalizeNetworkAddress(input);
-  const bareOnionAddress = /^[a-z2-7]{56}\.onion(?::\d+)?(?:[/?#]|$)/i.test(input);
-  const looksLikeUrl = explicitHttp || explicitFile || networkAddress.isIp || /^[^\s]+\.[^\s]+$/.test(input);
-  const requestedUrl = explicitFile ? localFileUrl : looksLikeUrl ? (explicitHttp ? input : networkAddress.isIp ? networkAddress.value : `${bareOnionAddress ? 'http' : 'https'}://${input}`) : searchUrl(input);
+  const address = browserAlgorithms.resolveAddress(input);
+  if (!explicitFile && address.kind === 'blocked') { showToast(address.message); return; }
+  const requestedUrl = explicitFile ? localFileUrl : address.kind === 'url' ? address.url : searchUrl(address.query);
   const url = requestedUrl;
   const currentTab = tabs.get(activeTabId);
-  if (addHistory && currentTab) { currentTab.history = currentTab.history || [currentTab.url]; currentTab.history.splice(currentTab.historyIndex + 1); currentTab.history.push(url); currentTab.historyIndex = currentTab.history.length - 1; }
-  if (addHistory) {
-    let visitHistory = [];
-    try { visitHistory = JSON.parse(localStorage.getItem('linsoft-history') || '[]'); } catch { visitHistory = []; }
-    visitHistory = [{ url, title: url.replace(/^https?:\/\//, '').split('/')[0], visitedAt: Date.now() }, ...visitHistory.filter((item) => item.url !== url)].slice(0, 200);
-    localStorage.setItem('linsoft-history', JSON.stringify(visitHistory));
+  if (currentTab?.crashed) {
+    currentTab.crashed = false;
+    currentTab.suspended = false;
+    suspendedTabs.delete(activeTabId);
+    const crashedSurface = content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"]`);
+    if (crashedSurface) crashedSurface.innerHTML = '';
   }
+  if (tabScrollPositions.get(activeTabId)?.url !== url) tabScrollPositions.delete(activeTabId);
+  if (addHistory && currentTab) { currentTab.history = currentTab.history || [currentTab.url]; currentTab.history.splice(currentTab.historyIndex + 1); currentTab.history.push(url); currentTab.historyIndex = currentTab.history.length - 1; }
   addressInput.value = url;
   updateConnectionIndicator(url);
   const tabLabel = url.replace(/^https?:\/\//, '').split('/')[0]; tabTitle.textContent = tabLabel; updateActiveTab(url, tabLabel); saveSession();
@@ -1963,7 +2411,7 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
     surface.innerHTML = '<div class="native-view-placeholder" aria-hidden="true"></div>';
     activateSurface(activeTabId);
     syncNativeTabLayout();
-    window.linsoftBrowser?.loadNativeTab?.({ tabId: activeTabId, url });
+    loadNativeTab(activeTabId, url);
     return;
   }
   if (!window.linsoftBrowser && /^https?:\/\//i.test(url)) { showExternalPreview(surface, url); return; }
@@ -1981,40 +2429,28 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
   if (activeViewer && !boundViewers.has(activeViewer)) {
     const viewerTabId = activeTabId;
     boundViewers.add(activeViewer);
-    const loadingTrack = document.getElementById('loadingTrack');
-    activeViewer.addEventListener('did-start-loading', () => { beginPageLoadMeasurement(viewerTabId, activeViewer.getURL?.() || tabs.get(viewerTabId)?.url); loadingTrack.classList.add('loading'); setTabLoading(viewerTabId, true); document.getElementById('securityButton').classList.add('address-loading'); });
-    activeViewer.addEventListener('media-started-playing', () => setTabAudioIcon(viewerTabId, tabs.get(viewerTabId)?.muted, true));
-    activeViewer.addEventListener('media-paused', () => setTabAudioIcon(viewerTabId, tabs.get(viewerTabId)?.muted, false));
-    activeViewer.addEventListener('did-stop-loading', () => { finishPageLoadMeasurement(viewerTabId); loadingTrack.classList.remove('loading'); setTabLoading(viewerTabId, false); document.getElementById('securityButton').classList.remove('address-loading'); });
-    activeViewer.addEventListener('render-process-gone', () => { const tab = tabs.get(viewerTabId); if (tab) { tab.crashed = true; saveSession(); showToast('Karta sa neočakávane ukončila. Klikni na kartu pre obnovenie.'); } });
+    activeViewer.addEventListener('did-start-loading', () => updateTabLoading(viewerTabId, true));
+    activeViewer.addEventListener('media-started-playing', () => { playingAudioTabs.add(viewerTabId); setTabAudioIcon(viewerTabId, tabs.get(viewerTabId)?.muted, true); });
+    activeViewer.addEventListener('media-paused', () => { playingAudioTabs.delete(viewerTabId); setTabAudioIcon(viewerTabId, tabs.get(viewerTabId)?.muted, false); });
+    activeViewer.addEventListener('did-stop-loading', () => updateTabLoading(viewerTabId, false));
+    activeViewer.addEventListener('render-process-gone', (event) => handleTabCrash(viewerTabId, event.reason));
+    activeViewer.addEventListener('did-finish-load', () => { void restoreSuspendedScroll(viewerTabId); });
     activeViewer.addEventListener('dom-ready', () => {
+      readyViewers.add(activeViewer);
+      updateNavigationButtons();
       activeViewer.insertCSS('*::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }').catch(() => {});
       setInstallAppAvailable(/^https?:\/\//i.test(activeViewer.getURL?.() || addressInput.value));
       bindPasswordSavePrompt(activeViewer, activeViewer.getURL?.() || addressInput.value);
     });
     activeViewer.addEventListener('dom-ready', () => window.setTimeout(() => installYoutubeAdBlock(activeViewer), 350));
     activeViewer.addEventListener('dom-ready', () => installOverlayCloseFallback(activeViewer));
-    activeViewer.addEventListener('did-navigate', (event) => applyTabZoom(viewerTabId, event.url));
-    activeViewer.addEventListener('did-navigate', (event) => { const label = event.url.replace(/^https?:\/\//, '').split('/')[0]; const tab = tabs.get(viewerTabId); if (!tab) return; tab.url = event.url; tab.title = label; tab.history = tab.history || [event.url]; const knownIndex = tab.history.indexOf(event.url); if (knownIndex >= 0) tab.historyIndex = knownIndex; else { tab.history.splice(tab.historyIndex + 1); tab.history.push(event.url); tab.historyIndex = tab.history.length - 1; } if (viewerTabId === activeTabId) { addressInput.value = event.url; tabTitle.textContent = label; updateActiveTab(event.url, label); updateConnectionIndicator(event.url); } try { tab.icon = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(event.url).hostname)}&sz=32`; } catch {} setTabIcon(viewerTabId, tab.icon); saveSession(); });
-    activeViewer.addEventListener('did-navigate-in-page', (event) => { const url = event.url; const label = url.replace(/^https?:\/\//, '').split('/')[0]; const tab = tabs.get(viewerTabId); if (!tab || !url) return; tab.url = url; tab.title = label; tab.history = tab.history || [url]; const knownIndex = tab.history.indexOf(url); if (knownIndex >= 0) tab.historyIndex = knownIndex; else { tab.history.splice(tab.historyIndex + 1); tab.history.push(url); tab.historyIndex = tab.history.length - 1; } if (viewerTabId === activeTabId) { addressInput.value = url; tabTitle.textContent = label; updateActiveTab(url, label); updateConnectionIndicator(url); } saveSession(); });
+    activeViewer.addEventListener('did-navigate', (event) => updateTabNavigation(viewerTabId, event.url));
+    activeViewer.addEventListener('did-navigate-in-page', (event) => updateTabNavigation(viewerTabId, event.url, { sameDocument: true }));
     activeViewer.addEventListener('page-favicon-updated', (event) => { const iconUrl = event.favicons?.[0] || ''; const tab = tabs.get(viewerTabId); if (tab) tab.icon = iconUrl; setTabIcon(viewerTabId, iconUrl); saveSession(); });
-    activeViewer.addEventListener('page-title-updated', (event) => { const tab = tabs.get(viewerTabId); if (event.title && tab) { tab.title = event.title; if (viewerTabId === activeTabId) { tabTitle.textContent = event.title; updateActiveTab(tab.url, event.title); } saveSession(); } });
+    activeViewer.addEventListener('page-title-updated', (event) => { const tab = tabs.get(viewerTabId); if (event.title && tab) { tab.title = event.title; updateBrowserHistoryTitle(tab.url, event.title); if (viewerTabId === activeTabId) { tabTitle.textContent = event.title; updateActiveTab(tab.url, event.title); } saveSession(); } });
     activeViewer.addEventListener('did-fail-load', (event) => {
-      if (event.errorCode === -3) return;
-      const failedUrl = event.validatedURL || activeViewer.getURL?.() || '';
-      const fallbackUrl = httpFallbackForTlsError(event.errorCode, failedUrl) || httpsFallbackForIpConnectionRefused(event.errorCode, failedUrl);
-      if (fallbackUrl) {
-        const tab = tabs.get(viewerTabId);
-        if (tab) { replaceFailedUrlInTabHistory(tab, failedUrl, fallbackUrl); saveSession(); }
-        if (viewerTabId === activeTabId) {
-          addressInput.value = fallbackUrl;
-          updateConnectionIndicator(fallbackUrl);
-          showToast(fallbackUrl.startsWith('https:') ? 'HTTP pripojenie odmietnuté; skúšam HTTPS.' : [-200, -201, -202].includes(Number(event.errorCode)) ? 'Certifikát súkromnej IP adresy nie je dôveryhodný; skúšam HTTP.' : 'Web nepodporuje HTTPS; otváram nezabezpečené HTTP pripojenie.');
-        }
-        activeViewer.src = fallbackUrl;
-        return;
-      }
-      showToast(navigationErrorMessage(event.errorCode, event.errorDescription));
+      if (event.isMainFrame === false) return;
+      handleTabNavigationFailure(viewerTabId, event.errorCode, event.errorDescription, event.validatedURL || activeViewer.getURL?.(), (url) => { activeViewer.src = url; });
     });
   }
 }
@@ -2023,62 +2459,43 @@ const addressSuggestions = document.getElementById('addressSuggestions');
 let addressSuggestionItems = [];
 let activeAddressSuggestion = -1;
 let currentAddressSuggestionQuery = '';
+let addressSuggestionTimer;
+let suggestionSnapshot = '';
+let suggestionIndex = [];
+let suggestionHistoryItems = [];
 function closeAddressSuggestions() {
+  window.clearTimeout(addressSuggestionTimer);
   addressSuggestions.hidden = true;
   addressInput.setAttribute('aria-expanded', 'false');
   addressInput.removeAttribute('aria-activedescendant');
   activeAddressSuggestion = -1;
 }
 function renderAddressSuggestions(queryOverride) {
+  window.clearTimeout(addressSuggestionTimer);
   if (isGuestWindow) return closeAddressSuggestions();
   const query = String(queryOverride ?? addressInput.value).trim().toLocaleLowerCase();
   currentAddressSuggestionQuery = query;
   activeAddressSuggestion = -1;
   addressInput.removeAttribute('aria-activedescendant');
-  let history = [];
-  try { history = JSON.parse(localStorage.getItem('linsoft-history') || '[]'); } catch {}
-  const historyItems = (Array.isArray(history) ? history : [])
-    .filter((item) => { try { return item && typeof item.url === 'string' && ['http:', 'https:'].includes(new URL(item.url).protocol); } catch { return false; } });
-  const candidates = new Map();
-  savedBookmarks.forEach((bookmark) => {
-    try {
-      if (!['http:', 'https:'].includes(new URL(bookmark.url).protocol)) return;
-      candidates.set(bookmark.url, { ...bookmark, source: 'bookmark', hasHistory: false, visitedAt: 0 });
-    } catch {}
-  });
-  historyItems.forEach((item) => {
-    const bookmark = candidates.get(item.url);
-    candidates.set(item.url, { ...item, title: bookmark?.title || item.title || item.url, source: bookmark ? 'bookmark' : 'history', hasHistory: true, visitedAt: Number(item.visitedAt) || 0 });
-  });
-  const queryParts = query.split(/\s+/).filter(Boolean);
-  const matchScore = (item) => {
-    if (!query) return item.source === 'bookmark' ? 0 : 1;
-    const title = String(item.title || '').toLocaleLowerCase();
-    const url = item.url.toLocaleLowerCase();
-    const hostname = new URL(item.url).hostname.toLocaleLowerCase();
-    if (url === query) return 0;
-    if (hostname === query) return 1;
-    if (title === query) return 2;
-    if (item.source === 'bookmark') return 3;
-    if (hostname.startsWith(query)) return 4;
-    if (title.startsWith(query)) return 5;
-    if (url.startsWith(query)) return 6;
-    return 7;
-  };
-  addressSuggestionItems = [...candidates.values()]
-    .filter((item) => {
-      const searchable = `${item.title || ''} ${item.url} ${new URL(item.url).hostname}`.toLocaleLowerCase();
-      return queryParts.every((part) => searchable.includes(part));
-    })
-    .sort((left, right) => matchScore(left) - matchScore(right) || Number(right.visitedAt) - Number(left.visitedAt))
-    .slice(0, 6);
+  const storedHistory = localStorage.getItem('linsoft-history') || '[]';
+  const snapshot = JSON.stringify([storedHistory, savedBookmarks]);
+  if (snapshot !== suggestionSnapshot) {
+    let history = [];
+    try { history = JSON.parse(storedHistory); } catch (error) { console.warn('Neplatná história návrhov:', error.message); }
+    suggestionHistoryItems = (Array.isArray(history) ? history : [])
+      .filter((item) => { try { return item && typeof item.url === 'string' && ['http:', 'https:'].includes(new URL(item.url).protocol); } catch { return false; } });
+    suggestionIndex = browserAlgorithms.createSuggestionIndex(savedBookmarks, suggestionHistoryItems);
+    suggestionSnapshot = snapshot;
+  }
+  const historyItems = suggestionHistoryItems;
+  addressSuggestionItems = browserAlgorithms.searchSuggestionIndex(query, suggestionIndex, Date.now(), [...tabs.values()], activeTabId, settingsState.learnSuggestions ? learnedSuggestions : []);
   const clearButton = historyItems.length ? '<button type="button" data-clear-address-history>Vymazať</button>' : '';
   const emptyState = query ? 'Nenašli sa žiadne zodpovedajúce stránky.' : 'Zatiaľ tu nie sú žiadne návštevy ani záložky.';
   const resultMarkup = addressSuggestionItems.length ? addressSuggestionItems.map((item, index) => {
     const title = String(item.title || item.url);
     const hostname = new URL(item.url).hostname;
     const favicon = bookmarkFaviconUrl(item.url);
-    const historyLabel = item.source === 'bookmark' ? `${hostname} · Záložka` : hostname;
+    const historyLabel = item.tabId !== undefined ? `${hostname} · Prepnúť na otvorenú kartu` : `${hostname}${item.source === 'bookmark' ? ' · Záložka' : ''}${item.typo ? ' · Podobný názov' : ''}`;
     const removeButton = item.hasHistory ? `<button type="button" class="address-suggestion-remove" data-remove-address-suggestion="${index}" aria-label="Odstrániť z histórie: ${escapeHtml(title)}" title="Odstrániť z histórie"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-x"></use></svg></button>` : '';
     return `<div class="address-suggestion-row"><button type="button" role="option" id="address-suggestion-${index}" aria-selected="false" data-address-suggestion="${index}"><span class="address-suggestion-icon">${favicon ? `<img src="${escapeHtml(favicon)}" alt="">` : escapeHtml(title.slice(0, 1).toUpperCase())}</span><span class="address-suggestion-copy"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(historyLabel)}</small></span></button>${removeButton}</div>`;
   }).join('') : `<div class="address-suggestions-empty">${emptyState}</div><button type="button" class="address-suggestions-open-history" data-open-address-history>Otvoriť históriu</button>`;
@@ -2094,6 +2511,7 @@ function renderAddressSuggestions(queryOverride) {
   clearHistoryButton?.addEventListener('mousedown', (event) => event.preventDefault());
   clearHistoryButton?.addEventListener('click', () => {
     localStorage.removeItem('linsoft-history');
+    clearSuggestionLearning(false);
     addressSuggestionItems = [];
     closeAddressSuggestions();
     showToast('História bola vymazaná.', 'Vrátiť späť', () => restoreAddressHistory(historyItems, 0));
@@ -2113,6 +2531,9 @@ function renderAddressSuggestions(queryOverride) {
       const historyItems = Array.isArray(history) ? history : [];
       const historyIndex = historyItems.findIndex((entry) => entry?.url === item.url);
       localStorage.setItem('linsoft-history', JSON.stringify(historyItems.filter((entry) => entry?.url !== item.url)));
+      const removedUrl = new URL(item.url).href;
+      learnedSuggestions = learnedSuggestions.filter(entry => entry.url !== removedUrl);
+      localStorage.setItem('linsoft-suggestion-learning', JSON.stringify(learnedSuggestions));
       const previousHistory = historyIndex >= 0 ? [historyItems[historyIndex]] : [];
       showToast('Návšteva odstránená z histórie.', 'Vrátiť späť', () => restoreAddressHistory(previousHistory, historyIndex));
       renderAddressSuggestions(currentAddressSuggestionQuery);
@@ -2123,7 +2544,7 @@ function renderAddressSuggestions(queryOverride) {
     button.addEventListener('click', () => {
       const item = addressSuggestionItems[Number(button.dataset.addressSuggestion)];
       closeAddressSuggestions();
-      if (item) navigate(item.url);
+      if (item) activateAddressSuggestion(item);
     });
     button.querySelector('img')?.addEventListener('error', (event) => {
       const fallback = document.createElement('span');
@@ -2131,6 +2552,16 @@ function renderAddressSuggestions(queryOverride) {
       event.currentTarget.replaceWith(fallback);
     });
   });
+}
+function activateAddressSuggestion(item) {
+  if (item.tabId !== undefined && !tabs.has(item.tabId)) return showToast('Táto karta už bola zatvorená.');
+  if (!isGuestWindow && settingsState.learnSuggestions) {
+    learnedSuggestions = browserAlgorithms.recordSuggestionSelection(learnedSuggestions, currentAddressSuggestionQuery, item.url);
+    localStorage.setItem('linsoft-suggestion-learning', JSON.stringify(learnedSuggestions));
+  }
+  if (item.tabId !== undefined) {
+    selectTab(item.tabId);
+  } else navigate(item.url);
 }
 function restoreAddressHistory(entries, insertAt) {
   let currentHistory = [];
@@ -2153,11 +2584,22 @@ document.getElementById('addressForm').addEventListener('submit', (event) => {
   event.preventDefault();
   const item = addressSuggestionItems[activeAddressSuggestion];
   closeAddressSuggestions();
-  navigate(item?.url || addressInput.value);
+  if (item) activateAddressSuggestion(item);
+  else navigate(addressInput.value);
 });
 addressInput.addEventListener('focus', () => { addressInput.select(); renderAddressSuggestions(''); });
-addressInput.addEventListener('input', renderAddressSuggestions);
+addressInput.addEventListener('input', () => {
+  closeAddressSuggestions();
+  addressSuggestionItems = [];
+  addressSuggestionTimer = window.setTimeout(() => {
+    if (document.activeElement === addressInput) renderAddressSuggestions();
+  }, 80);
+});
 addressInput.addEventListener('keydown', (event) => {
+  if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && addressSuggestions.hidden && document.activeElement === addressInput) {
+    window.clearTimeout(addressSuggestionTimer);
+    renderAddressSuggestions();
+  }
   if (event.key === 'ArrowDown' && !addressSuggestions.hidden) { event.preventDefault(); setActiveAddressSuggestion(activeAddressSuggestion + 1); }
   else if (event.key === 'ArrowUp' && !addressSuggestions.hidden) { event.preventDefault(); setActiveAddressSuggestion(activeAddressSuggestion < 0 ? addressSuggestionItems.length - 1 : activeAddressSuggestion - 1); }
   else if (event.key === 'Escape' && !addressSuggestions.hidden) { event.preventDefault(); closeAddressSuggestions(); }
@@ -2165,7 +2607,7 @@ addressInput.addEventListener('keydown', (event) => {
 addressInput.addEventListener('blur', () => window.setTimeout(() => { if (document.activeElement !== addressInput) closeAddressSuggestions(); }, 120));
 document.getElementById('clearAddress').addEventListener('click', () => { addressInput.value = ''; addressInput.focus(); renderAddressSuggestions(); });
 document.getElementById('installAppButton').addEventListener('click', installCurrentApp);
-document.getElementById('cancelInstall').addEventListener('click', closeInstallDialog); document.getElementById('cancelInstallButton').addEventListener('click', closeInstallDialog); document.getElementById('confirmInstall').addEventListener('click', async () => { const button = document.getElementById('confirmInstall'); const url = addressInput.value; const title = tabTitle.textContent; button.disabled = true; const result = await window.linsoftBrowser?.installWebApp(url, title); button.disabled = false; closeInstallDialog(); if (!result?.ok) return showToast(result?.message || 'Webovú aplikáciu sa nepodarilo nainštalovať.'); const existing = installedApps.find((item) => item.url === url); if (existing) existing.title = title; else installedApps.push({ url, title, installedAt: Date.now() }); localStorage.setItem('linsoft-apps', JSON.stringify(installedApps)); showToast('Aplikácia bola pridaná do Linsoft App Centra.'); openAppCenter(); });
+document.getElementById('cancelInstall').addEventListener('click', closeInstallDialog); document.getElementById('cancelInstallButton').addEventListener('click', closeInstallDialog); document.getElementById('confirmInstall').addEventListener('click', async () => { const button = document.getElementById('confirmInstall'); const url = addressInput.value; const title = tabTitle.textContent; button.disabled = true; const result = await window.linsoftBrowser?.installWebApp(url, title); button.disabled = false; closeInstallDialog(); if (!result?.ok) return showToast(result?.message || 'Webovú aplikáciu sa nepodarilo nainštalovať.'); const existing = installedApps.find((item) => item.url === url); if (existing) existing.title = title; else installedApps.push({ url, title, installedAt: Date.now() }); localStorage.setItem('linsoft-apps', JSON.stringify(installedApps)); showToast('Aplikácia bola pridaná do App Centra Linsoft Browser.'); openAppCenter(); });
 const securityPanel = document.getElementById('securityPanel'); const publicIp = document.getElementById('publicIp'); const publicNetwork = document.getElementById('publicNetwork'); const ipNote = document.getElementById('ipNote'); let ipLoaded = false;
 document.getElementById('securityButton').addEventListener('click', async (event) => { event.preventDefault(); event.stopPropagation(); securityPanel.hidden = !securityPanel.hidden; if (securityPanel.hidden || ipLoaded) return; publicIp.textContent = 'Načítavam...'; publicNetwork.textContent = 'Načítavam...'; const endpoints = [{ url: 'https://ipapi.co/json/', parse: (data) => ({ ip: data.ip, network: `${data.org || 'Neznáma sieť'} · ${data.country_name || 'Neznáma krajina'}` }) }, { url: 'https://ipwho.is/', parse: (data) => ({ ip: data.ip, network: `${data.connection?.isp || 'Neznáma sieť'} · ${data.country || 'Neznáma krajina'}` }) }, { url: 'https://api.ipify.org?format=json', parse: (data) => ({ ip: data.ip, network: 'Sieť a krajina nie sú dostupné' }) }]; let lastError = 'IP služby neodpovedali'; for (const endpoint of endpoints) { try { const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 7000); const response = await fetch(endpoint.url, { cache: 'no-store', signal: controller.signal }); window.clearTimeout(timeout); if (!response.ok) throw new Error(`HTTP ${response.status}`); const result = endpoint.parse(await response.json()); if (!result.ip) throw new Error('Prázdna odpoveď'); publicIp.textContent = result.ip; publicNetwork.textContent = result.network; ipNote.textContent = 'Verejná IP podľa aktuálneho internetového pripojenia.'; ipLoaded = true; return; } catch (error) { lastError = error.name === 'AbortError' ? 'Časový limit vypršal' : error.message; } } publicIp.textContent = 'Nepodarilo sa načítať'; publicNetwork.textContent = 'Neznáme'; ipNote.textContent = `${lastError}. Skontroluj internet, VPN alebo firewall a skús znova.`; }); document.getElementById('closeSecurity').addEventListener('click', () => { securityPanel.hidden = true; }); securityPanel.addEventListener('click', (event) => event.stopPropagation()); document.addEventListener('click', () => { securityPanel.hidden = true; });
 document.getElementById('homeButton').addEventListener('click', () => {
@@ -2342,7 +2784,17 @@ toolbarToolsToggle.addEventListener('click', () => {
   saveSettings();
 });
 document.getElementById('newTab').addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); openNewTab(); });
-document.getElementById('reloadButton').addEventListener('click', () => { const viewer = ensureActiveTabLoaded(); if (isNativeTabs) window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: 'reload' }); else if (viewer) viewer.reload(); else if (tabs.get(activeTabId)?.url === 'linsoft://start') startPage(); });
+document.getElementById('reloadButton').addEventListener('click', () => {
+  if (tabs.get(activeTabId)?.crashed) {
+    showCrashedTab(activeTabId);
+    showToast('Obnovu potvrď tlačidlom Obnoviť túto kartu.');
+    return;
+  }
+  const viewer = ensureActiveTabLoaded();
+  if (isNativeTabs) window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: 'reload' });
+  else if (viewer) viewer.reload();
+  else if (tabs.get(activeTabId)?.url === 'linsoft://start') startPage();
+});
 document.getElementById('backButton').addEventListener('click', () => navigateTabHistory(-1));
 document.getElementById('forwardButton').addEventListener('click', () => navigateTabHistory(1));
 document.getElementById('bookmarkButton').addEventListener('click', (event) => { const url = addressInput.value; if (!url || url.startsWith('linsoft://')) return showToast('Na domovskú stránku sa záložka nepridáva.'); if (!savedBookmarks.some((item) => item.url === url)) { savedBookmarks.push({ url, title: tabTitle.textContent }); localStorage.setItem('linsoft-bookmarks', JSON.stringify(savedBookmarks)); renderSavedBookmarks(); } event.currentTarget.querySelector('use').setAttribute('href', '#icon-bookmark-check'); event.currentTarget.classList.add('active'); event.currentTarget.setAttribute('aria-label', 'Záložka uložená'); showToast('Záložka uložená.'); });
@@ -2545,8 +2997,18 @@ function renderDownloads() {
     return `<div class="download-item" data-download-id="${escapeHtml(effectiveId)}"><span class="download-file-icon">${item.status === 'Stiahnuté' ? '✓' : isPaused ? 'Ⅱ' : '↓'}</span><div class="download-item-body"><strong>${escapeHtml(item.fileName)}</strong><span>${escapeHtml(item.status)}${size ? ` · ${size}` : ''}${speed && !isPaused ? ` · ${speed}` : ''}</span>${remaining ? `<small>${remaining}</small>` : ''}${completedAt ? `<small>${escapeHtml(completedAt)}</small>` : ''}${destination}<div class="download-item-progress"><i style="width:${percent}%"></i></div><div class="download-item-actions">${item.status === 'Stiahnuté' ? `<button data-open-download="${escapeHtml(item.filePath || '')}">Otvoriť</button><button data-show-download="${escapeHtml(item.filePath || '')}">Zobraziť v priečinku</button>` : isInProgress ? `${progressAction}<button data-cancel-download="${escapeHtml(effectiveId)}">Zrušiť</button>` : retryAction}<button data-remove-download="${escapeHtml(effectiveId)}">Odstrániť</button></div></div><span class="download-item-percent">${percent}%</span></div>`;
   }).join('') || '<div class="downloads-empty"><span>↓</span><strong>Žiadne sťahovania</strong><small>Stiahnuté súbory sa zobrazia tu.</small></div>';
 
-  list.querySelectorAll('[data-open-download]').forEach((button) => button.addEventListener('click', () => window.linsoftBrowser?.openDownloadFile(button.dataset.openDownload)));
-  list.querySelectorAll('[data-show-download]').forEach((button) => button.addEventListener('click', () => window.linsoftBrowser?.showDownloadFile(button.dataset.showDownload)));
+  list.querySelectorAll('[data-open-download]').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const result = await window.linsoftBrowser?.openDownloadFile(button.dataset.openDownload);
+      if (!result?.ok) showToast(result?.message || 'Súbor sa nepodarilo otvoriť.');
+    } catch (error) { showToast(`Súbor sa nepodarilo otvoriť: ${error.message}`); }
+  }));
+  list.querySelectorAll('[data-show-download]').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const result = await window.linsoftBrowser?.showDownloadFile(button.dataset.showDownload);
+      if (!result?.ok) showToast(result?.message || 'Priečinok so súborom sa nepodarilo otvoriť.');
+    } catch (error) { showToast(`Priečinok so súborom sa nepodarilo otvoriť: ${error.message}`); }
+  }));
   list.querySelectorAll('[data-pause-download]').forEach((button) => button.addEventListener('click', () => {
     const item = downloadItems.get(button.dataset.pauseDownload);
     if (item) item.status = 'Pozastavené';
@@ -2619,9 +3081,16 @@ window.linsoftBrowser?.listDownloads?.().then((downloads) => {
 document.addEventListener('click', () => { document.getElementById('downloadPanel').hidden = true; });
 
 window.linsoftBrowser?.onExternalUrl((url) => navigate(url));
+window.linsoftBrowser?.onExternalUrlInNewTab?.((url) => openNewTab(url));
 window.linsoftBrowser?.onTorNavigationError?.((message) => showToast(message));
+window.linsoftBrowser?.onSearchError?.((message) => showToast(message));
 window.linsoftBrowser?.onTranslatePage?.(translateWebPage);
 window.addEventListener('storage', (event) => {
+  if (event.key === 'linsoft-suggestion-learning') {
+    try { learnedSuggestions = browserAlgorithms.normalizeSuggestionLearning(JSON.parse(event.newValue || '[]')); }
+    catch (error) { console.warn('Linsoft Browser could not refresh learned suggestions:', error.message); }
+    return;
+  }
   if (event.key !== 'linsoft-apps') return;
   try {
     const storedApps = JSON.parse(event.newValue || '[]');
@@ -2633,34 +3102,23 @@ window.linsoftBrowser?.onNativeTabEvent?.((event) => {
   if (!isNativeTabs) return;
   const tab = tabs.get(event.tabId);
   if (!tab) return;
+  if (event.type === 'media-started-playing' || event.type === 'media-paused') {
+    if (event.type === 'media-started-playing') playingAudioTabs.add(event.tabId);
+    else playingAudioTabs.delete(event.tabId);
+    setTabAudioIcon(event.tabId, tab.muted, playingAudioTabs.has(event.tabId));
+    return;
+  }
   if (event.type === 'loading') {
-    if (event.loading) beginPageLoadMeasurement(event.tabId, tab.url);
-    else finishPageLoadMeasurement(event.tabId);
-    setTabLoading(event.tabId, event.loading);
-    document.getElementById('loadingTrack').classList.toggle('loading', event.loading && event.tabId === activeTabId);
+    updateTabLoading(event.tabId, event.loading);
     return;
   }
   if (event.type === 'crashed') {
-    tab.crashed = true;
-    saveSession();
-    if (event.tabId === activeTabId) showToast('Karta sa neočakávane ukončila. Klikni na kartu pre obnovenie.');
+    handleTabCrash(event.tabId, event.reason);
     return;
   }
+  if (event.type === 'ready') { void restoreSuspendedScroll(event.tabId); return; }
   if (event.type === 'failed') {
-    const failedUrl = event.validatedURL || tab.url;
-    const fallbackUrl = httpFallbackForTlsError(event.errorCode, failedUrl) || httpsFallbackForIpConnectionRefused(event.errorCode, failedUrl);
-    if (fallbackUrl) {
-      replaceFailedUrlInTabHistory(tab, failedUrl, fallbackUrl);
-      saveSession();
-      if (event.tabId === activeTabId) {
-        addressInput.value = fallbackUrl;
-        updateConnectionIndicator(fallbackUrl);
-        showToast(fallbackUrl.startsWith('https:') ? 'HTTP pripojenie odmietnuté; skúšam HTTPS.' : [-200, -201, -202].includes(Number(event.errorCode)) ? 'Certifikát súkromnej IP adresy nie je dôveryhodný; skúšam HTTP.' : 'Web nepodporuje HTTPS; otváram nezabezpečené HTTP pripojenie.');
-      }
-      window.linsoftBrowser?.loadNativeTab?.({ tabId: event.tabId, url: fallbackUrl });
-      return;
-    }
-    if (event.errorCode !== -3 && event.tabId === activeTabId) showToast(navigationErrorMessage(event.errorCode, event.errorDescription));
+    handleTabNavigationFailure(event.tabId, event.errorCode, event.errorDescription, event.validatedURL, (url) => loadNativeTab(event.tabId, url));
     return;
   }
   if (event.type === 'favicon' && event.favicon) {
@@ -2671,26 +3129,13 @@ window.linsoftBrowser?.onNativeTabEvent?.((event) => {
   }
   if (event.type === 'title' && event.title) {
     tab.title = event.title;
+    updateBrowserHistoryTitle(tab.url, event.title);
     if (event.tabId === activeTabId) { tabTitle.textContent = event.title; updateActiveTab(tab.url, event.title); }
     saveSession();
     return;
   }
-  if (event.type === 'navigate' && /^https?:\/\//i.test(event.url || '')) {
-    const label = event.url.replace(/^https?:\/\//, '').split('/')[0];
-    tab.url = event.url;
-    applyTabZoom(event.tabId, event.url);
-    tab.history = tab.history || [event.url];
-    const knownIndex = tab.history.indexOf(event.url);
-    if (knownIndex >= 0) tab.historyIndex = knownIndex;
-    else { tab.history.splice(tab.historyIndex + 1); tab.history.push(event.url); tab.historyIndex = tab.history.length - 1; }
-    if (event.tabId === activeTabId) {
-      addressInput.value = event.url;
-      tabTitle.textContent = tab.title || label;
-      updateActiveTab(event.url, tab.title || label);
-      updateConnectionIndicator(event.url);
-      setInstallAppAvailable(true);
-    }
-    saveSession();
+  if ((event.type === 'navigate' || event.type === 'navigate-in-page') && event.url) {
+    updateTabNavigation(event.tabId, event.url, { sameDocument: event.type === 'navigate-in-page' });
   }
 });
 window.linsoftBrowser?.onDismissWebviewOverlay?.(() => {
@@ -2726,7 +3171,7 @@ window.linsoftBrowser?.onInstallExternalApp(async (data) => { if (!data?.url || 
   if (existing) existing.title = data.name || existing.title;
   else installedApps.push({ url: data.url, title: data.name || new URL(data.url).hostname, installedAt: Date.now() });
   localStorage.setItem('linsoft-apps', JSON.stringify(installedApps));
-  showToast('Web bol nainštalovaný do Linsoft App Centra.');
+  showToast('Web bol nainštalovaný do App Centra Linsoft Browser.');
   openAppCenter(); });
 window.linsoftBrowser?.onUninstallExternalApp(async (data) => { const index = installedApps.findIndex((item) => item.url === data?.url);
   const item = index >= 0 ? installedApps[index] : { title: data?.name || '' };
@@ -2737,10 +3182,9 @@ window.linsoftBrowser?.onUninstallExternalApp(async (data) => { const index = in
   showToast('Webová aplikácia bola odinštalovaná.');
   openAppCenter(); });
 window.linsoftBrowser?.onLinkInTab((url) => { if (settingsState.popups) openNewTab(url); else showToast('Vyskakovacie okno bolo zablokované.'); });
-window.linsoftBrowser?.onLinkInWindow?.((url) => { if (settingsState.popups) window.linsoftBrowser.openDetachedWindow(url); else showToast('Vyskakovacie okno bolo zablokované.'); });
 applyTheme();
 updateAdBlockButton();
-  window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, spellcheckLanguages: settingsState.spellcheckLanguages, clearExit: settingsState.clearExit, autoUpdateCheck: settingsState.autoUpdateCheck });
+  window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, spellcheckLanguages: settingsState.spellcheckLanguages, clearExit: settingsState.clearExit, autoUpdateCheck: settingsState.autoUpdateCheck, neverSuspendOrigins: settingsState.neverSuspendOrigins, suspendInactiveTabs: settingsState.suspendInactiveTabs });
 document.addEventListener('keydown', (event) => { const command = event.ctrlKey || event.metaKey; if (command && event.shiftKey && event.key.toLowerCase() === 'i') { event.preventDefault(); content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"] .webview`)?.openDevTools?.(); return; } if (command && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosedTab(); return; } if (command && (event.key.toLowerCase() === 'l' || event.key.toLowerCase() === 'k')) { event.preventDefault(); addressInput.focus(); addressInput.select(); return; } if (command && event.key.toLowerCase() === 'r') { event.preventDefault(); document.getElementById('reloadButton').click(); return; } if (command && event.key.toLowerCase() === 't') { event.preventDefault(); openNewTab(); return; } if (command && event.key.toLowerCase() === 'w') { event.preventDefault(); closeTab(activeTabId); return; } if (command && event.key === 'Tab') { event.preventDefault(); const ids = [...tabs.keys()]; const current = ids.indexOf(activeTabId); const next = event.shiftKey ? (current - 1 + ids.length) % ids.length : (current + 1) % ids.length; selectTab(ids[next]); return; } if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); document.getElementById('backButton').click(); return; } if (event.altKey && event.key === 'ArrowRight') { event.preventDefault(); document.getElementById('forwardButton').click(); } });
 restoreSession();
 if (hadCrash) showToast('Obnovené karty po neočakávanom ukončení.');

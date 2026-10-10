@@ -3,16 +3,20 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const vm = require('node:vm');
 const { pathToFileURL } = require('node:url');
 const {
   canAutoCheckForUpdates,
   formatUpdateFailure,
   getPermissionDecision,
+  getStorageTypesToClearOnExit,
   getUpdateStatus,
   isSafeLocalDocumentUrl,
   isSafeLocalHtmlUrl,
   isSafeLocalPdfUrl,
   isSafeWebUrl,
+  linsoftSearchQueryFromUrl,
+  linsoftSearchInitializationScript,
   normalizePermissionOrigin
 } = require('../lib/browser-policies.cjs');
 const { createPermissionCheckHandler, createPermissionRequestHandler, mediaTypesFromDetails } = require('../lib/permission-handlers.cjs');
@@ -39,6 +43,14 @@ test('automatic update checks only run in eligible packaged Windows states', () 
   assert.equal(canAutoCheckForUpdates({ isPackaged: true, platform: 'win32', enabled: true, status: 'downloading' }), false);
 });
 
+test('exit cleanup removes cookies and shader cache while preserving website document storage', () => {
+  const storages = getStorageTypesToClearOnExit();
+  assert.deepEqual(storages, ['cookies', 'shadercache']);
+  for (const storage of ['filesystem', 'indexdb', 'localstorage', 'websql', 'serviceworkers', 'cachestorage']) {
+    assert.equal(storages.includes(storage), false, `${storage} must be preserved on exit`);
+  }
+});
+
 test('permission origins accept only credential-free HTTP(S) origins', () => {
   assert.equal(normalizePermissionOrigin('https://example.com/path?q=1'), 'https://example.com');
   assert.equal(normalizePermissionOrigin('http://localhost:8080/camera'), 'http://localhost:8080');
@@ -54,6 +66,102 @@ test('webview and external URLs accept only safe HTTP(S) addresses', () => {
   assert.equal(isSafeWebUrl('javascript:alert(1)'), false);
   assert.equal(isSafeWebUrl('https://user:pass@example.com'), false);
   assert.equal(isSafeWebUrl('https://'), false);
+});
+
+test('Linsoft Search query handoff is limited to its HTTPS search page', () => {
+  assert.equal(linsoftSearchQueryFromUrl('https://linsoft.ddns.net/linsoft-search/?q=hello+world'), 'hello world');
+  assert.equal(linsoftSearchQueryFromUrl('https://linsoft.ddns.net/linsoft-search/?q=%3Cscript%3E'), '<script>');
+  assert.equal(linsoftSearchQueryFromUrl('https://linsoft.ddns.net/linsoft-search/?q=%20%20'), '');
+  assert.equal(linsoftSearchQueryFromUrl('http://linsoft.ddns.net/linsoft-search/?q=hello'), '');
+  assert.equal(linsoftSearchQueryFromUrl('https://evil.example/linsoft-search/?q=hello'), '');
+  assert.equal(linsoftSearchQueryFromUrl('https://linsoft.ddns.net/other/?q=hello'), '');
+});
+
+test('search preload hides the home view before rendering and restores it when results start', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'search-page-preload.cjs'), 'utf8');
+  for (const href of ['https://linsoft.ddns.net/linsoft-search/?q=hello', 'https://linsoft.ddns.net/linsoft-search/?q=timeout', 'https://linsoft.ddns.net/linsoft-search/', 'https://example.com/?q=hello']) {
+    let callback;
+    let timeout;
+    let hidden = false;
+    let removed = false;
+    let disconnected = false;
+    let errorReported = false;
+    let style;
+    const context = {
+      URL, location: { href },
+      document: {
+        createElement: () => (style = { isConnected: false, setAttribute() {}, remove: () => { removed = true; } }),
+        documentElement: { append: (element) => { element.isConnected = true; } },
+        getElementById: () => ({ classList: { contains: () => hidden }, prepend() {} })
+      },
+      MutationObserver: class {
+        constructor(fn) { callback = fn; }
+        observe() {}
+        disconnect() { disconnected = true; }
+      },
+      setTimeout: (fn) => { timeout = fn; return 1; },
+      clearTimeout: () => { timeout = null; },
+      console: { error: () => { errorReported = true; } }
+    };
+    vm.runInNewContext(source, context);
+    if (!href.includes('linsoft-search/?q=')) {
+      assert.equal(style, undefined);
+      continue;
+    }
+    assert.equal(style.isConnected, true);
+    assert.match(style.textContent, /#home-view.*visibility: hidden/);
+    callback();
+    assert.equal(removed, false);
+    if (href.includes('q=timeout')) {
+      timeout();
+      assert.equal(errorReported, true);
+    } else {
+      hidden = true;
+      callback();
+    }
+    assert.equal(removed, true);
+    assert.equal(disconnected, true);
+    assert.equal(timeout, null);
+  }
+});
+
+test('search initialization waits for scripts, avoids duplicate native searches and reports failure', async () => {
+  const url = 'https://linsoft.ddns.net/linsoft-search/?q=hello';
+  for (const mode of ['delayed', 'native', 'form', 'missing', 'rejected', 'navigated']) {
+    let time = 0;
+    let submissions = 0;
+    let hidden = mode === 'native';
+    const input = { value: '' };
+    const results = { value: hidden ? 'hello' : '' };
+    const complete = () => { submissions += 1; hidden = true; results.value = input.value; };
+    const context = {
+      location: { href: mode === 'navigated' ? 'https://example.com/' : url },
+      Date: { now: () => time },
+      document: { getElementById: id => id === 'home-view' ? { classList: { contains: () => hidden } } : id === 'results-input' ? results : input },
+      setTimeout: callback => {
+        time += 100;
+        if (mode === 'delayed' && time === 300) context.doSearch = complete;
+        callback();
+      }
+    };
+    if (mode === 'form') input.form = { requestSubmit: complete };
+    if (mode === 'rejected') context.doSearch = () => { submissions += 1; return Promise.reject(new Error('Search offline')); };
+    const script = linsoftSearchInitializationScript(url);
+    if (['missing', 'rejected'].includes(mode)) await assert.rejects(vm.runInNewContext(script, context), mode === 'rejected' ? /Search offline/ : /10 seconds/);
+    else assert.equal(await vm.runInNewContext(script, context), mode !== 'navigated');
+    assert.equal(submissions, ['delayed', 'form', 'rejected'].includes(mode) ? 1 : 0);
+  }
+  assert.throws(() => linsoftSearchInitializationScript('https://example.com/?q=x'));
+  assert.equal(linsoftSearchQueryFromUrl('https://linsoft.ddns.net:444/linsoft-search/?q=x'), '');
+  const hostileQuery = `"); throw new Error('injected'); //`;
+  const hostileUrl = `https://linsoft.ddns.net/linsoft-search/?q=${encodeURIComponent(hostileQuery)}`;
+  let received;
+  await vm.runInNewContext(linsoftSearchInitializationScript(hostileUrl), {
+    location: { href: hostileUrl }, Date: { now: () => 0 },
+    document: { getElementById: id => id === 'search-input' ? { value: '' } : id === 'results-input' ? { value: received } : { classList: { contains: () => Boolean(received) } } },
+    doSearch: query => { received = query; }, setTimeout: callback => callback()
+  });
+  assert.equal(received, hostileQuery);
 });
 
 test('permissions are denied unless enabled globally and explicitly remembered or approved', () => {

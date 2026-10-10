@@ -13,13 +13,14 @@
   "scripts": {
     "start": "node tools/start-browser.cjs",
     "dev": "node tools/start-browser.cjs",
+    "test:electron-smoke": "node tools/smoke-electron.cjs",
     "build:win": "electron-builder --win portable",
     "build:portable": "electron-builder --win portable",
     "build:installer": "electron-builder --win nsis --config.win.signAndEditExecutable=false",
     "build:linux": "electron-builder --linux deb",
     "build:deb": "electron-builder --linux deb",
     "build:all": "npm run build:portable && npm run build:linux",
-    "test": "node tools/validate-project.cjs && node --test tests/browser-policies.test.cjs tests/native-tab-manager.test.cjs tests/tor-hosting.test.cjs tests/tor-chat-protocol.test.cjs",
+    "test": "node tools/validate-project.cjs && node --test tests/browser-algorithms.test.cjs tests/browser-policies.test.cjs tests/google-signin.test.cjs tests/native-tab-manager.test.cjs tests/tab-state.test.cjs tests/tor-hosting.test.cjs tests/tor-chat-protocol.test.cjs",
     "test:tor": "node tools/test-tor-hosting.cjs",
     "make-icon": "node scripts/make-icon.cjs"
   },
