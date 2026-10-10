@@ -1,29 +1,24 @@
 # Linsoft Browser Release Checklist
 
-## Current Release: 2.0.26
+## Current Release: 2.0.27
 
-- Linsoft opens existing local PDF files in its embedded Chromium viewer and registers `.pdf` with Windows and Linux desktop environments.
-- Onion Chat includes QR invitations/scanning, 15-minute invitation expiry/renewal, Tor transport recovery, in-memory chat receipts, encrypted video-only calls, and end-to-end encrypted 2 MiB file transfers over Tor.
-- Electron is upgraded to `44.4.5` and Electron Builder to `26.15.3` to address the audited advisories.
-- `npm test` passes locally (28 tests).
-- `npm run test:tor` reaches the onion service from a separate guest process, relays encrypted chat, video frames, and file chunks, verifies receipts, and rejects a second guest.
-- Production dependency audit (`npm audit --omit=dev`) reports zero vulnerabilities.
-- The local Windows installer is intentionally unsigned; the signing gate below remains unsatisfied.
-- Publish tag `v2.0.26` only after the applicable release gates are complete. Linux CI stages the custom Debian package in a flat folder; build jobs use `--publish never` and the dedicated release job uploads assets using `GITHUB_TOKEN`.
+- Updates browser address suggestions, tab lifecycle/state handling, and Google sign-in recovery, with matching website/download guidance.
+- `npm test` passes locally (72 tests).
+- `npm run test:electron-smoke` passes for both webview and native tab engines.
+- The Windows installer is intentionally unsigned, as approved for this release.
+- Tag `v2.0.27` triggers the GitHub Actions release workflow. Linux CI stages and verifies the Debian package; build jobs use `--publish never`, and the release job uploads assets using `GITHUB_TOKEN`.
 - Wait for both build jobs and the release upload to complete before calling this release complete.
 
 ## Release Gate
 
 - [ ] `npm ci` succeeds on both Windows and Linux runners.
-- [x] `npm test` passes, including Tor chat protocol and AES-GCM tests.
-- [x] `npm run test:tor` reaches the onion service from a separate guest process, relays encrypted chat, video frames, and file chunks, verifies receipts, and rejects a second guest.
+- [x] `npm test` passes locally (72 tests).
+- [x] `npm run test:electron-smoke` passes for webview and native tab engines.
 - [ ] Windows installer builds and uploads.
-- [ ] Windows installer is signed with the release code-signing certificate; verify its publisher in the file properties before publishing.
+- [ ] Windows installer is signed with the release code-signing certificate (not included in this release, by approval).
 - [ ] Debian package builds and passes `node tools/verify-deb.cjs`.
 - [ ] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
-- [ ] Install the Windows package and verify Settings > Updates, manual check, download progress, and restart/install behavior.
-- [ ] Install two copies, create and join a chat invitation, exchange messages, then verify stopping the host disconnects the guest.
-- [x] Review and update vulnerable Electron/build dependencies.
+- [ ] Install the release packages and verify the app starts.
 
 ## Local Commands
 
