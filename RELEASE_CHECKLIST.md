@@ -9,17 +9,17 @@
 - `npm run test:electron-smoke` passes for both webview and native tab engines.
 - The Windows installer is intentionally unsigned, as approved for this release.
 - Tag `v2.0.28` triggers the GitHub Actions release workflow. Linux CI stages and verifies the Debian package; build jobs use `--publish never`, and the release job uploads assets using `GITHUB_TOKEN`.
-- Wait for both build jobs and the release upload to complete before calling this release complete.
+- Release workflow `38101161320` succeeded: tests, Windows installer, verified Debian package and stable release upload.
 
 ## Release Gate
 
-- [ ] `npm ci` succeeds on both Windows and Linux runners.
+- [x] `npm ci` succeeds on both Windows and Linux runners.
 - [x] `npm test` passes locally (85 tests).
 - [x] `npm run test:electron-smoke` passes for webview and native tab engines.
-- [ ] Windows installer builds and uploads.
+- [x] Windows installer builds and uploads.
 - [ ] Windows installer is signed with the release code-signing certificate (not included in this release, by approval).
-- [ ] Debian package builds and passes `node tools/verify-deb.cjs`.
-- [ ] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
+- [x] Debian package builds and passes `node tools/verify-deb.cjs`.
+- [x] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
 - [ ] Install the release packages and verify the app starts.
 
 ## Local Commands
