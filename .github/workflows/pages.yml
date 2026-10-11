@@ -7,6 +7,16 @@ on:
     paths:
       - docs/**
       - .github/workflows/pages.yml
+      - tools/build-apt-repository.sh
+      - tools/test-apt-repository.sh
+      - packaging/enable-debian-auto-updates.sh
+  release:
+    types: [published]
+  workflow_run:
+    workflows: [Build and publish Linsoft Browser]
+    types: [completed]
+  schedule:
+    - cron: '23 3 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -18,6 +28,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,12 +36,61 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Stage website and check optional APT configuration
+        id: apt
+        env:
+          APT_ENABLED: ${{ vars.LINSOFT_APT_ENABLED }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-pages
+          cp -R docs/. dist-pages/
+          if [[ "$APT_ENABLED" == "true" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::APT publication is disabled; deploying the website only. Configure signing and LINSOFT_APT_ENABLED=true to enable it."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Verify isolated APT repository
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y apt-utils dpkg-dev gnupg
+          bash -n packaging/enable-debian-auto-updates.sh
+          bash tools/test-apt-repository.sh
+      - name: Setup signed APT repository
+        if: steps.apt.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINSOFT_APT_PRIVATE_KEY: ${{ secrets.LINSOFT_APT_PRIVATE_KEY }}
+          LINSOFT_APT_PASSPHRASE: ${{ secrets.LINSOFT_APT_PASSPHRASE }}
+          LINSOFT_APT_FINGERPRINT: ${{ vars.LINSOFT_APT_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          test -n "$LINSOFT_APT_PRIVATE_KEY" || { echo "::error::Configure LINSOFT_APT_PRIVATE_KEY before deploying the APT repository."; exit 1; }
+          [[ "$LINSOFT_APT_FINGERPRINT" =~ ^[A-Fa-f0-9]{40}$ ]] || { echo "::error::Configure the full LINSOFT_APT_FINGERPRINT repository variable."; exit 1; }
+          export GNUPGHOME
+          GNUPGHOME=$(mktemp -d)
+          chmod 700 "$GNUPGHOME"
+          trap 'gpgconf --kill gpg-agent; find "$GNUPGHOME" -type f -delete; find "$GNUPGHOME" -depth -type d -empty -delete' EXIT
+          printf '%s' "$LINSOFT_APT_PRIVATE_KEY" | gpg --batch --import
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest")
+          tag=$(printf '%s' "$release" | jq -er 'select(.draft == false and .prerelease == false) | .tag_name')
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Latest release must be a stable numeric version."; exit 1; }
+          mkdir -p release-staging
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern "Linsoft-Browser-${tag#v}-amd64.deb" --dir release-staging
+          bash tools/build-apt-repository.sh "release-staging/Linsoft-Browser-${tag#v}-amd64.deb" dist-pages/apt "$LINSOFT_APT_FINGERPRINT"
+          cp packaging/enable-debian-auto-updates.sh dist-pages/apt/
+          bytes=$(du -sb dist-pages | cut -f1)
+          test "$bytes" -lt 1000000000 || { echo "::error::Website and APT repository exceed the Pages 1 GB limit."; exit 1; }
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
       - name: Upload website
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: dist-pages
 
   deploy:
     environment:

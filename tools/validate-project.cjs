@@ -7,6 +7,7 @@ const files = ['app.js', 'main.cjs', 'preload.cjs', path.join('lib', 'browser-po
 files.push(path.join('lib', 'search-page-preload.cjs'));
 files.push(path.join('lib', 'page-activity-preload.cjs'));
 files.push(path.join('lib', 'browser-algorithms.js'));
+files.push(path.join('lib', 'debian-updates.cjs'));
 for (const file of files) {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`Syntax error in ${file}: ${result.stderr || result.stdout}`);

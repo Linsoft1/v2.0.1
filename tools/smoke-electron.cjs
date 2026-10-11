@@ -39,13 +39,13 @@ async function removeProfile(profilePath) {
   if (fs.existsSync(profilePath)) throw new Error(`Temporary browser profile could not be removed: ${profilePath}`);
 }
 
-async function connectPageDebugger(debugPort, pageUrl) {
+async function connectPageDebugger(debugPort, pageUrl, mainProcess = false) {
   const deadline = Date.now() + 10000;
   let target;
   while (Date.now() < deadline) {
     const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
     const targets = response.ok ? await response.json() : [];
-    target = targets.find((item) => ['page', 'webview'].includes(item.type) && item.url === pageUrl && item.webSocketDebuggerUrl);
+    target = targets.find((item) => (mainProcess ? item.type === 'node' : ['page', 'webview'].includes(item.type) && item.url === pageUrl) && item.webSocketDebuggerUrl);
     if (target) break;
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
@@ -74,7 +74,7 @@ async function connectPageDebugger(debugPort, pageUrl) {
     const id = ++nextId;
     const timeout = setTimeout(() => {
       pending.delete(id);
-      reject(new Error(`Timed out waiting for ${method}`));
+      reject(new Error(`Timed out waiting for ${method} on ${pageUrl}: ${String(params.expression || '').slice(0, 180)}`));
     }, 10000);
     pending.set(id, {
       resolve: (value) => { clearTimeout(timeout); resolve(value); },
@@ -97,13 +97,14 @@ async function connectPageDebugger(debugPort, pageUrl) {
 async function smokeTabEngine({ nativeTabs, startUrl }) {
   const profilePath = path.join(os.tmpdir(), `linsoft-electron-smoke-${process.pid}-${crypto.randomUUID()}`);
   const debugPort = await getFreePort();
+  const mainDebugPort = await getFreePort();
   const environment = {
     ...process.env,
     LINSOFT_DEV_LAUNCH: '1',
     LINSOFT_NATIVE_TABS: nativeTabs ? '1' : '0',
     LINSOFT_BROWSER_USER_DATA: profilePath
   };
-  const child = spawn(electron, ['--headless', '--disable-gpu', `--remote-debugging-port=${debugPort}`, appPath], {
+  const child = spawn(electron, ['--headless', '--disable-gpu', '--use-fake-device-for-media-stream', `--inspect=${mainDebugPort}`, `--remote-debugging-port=${debugPort}`, appPath], {
     cwd: appPath,
     env: environment,
     stdio: ['ignore', 'ignore', 'pipe']
@@ -111,6 +112,7 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
   let socket;
+  let mainDebugger;
 
   try {
     const debugUrl = `http://127.0.0.1:${debugPort}/json/list`;
@@ -127,6 +129,23 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     if (!appTarget) throw new Error(`Electron renderer did not start: ${stderr.slice(-1200)}`);
+    mainDebugger = await connectPageDebugger(mainDebugPort, 'main process', true);
+    await mainDebugger.evaluate(`(() => {
+      const dialog = process.mainModule.require('electron').dialog;
+      const original = dialog.showMessageBox.bind(dialog);
+      globalThis.smokePermissionResponses = [];
+      globalThis.smokePermissionPrompts = [];
+      dialog.showMessageBox = (...args) => {
+        const options = args[args.length - 1];
+        if (options.title === 'Test mikrofónu') return Promise.resolve({ response: globalThis.smokeMicrophoneTestResponse ?? 1 });
+        if (options.title === 'Test kamery') return Promise.resolve({ response: globalThis.smokeCameraTestResponse ?? 1 });
+        if (options.title !== 'Povolenie webovej stránky') return original(...args);
+        smokePermissionPrompts.push(options.message);
+        if (!smokePermissionResponses.length) throw new Error('Unexpected site permission prompt');
+        return Promise.resolve({ response: smokePermissionResponses.shift() });
+      };
+      return true;
+    })()`);
 
     socket = new WebSocket(appTarget.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
@@ -277,6 +296,113 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
     await waitFor(() => evaluate(`document.querySelector('#tabTitle')?.textContent`), 'Smoke Activity');
     const activityPage = await connectPageDebugger(debugPort, activityUrl);
     try {
+      await mainDebugger.evaluate('smokePermissionResponses.push(1); true');
+      const capture = async (constraints) => activityPage.evaluate(`(async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(${JSON.stringify(constraints)});
+          const kinds = stream.getTracks().map(track => track.kind).sort().join(',');
+          stream.getTracks().forEach(track => track.stop());
+          return kinds;
+        } catch (error) { return error.name; }
+      })()`);
+      if (await capture({ audio: true, video: true }) !== 'audio,video') throw new Error('One-time camera and microphone permission did not enable capture.');
+      if (await mainDebugger.evaluate('smokePermissionPrompts.length') !== 1) throw new Error('Camera/microphone request did not prompt once.');
+      await mainDebugger.evaluate('smokePermissionResponses.push(1); true');
+      if (await capture({ audio: true, video: true }) !== 'audio,video') throw new Error('Repeated one-time media request did not enable capture.');
+      if (await mainDebugger.evaluate('smokePermissionPrompts.length') !== 2) throw new Error('One-time media approval was saved as a permanent grant.');
+      await mainDebugger.evaluate('smokePermissionResponses.push(2); true');
+      if (await capture({ video: true }) !== 'video') throw new Error('Remembered camera permission did not enable capture.');
+      if (await capture({ video: true }) !== 'video') throw new Error('Remembered camera permission was not reused.');
+      if (await mainDebugger.evaluate('smokePermissionPrompts.length') !== 3) throw new Error('Remembered camera capture prompted again.');
+      const mediaSettingsId = await evaluate('openNewTab("linsoft://settings"); openSettings("privacy"); document.querySelector(\'[data-setting-toggle="camera"]\').click(); activeTabId');
+      await evaluate(`selectTab(${activityId})`);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (await capture({ video: true }) !== 'NotAllowedError') throw new Error('Global camera block did not prevent capture immediately.');
+      await evaluate(`selectTab(${mediaSettingsId}); document.querySelector('[data-setting-toggle="camera"]').click(); selectTab(${activityId})`);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      await mainDebugger.evaluate('smokePermissionResponses.push(1); true');
+      if (await capture({ audio: true }) !== 'audio') throw new Error('Microphone-only permission did not enable capture.');
+      await evaluate(`selectTab(${mediaSettingsId}); document.querySelector('[data-setting-toggle="microphone"]').click(); selectTab(${activityId})`);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (await capture({ audio: true }) !== 'NotAllowedError') throw new Error('Global microphone block did not prevent capture immediately.');
+      await evaluate(`selectTab(${mediaSettingsId}); document.querySelector('[data-setting-toggle="microphone"]').click(); selectTab(${activityId})`);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      await mainDebugger.evaluate('smokePermissionResponses.push(0); true');
+      if (await capture({ audio: true }) !== 'NotAllowedError') throw new Error('Declined microphone capture was allowed.');
+      if (await capture({ audio: true }) !== 'NotAllowedError') throw new Error('Remembered microphone block was not reused.');
+      if (await mainDebugger.evaluate('smokePermissionPrompts.length') !== 5) throw new Error('Blocked microphone prompted again.');
+      await evaluate(`selectTab(${mediaSettingsId}); openSettings('privacy'); document.querySelector('[data-microphone-start]').click()`);
+      await waitFor(() => evaluate(`document.querySelector('[data-microphone-level]').value > 0 ? 'signal' : document.querySelector('[data-microphone-status]').textContent`), 'signal');
+      await waitFor(() => evaluate(`document.querySelector('[data-microphone-status]').textContent.includes('prijíma zvuk')`), true);
+      const selectedMicrophone = await evaluate(`(() => {
+        const select = document.querySelector('[data-microphone-device]');
+        const option = [...select.options].find(item => item.value && item.value !== 'default' && item.value !== 'communications');
+        if (!option) throw new Error('No microphone available in the settings selector');
+        select.value = option.value;
+        select.dispatchEvent(new Event('change'));
+        return option.textContent;
+      })()`);
+      if (!await evaluate(`document.querySelector('[data-microphone-stop]').disabled`)) throw new Error('Changing microphone did not stop capture');
+      await evaluate(`document.querySelector('[data-microphone-start]').click()`);
+      await waitFor(() => evaluate(`document.querySelector('[data-microphone-level]').value > 0`), true);
+      if (!await evaluate(`document.querySelector('[data-microphone-status]').textContent.includes(${JSON.stringify(selectedMicrophone)})`)) throw new Error('Microphone test did not use the selected device');
+      await evaluate(`document.querySelector('[data-microphone-stop]').click()`);
+      if (await evaluate(`document.querySelector('[data-microphone-level]').value`) !== 0) throw new Error('Microphone test meter was not reset.');
+      const internalCapture = `navigator.mediaDevices.getUserMedia({audio:true}).then(stream => { stream.getTracks().forEach(track => track.stop()); return 'allowed'; }, error => error.name)`;
+      if (await evaluate(internalCapture) !== 'NotAllowedError') throw new Error('Internal microphone grant remained after stopping test.');
+      await evaluate(`document.querySelector('[data-microphone-start]').click()`);
+      await waitFor(() => evaluate(`document.querySelector('[data-microphone-level]').value > 0 ? 'signal' : document.querySelector('[data-microphone-status]').textContent`), 'signal');
+      await evaluate(`document.querySelector('[data-settings-section="general"]').click()`);
+      await waitFor(() => evaluate(`document.querySelector('[data-microphone-stop]').disabled`), true);
+      if (await evaluate(internalCapture) !== 'NotAllowedError') throw new Error('Internal microphone grant remained after leaving privacy panel.');
+      await mainDebugger.evaluate('globalThis.smokeMicrophoneTestResponse = 0; true');
+      await evaluate(`document.querySelector('[data-settings-section="privacy"]').click(); document.querySelector('[data-microphone-start]').click()`);
+      await waitFor(() => evaluate(`document.querySelector('[data-microphone-status]').textContent`), 'Test bol zrušený.');
+      await mainDebugger.evaluate('globalThis.smokeMicrophoneTestResponse = 1; true');
+      await evaluate(`document.querySelector('[data-microphone-start]').click()`);
+      await waitFor(() => evaluate(`document.querySelector('[data-microphone-level]').value > 0`), true);
+      await evaluate(`selectTab(${cleanId})`);
+      await waitFor(() => evaluate(`document.querySelector('[data-microphone-stop]').disabled`), true);
+      if (await evaluate(internalCapture) !== 'NotAllowedError') throw new Error('Internal microphone grant remained after switching tabs.');
+      await evaluate(`selectTab(${mediaSettingsId}); openSettings('privacy'); document.querySelector('[data-camera-start]').click()`);
+      const cameraPlaying = `(() => {
+        const video = document.querySelector('[data-camera-preview]');
+        return !video.hidden && video.videoWidth > 0 && video.readyState >= 2;
+      })()`;
+      await waitFor(() => evaluate(cameraPlaying), true);
+      const selectedCamera = await evaluate(`(() => {
+        const select = document.querySelector('[data-camera-device]');
+        const option = [...select.options].find(item => item.value);
+        if (!option) throw new Error('No camera available in the settings selector');
+        select.value = option.value;
+        select.dispatchEvent(new Event('change'));
+        return option.textContent;
+      })()`);
+      if (!await evaluate(`document.querySelector('[data-camera-preview]').srcObject === null`)) throw new Error('Changing camera did not release the preview');
+      await evaluate(`document.querySelector('[data-camera-start]').click()`);
+      await waitFor(() => evaluate(cameraPlaying), true);
+      await waitFor(() => evaluate(`document.querySelector('[data-camera-status]').textContent.includes(${JSON.stringify(selectedCamera)})`), true);
+      if (!await evaluate(`document.querySelector('[data-camera-preview]').srcObject.getAudioTracks().length === 0`)) throw new Error('Camera test enabled audio');
+      await evaluate(`globalThis.smokeCameraStream = document.querySelector('[data-camera-preview]').srcObject; document.querySelector('[data-camera-stop]').click()`);
+      if (!await evaluate(`smokeCameraStream.getTracks().every(track => track.readyState === 'ended') && document.querySelector('[data-camera-preview]').srcObject === null`)) throw new Error('Stopping camera left capture active');
+      const internalCameraCapture = `navigator.mediaDevices.getUserMedia({video:true}).then(stream => { stream.getTracks().forEach(track => track.stop()); return 'allowed'; }, error => error.name)`;
+      if (await evaluate(internalCameraCapture) !== 'NotAllowedError') throw new Error('Camera grant remained after stopping');
+      await mainDebugger.evaluate('globalThis.smokeCameraTestResponse = 0; true');
+      await evaluate(`document.querySelector('[data-camera-start]').click()`);
+      await waitFor(() => evaluate(`document.querySelector('[data-camera-status]').textContent`), 'Test bol zrušený.');
+      await mainDebugger.evaluate('globalThis.smokeCameraTestResponse = 1; true');
+      await evaluate(`document.querySelector('[data-camera-start]').click()`);
+      await waitFor(() => evaluate(cameraPlaying), true);
+      await evaluate(`document.querySelector('[data-settings-section="general"]').click()`);
+      await waitFor(() => evaluate(`document.querySelector('[data-camera-stop]').disabled`), true);
+      if (await evaluate(internalCameraCapture) !== 'NotAllowedError') throw new Error('Camera grant remained after leaving privacy panel');
+      await evaluate(`document.querySelector('[data-settings-section="privacy"]').click(); document.querySelector('[data-camera-start]').click()`);
+      await waitFor(() => evaluate(cameraPlaying), true);
+      await evaluate(`selectTab(${cleanId})`);
+      await waitFor(() => evaluate(`document.querySelector('[data-camera-stop]').disabled`), true);
+      if (await evaluate(internalCameraCapture) !== 'NotAllowedError') throw new Error('Camera grant remained after switching tabs');
+      console.log(`${nativeTabs ? 'native' : 'webview'} tabs: fake camera/microphone capture, permissions, settings microphone meter and camera preview, device selection, stopping and cancellation passed`);
+      await evaluate(`selectTab(${cleanId})`);
       await activityPage.evaluate(`globalThis.smokePeer = new RTCPeerConnection({ iceServers: [] }); smokePeer.createDataChannel('smoke')`);
       await waitFor(() => evaluate(`window.linsoftBrowser.inspectTab(liveTabTarget(${activityId})).then(result => result.reason)`), 'call');
       await evaluate(`selectTab(${cleanId}); tabs.get(${activityId}).inactiveSince = Date.now() - 1200001; suspendInactiveTabs()`);
@@ -290,11 +416,13 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
       await activityPage.evaluate('smokeUpload.then(response => response.text())');
       await waitFor(() => evaluate(`window.linsoftBrowser.inspectTab(liveTabTarget(${activityId})).then(result => result.reason)`), '');
       await evaluate(`settingsState.downloadFolderPath = ${JSON.stringify(path.join(profilePath, 'downloads'))}; settingsState.askDownload = false; saveSettings()`);
-      await activityPage.evaluate(`(() => { const link = document.createElement('a'); link.href = '/download'; link.download = 'smoke.txt'; document.body.append(link); link.click(); link.remove(); })()`);
+      await activityPage.evaluate(`(() => { const link = document.createElement('a'); link.href = '/download'; link.download = 'smoke.exe'; document.body.append(link); link.click(); link.remove(); })()`);
       await waitFor(() => evaluate(`window.linsoftBrowser.inspectTab(liveTabTarget(${activityId})).then(result => result.reason)`), 'download');
       await evaluate('suspendInactiveTabs()');
       if (await evaluate(`tabs.get(${activityId}).suspended === true`)) throw new Error('A source tab with an active download was suspended.');
       await waitFor(() => evaluate(`window.linsoftBrowser.inspectTab(liveTabTarget(${activityId})).then(result => result.reason)`), '');
+      const downloadedFile = path.join(profilePath, 'downloads', 'smoke.exe');
+      await waitFor(() => fs.existsSync(downloadedFile) ? fs.readFileSync(downloadedFile, 'utf8') : '', 'Smoke file');
       const metrics = await evaluate('measureLiveTabs()');
       if (!metrics.some(row => row.tabId === activityId && row.memoryBytes > 0 && row.pid > 0)) throw new Error('Real Chromium process memory was not measured.');
       await evaluate('suspendInactiveTabs()');
@@ -349,6 +477,7 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
     }
     console.log(`${nativeTabs ? 'native' : 'webview'} tabs: navigation/history, local address recognition, popup tabs, safe suspension/restoration, draft preservation, and URL handoff passed`);
   } finally {
+    mainDebugger?.close();
     try {
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ id: 999999, method: 'Browser.close' }));
@@ -383,7 +512,7 @@ async function main() {
       return;
     }
     if (request.url === '/download') {
-      response.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Disposition': 'attachment; filename="smoke.txt"', 'Content-Length': '10' });
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="smoke.exe"', 'Content-Length': '10' });
       response.write('Smoke');
       setTimeout(() => response.end(' file'), 2500);
       return;

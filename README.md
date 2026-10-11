@@ -14,6 +14,11 @@ Linsoft Browser is a desktop browser for Windows and Linux Debian, focused on a 
 - OpenVPN support
 - Built-in Tor Expert Bundle for static onion hosting
 - Linux `.deb` packaging support
+- Local camera test in Settings -> Privacy, with device selection and live preview.
+  It requests separate consent, captures video only, and never records or uploads
+  images. Stop, changing the camera, leaving the panel/tab, hiding the window,
+  or the 60-second limit releases capture. Camera drivers and system privacy
+  permissions must be available; a missing camera produces an explicit message.
 
 ## Requirements
 
@@ -155,6 +160,70 @@ The crash marker survives session restoration, so restarting the browser does
 not silently reload a previously crashed document.
 Tabs sharing the crashed Chromium process may all be affected. This does not
 recover documents from renderer memory or replace website autosave/backups.
+
+## Downloads
+
+Downloads, including executable files, do not show an additional file-extension
+warning. The existing save-location prompt still follows the download settings.
+Downloaded files are not automatically executed. Only run files from sources
+you trust. The Electron smoke test downloads an inert `.exe`-named fixture and
+checks its saved contents in both tab engines without opening it.
+
+## Website camera and microphone
+
+New profiles allow websites to request camera and microphone access. This does
+not grant access automatically: the browser asks whether to block, allow this
+request, or always allow the requesting website. Existing global settings and
+saved website blocks are preserved.
+
+If a website cannot request access, enable Camera and Microphone in Settings >
+Privacy and security. These toggles are saved and applied immediately. Remove
+an old website block from the saved permissions list, then retry on the website.
+Capture requires HTTPS or a trustworthy local origin and working device access
+in the operating system. Browser permission cannot override OS privacy controls.
+
+Settings > Privacy and security includes a microphone test with a live input
+level meter and an input-device selector. Device names become available after
+granting the first test permission; use Refresh devices after plugging in a
+microphone. Changing the selection stops capture; start the test again to use
+that exact input. An unavailable selected device reports an error rather than
+silently using another microphone. The choice only applies to this test.
+Start it and confirm the separate local-test permission, then speak
+and check that the meter responds. Audio is analyzed locally without recording,
+playback or transmission. Stop ends capture; leaving the panel/tab or hiding the
+window also stops the test, and it ends automatically after 60 seconds.
+The test permission is temporary, audio-only and restricted to the browser UI;
+it does not enable microphone access for websites or change saved blocks.
+
+The Electron smoke test uses simulated devices, not your real camera or
+microphone. It verifies website capture in both tab engines, one-time and saved
+approval, rejection, and immediate global blocking. Only the test process mocks
+the permission dialog responses; the normal app still asks the user.
+
+## Update notifications on Windows and Debian
+
+Packaged Linux builds check the latest stable GitHub release eight seconds after
+startup and every six hours, using the same automatic-check setting and update
+banner as Windows. Manual checks are available in Settings > Updates. Development
+builds do not check for updates automatically.
+
+Automatic checks respect the setting on both Windows and Debian. Closing the
+update banner hides it only until the next update-state notification: each
+successful check that finds a newer version shows the banner again, including
+the same version previously dismissed. No banner is shown when already current.
+
+Only a newer release with an uploaded `.deb` matching the current architecture
+is offered. The download button opens the official GitHub package URL; install
+the downloaded package with the system package manager. The browser does not
+request administrator privileges or silently install or restart on Linux.
+Network errors and missing packages are reported in Settings > Updates.
+GitHub receives the usual network request information during these checks.
+
+For opt-in automatic Debian installation through signed APT and
+unattended-upgrades, see [APT setup](./packaging/APT_UPDATES.md). It requires
+repository-signing configuration before deployment and one-time administrator
+setup on Debian. System APT upgrades are independent of the browser's
+notification setting; the browser itself never gains root privileges.
 
 ## Website hosting
 

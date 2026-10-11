@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, webContents, Menu, Tray, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, WebContentsView, webContents, Menu, Tray, shell, session, ipcMain, dialog, screen, safeStorage, clipboard, nativeImage, net: electronNet } = require('electron');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const net = require('node:net');
@@ -14,6 +14,7 @@ const { createPermissionCheckHandler, createPermissionRequestHandler, mediaTypes
 const { NativeTabManager } = require('./lib/native-tab-manager.cjs');
 const { tabInspectionScript, scrollRestorationScript } = require('./lib/browser-algorithms.js');
 const { createGoogleSignInRecovery, findSignInBrowser, openSignInWebsite } = require('./lib/google-signin.cjs');
+const { checkDebianUpdate } = require('./lib/debian-updates.cjs');
 const browserName = 'Linsoft Browser';
 app.setName(browserName);
 const isPackagedBuild = app.isPackaged && process.env.LINSOFT_DEV_LAUNCH !== '1';
@@ -83,21 +84,55 @@ function publishUpdateState(state) {
 }
 
 function setupAutoUpdater() {
-  if (!autoUpdater || !isPackagedBuild || process.platform !== 'win32') return;
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('update-available', (info) => publishUpdateState({ status: 'available', version: info.version, checkedAt: Date.now() }));
-  autoUpdater.on('update-not-available', (info) => publishUpdateState({ status: 'latest', version: info.version, checkedAt: Date.now() }));
-  autoUpdater.on('download-progress', (progress) => publishUpdateState({ status: 'downloading', version: updateState.version, percent: Math.round(progress.percent || 0) }));
-  autoUpdater.on('update-downloaded', (info) => publishUpdateState({ status: 'downloaded', version: info.version }));
-  autoUpdater.on('error', (error) => { console.warn('Linsoft Browser update check failed:', error.message); publishUpdateState({ ...formatUpdateFailure(error), checkedAt: Date.now() }); });
+  if (!isPackagedBuild || !['win32', 'linux'].includes(process.platform)) return;
+  if (process.platform === 'win32' && autoUpdater) {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('update-available', (info) => publishUpdateState({ status: 'available', version: info.version, checkedAt: Date.now() }));
+    autoUpdater.on('update-not-available', (info) => publishUpdateState({ status: 'latest', version: info.version, checkedAt: Date.now() }));
+    autoUpdater.on('download-progress', (progress) => publishUpdateState({ status: 'downloading', version: updateState.version, percent: Math.round(progress.percent || 0) }));
+    autoUpdater.on('update-downloaded', (info) => publishUpdateState({ status: 'downloaded', version: info.version }));
+    autoUpdater.on('error', (error) => { console.warn('Linsoft Browser update check failed:', error.message); publishUpdateState({ ...formatUpdateFailure(error), checkedAt: Date.now() }); });
+  }
 
   const checkForUpdates = () => {
     if (!canAutoCheckForUpdates({ isPackaged: isPackagedBuild, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) return;
-    autoUpdater.checkForUpdates().catch((error) => publishUpdateState({ ...formatUpdateFailure(error), checkedAt: Date.now() }));
+    void checkBrowserUpdates();
   };
   setTimeout(checkForUpdates, 8000);
   setInterval(checkForUpdates, 6 * 60 * 60 * 1000);
+}
+
+let updateCheckPromise = null;
+function checkBrowserUpdates() {
+  if (!isPackagedBuild || (!isLinux && (process.platform !== 'win32' || !autoUpdater))) {
+    const state = { ok: false, status: 'unavailable', message: 'Aktualizácie sú dostupné iba v nainštalovanej verzii pre Windows alebo Linux.', checkedAt: Date.now() };
+    publishUpdateState(state);
+    return Promise.resolve(state);
+  }
+  if (updateCheckPromise) return updateCheckPromise;
+  updateCheckPromise = (async () => {
+    try {
+      let result;
+      if (isLinux) {
+        result = await checkDebianUpdate(app.getVersion(), process.arch, (url, options) => electronNet.fetch(url, options));
+      } else {
+        autoUpdater.autoDownload = false;
+        autoUpdater.autoInstallOnAppQuit = true;
+        const update = await autoUpdater.checkForUpdates();
+        result = getUpdateStatus(app.getVersion(), update?.updateInfo);
+      }
+      const state = { ...result, checkedAt: Date.now() };
+      publishUpdateState(state);
+      return { ok: true, ...state };
+    } catch (error) {
+      console.warn('Linsoft Browser update check failed:', error.message);
+      const state = { ...formatUpdateFailure(error), checkedAt: Date.now() };
+      publishUpdateState(state);
+      return state;
+    }
+  })().finally(() => { updateCheckPromise = null; });
+  return updateCheckPromise;
 }
 
 /** @type {import('electron').BrowserWindow | null} */
@@ -157,6 +192,8 @@ let torChatReadyPromise = Promise.resolve(false);
 let torChatSession = null;
 let torChatRoom = null;
 const torChatCameraGrants = new Set();
+const microphoneTestGrants = new Map();
+const cameraTestGrants = new Map();
 const torChatCameraGrantCleanups = new Map();
 let torChatStartPromise = null;
 let torChatRecoveryPromise = null;
@@ -248,6 +285,8 @@ function configureCertificateErrorHandling() {
 
 async function requestSitePermission(webContents, permission, callback, details = {}) {
   const mediaTypes = mediaTypesFromDetails(details);
+  if (isMicrophoneTestGrant(webContents, permission, details.requestingUrl, mediaTypes)) return callback(true);
+  if (isCameraTestGrant(webContents, permission, details.requestingUrl, mediaTypes)) return callback(true);
   if (isTorChatCameraGrant(webContents, permission, details.requestingUrl, mediaTypes)) return callback(true);
   const guest = isGuestWebContents(webContents);
   const request = getPermissionDecision({ permission, mediaTypes, requestingUrl: details.requestingUrl, preferences: browserPreferences, decisions: guest ? {} : sitePermissions });
@@ -273,7 +312,8 @@ async function requestSitePermission(webContents, permission, callback, details 
       saveSitePermissions();
     }
     callback(allowed);
-  } catch {
+  } catch (error) {
+    console.warn('Linsoft Browser site permission request failed:', error.message);
     callback(false);
   }
 }
@@ -284,6 +324,47 @@ function isTorChatCameraGrant(webContents, permission, requestingUrl, mediaTypes
   const internalAppRequest = sourceUrl === appUrl || sourceUrl === 'file://' || sourceUrl === 'file:///';
   return permission === 'media' && mediaTypes.length === 1 && mediaTypes[0] === 'video'
     && torChatCameraGrants.has(webContents?.id) && webContents?.getURL?.() === appUrl && internalAppRequest;
+}
+
+function isBrowserUiUrl(value) {
+  try {
+    const url = new URL(value);
+    url.search = '';
+    url.hash = '';
+    return url.href === pathToFileURL(path.join(__dirname, 'index.html')).href;
+  } catch { return false; }
+}
+
+function isMicrophoneTestGrant(contents, permission, requestingUrl, mediaTypes) {
+  const source = requestingUrl || contents?.getURL?.();
+  return permission === 'media' && mediaTypes.length === 1 && mediaTypes[0] === 'audio'
+    && microphoneTestGrants.get(contents?.id)?.approved === true
+    && isBrowserUiUrl(contents?.getURL?.()) && (isBrowserUiUrl(source) || ['file://', 'file:///'].includes(source));
+}
+
+function releaseMicrophoneTest(contents) {
+  const grant = microphoneTestGrants.get(contents.id);
+  if (!grant) return;
+  clearTimeout(grant.timeout);
+  contents.removeListener('destroyed', grant.cleanup);
+  contents.removeListener('did-navigate', grant.cleanup);
+  microphoneTestGrants.delete(contents.id);
+}
+
+function isCameraTestGrant(contents, permission, requestingUrl, mediaTypes) {
+  const source = requestingUrl || contents?.getURL?.();
+  return permission === 'media' && mediaTypes.length === 1 && mediaTypes[0] === 'video'
+    && cameraTestGrants.get(contents?.id)?.approved === true
+    && isBrowserUiUrl(contents?.getURL?.()) && (isBrowserUiUrl(source) || ['file://', 'file:///'].includes(source));
+}
+
+function releaseCameraTest(contents) {
+  const grant = cameraTestGrants.get(contents.id);
+  if (!grant) return;
+  clearTimeout(grant.timeout);
+  contents.removeListener('destroyed', grant.cleanup);
+  contents.removeListener('did-navigate', grant.cleanup);
+  cameraTestGrants.delete(contents.id);
 }
 
 function revokeTorChatCameraGrant(webContents) {
@@ -324,15 +405,14 @@ function loadPasswordVault() {
     if (stored.encrypted && safeStorage.isEncryptionAvailable()) passwordVault = JSON.parse(safeStorage.decryptString(Buffer.from(stored.encrypted, 'base64')));
   } catch { passwordVault = []; }
 }
-const dangerousDownloadExtensions = new Set(['.exe', '.msi', '.msp', '.bat', '.cmd', '.com', '.scr', '.ps1', '.vbs', '.js', '.jar', '.hta']);
 const browserPreferences = {
   downloads: 'Downloads',
   downloadFolderPath: '',
   askDownload: false,
   adBlock: true,
   trackingProtection: true,
-  camera: false,
-  microphone: false,
+  camera: true,
+  microphone: true,
   webNotifications: false,
   spellcheckLanguages: null,
   clearExit: false,
@@ -999,7 +1079,7 @@ ipcMain.on('set-browser-preferences', (event, preferences) => {
     browserPreferences.spellcheckLanguages = Array.isArray(preferences.spellcheckLanguages) ? selectedLanguages : null;
     spellSession.setSpellCheckerLanguages(selectedLanguages);
   }
-  if (enablingAutoUpdates && autoUpdater && canAutoCheckForUpdates({ isPackaged: isPackagedBuild, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) autoUpdater.checkForUpdates().catch(() => {});
+  if (enablingAutoUpdates && canAutoCheckForUpdates({ isPackaged: isPackagedBuild, platform: process.platform, enabled: browserPreferences.autoUpdateCheck, status: updateState.status })) void checkBrowserUpdates();
 });
 ipcMain.handle('site-permission-list', (event) => {
   if (isGuestWebContents(event.sender)) return [];
@@ -1126,12 +1206,23 @@ ipcMain.handle('clipboard-write-image', async (_event, url) => {
 });
 ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('update-state', () => updateState);
-ipcMain.handle('update-check', async () => {
-  if (!autoUpdater || !isPackagedBuild) return { ok: false, status: 'unavailable', message: 'Aktualizácie sú dostupné iba v nainštalovanej verzii.' };
-  try { autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; const result = await autoUpdater.checkForUpdates(); const state = { ...getUpdateStatus(app.getVersion(), result?.updateInfo), checkedAt: Date.now() }; publishUpdateState(state); return { ok: true, ...state }; } catch (error) { const state = { ...formatUpdateFailure(error), checkedAt: Date.now() }; publishUpdateState(state); return state; }
+ipcMain.handle('update-check', () => checkBrowserUpdates());
+ipcMain.handle('update-download', async () => {
+  try {
+    if (isLinux) {
+      if (!isPackagedBuild || updateState.status !== 'available' || !updateState.manualInstall || !updateState.downloadUrl) throw new Error('Najprv skontroluj dostupnosť Debian aktualizácie.');
+      await shell.openExternal(updateState.downloadUrl);
+      return { ok: true, manualInstall: true };
+    }
+    if (!isPackagedBuild || !autoUpdater || process.platform !== 'win32') throw new Error('Sťahovanie aktualizácie nie je dostupné.');
+    await autoUpdater.downloadUpdate();
+    return { ok: true };
+  } catch (error) {
+    console.warn('Linsoft Browser update download failed:', error.message);
+    return formatUpdateFailure(error);
+  }
 });
-ipcMain.handle('update-download', async () => { if (!autoUpdater) return { ok: false }; try { await autoUpdater.downloadUpdate(); return { ok: true }; } catch (error) { return formatUpdateFailure(error); } });
-ipcMain.on('update-install', () => { if (autoUpdater) autoUpdater.quitAndInstall(); });
+ipcMain.on('update-install', () => { if (isPackagedBuild && process.platform === 'win32' && autoUpdater) autoUpdater.quitAndInstall(); });
 ipcMain.handle('password-list', (event) => isGuestWebContents(event.sender) ? [] : passwordVault.map(({ id, hostname, username, createdAt, updatedAt }) => ({ id, hostname, username, createdAt, updatedAt })));
 ipcMain.handle('password-get', (event, id) => { if (isGuestWebContents(event.sender)) return null; const entry = passwordVault.find((item) => item.id === id); return entry ? { hostname: entry.hostname, username: entry.username, password: entry.password } : null; });
 ipcMain.handle('password-save', (event, entry) => {
@@ -1816,6 +1907,49 @@ ipcMain.handle('tor-chat-host-start', async (event) => {
 ipcMain.handle('tor-chat-join', (_event, { address, token } = {}) => startTorChatJoin(address, token));
 ipcMain.handle('tor-chat-host-renew', () => renewTorChatHost());
 ipcMain.handle('tor-chat-stop', () => stopTorChat());
+async function authorizeSettingsMediaTest(event, kind) {
+  const sender = event.sender;
+  const camera = kind === 'video';
+  const grants = camera ? cameraTestGrants : microphoneTestGrants;
+  const release = camera ? releaseCameraTest : releaseMicrophoneTest;
+  const title = camera ? 'Test kamery' : 'Test mikrofónu';
+  try {
+    if (!isBrowserUiUrl(sender.getURL()) || !BrowserWindow.fromWebContents(sender)) throw new Error(`${title} je dostupný iba v nastaveniach Linsoft Browsera.`);
+    release(sender);
+    const grant = { approved: false, cleanup: () => release(sender) };
+    grants.set(sender.id, grant);
+    sender.once('destroyed', grant.cleanup);
+    sender.once('did-navigate', grant.cleanup);
+    const result = await dialog.showMessageBox(BrowserWindow.fromWebContents(sender), {
+      type: 'question', title,
+      message: camera ? 'Povoliť kameru pre lokálny náhľad?' : 'Povoliť mikrofón pre lokálny test hlasitosti?',
+      detail: camera ? 'Obraz sa nenahráva ani neposiela na internet. Mikrofón sa nezapne. Test sa automaticky zastaví po 60 sekundách.' : 'Zvuk sa nenahráva ani neposiela na internet. Test sa automaticky zastaví po 60 sekundách.',
+      buttons: ['Zrušiť', camera ? 'Povoliť kameru' : 'Povoliť mikrofón'], defaultId: 0, cancelId: 0, noLink: true
+    });
+    if (sender.isDestroyed() || grants.get(sender.id) !== grant) return { ok: false, cancelled: true };
+    if (result.response !== 1) {
+      release(sender);
+      return { ok: false, cancelled: true };
+    }
+    grant.approved = true;
+    grant.timeout = setTimeout(grant.cleanup, 65000);
+    return { ok: true };
+  } catch (error) {
+    release(sender);
+    console.warn(`Linsoft Browser ${kind} test authorization failed:`, error.message);
+    return { ok: false, message: error.message };
+  }
+}
+ipcMain.handle('microphone-test-authorize', (event) => authorizeSettingsMediaTest(event, 'audio'));
+ipcMain.handle('camera-test-authorize', (event) => authorizeSettingsMediaTest(event, 'video'));
+ipcMain.handle('microphone-test-release', (event) => {
+  releaseMicrophoneTest(event.sender);
+  return { ok: true };
+});
+ipcMain.handle('camera-test-release', (event) => {
+  releaseCameraTest(event.sender);
+  return { ok: true };
+});
 ipcMain.handle('tor-chat-camera-authorize', async (event, purpose = 'qr') => {
   const sender = event.sender;
   const appUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
@@ -2365,6 +2499,8 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler(createPermissionRequestHandler(requestSitePermission));
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingUrl, details = {}) => {
     const mediaTypes = mediaTypesFromDetails(details);
+    if (isMicrophoneTestGrant(webContents, permission, requestingUrl, mediaTypes)) return true;
+    if (isCameraTestGrant(webContents, permission, requestingUrl, mediaTypes)) return true;
     if (isTorChatCameraGrant(webContents, permission, requestingUrl, mediaTypes)) return true;
     return getPermissionDecision({ permission, mediaTypes, requestingUrl, preferences: browserPreferences, decisions: sitePermissions }).decision === 'allow';
   });
@@ -2472,11 +2608,6 @@ app.whenReady().then(() => {
     }
     const rawName = path.basename(item.getFilename()).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim() || 'download';
     const extension = path.extname(rawName);
-    if (dangerousDownloadExtensions.has(extension.toLowerCase())) {
-      const parentWindow = BrowserWindow.fromWebContents(webContents) || undefined;
-      const warning = await dialog.showMessageBox(parentWindow, { type: 'warning', title: 'Rizikové sťahovanie', message: `Súbor ${rawName} môže obsahovať spustiteľný kód.`, detail: 'Ulož ho iba vtedy, ak dôveruješ zdroju.', buttons: ['Zrušiť', 'Uložiť aj tak'], defaultId: 0, cancelId: 0 });
-      if (warning.response !== 1) { releaseProtection(); event.preventDefault(); return; }
-    }
     const stem = extension ? rawName.slice(0, -extension.length) : rawName;
     let downloadPath = path.join(folder, rawName);
     let suffix = 1;

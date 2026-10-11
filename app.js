@@ -656,7 +656,7 @@ const appCatalog = [
   ['Desmos', 'https://www.desmos.com/calculator', 'tools'], ['WolframAlpha', 'https://www.wolframalpha.com', 'tools'], ['GeoGebra', 'https://www.geogebra.org/calculator', 'tools'], ['Reverso', 'https://www.reverso.net/text-translation', 'tools'], ['QR Code Monkey', 'https://www.qrcode-monkey.com', 'tools'],
   ['UptimeRobot', 'https://uptimerobot.com', 'tools'], ['web.dev Measure', 'https://pagespeed.web.dev', 'tools'], ['WebAIM Contrast Checker', 'https://webaim.org/resources/contrastchecker', 'tools']
 ];
-const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://start', search: 'Google', safe: true, popups: true, tracking: false, trackingProtection: true, downloads: 'Downloads', downloadFolderPath: '', askDownload: false, adBlock: true, clearExit: false, restoreTabs: true, suspendInactiveTabs: true, confirmClose: true, camera: false, microphone: false, webNotifications: false, showBookmarksBar: false, showToolbarTools: false, spellcheckLanguages: null, autoUpdateCheck: true };
+const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://start', search: 'Google', safe: true, popups: true, tracking: false, trackingProtection: true, downloads: 'Downloads', downloadFolderPath: '', askDownload: false, adBlock: true, clearExit: false, restoreTabs: true, suspendInactiveTabs: true, confirmClose: true, camera: true, microphone: true, webNotifications: false, showBookmarksBar: false, showToolbarTools: false, spellcheckLanguages: null, autoUpdateCheck: true };
 let settingsFromStorage = {};
 try { settingsFromStorage = JSON.parse(localStorage.getItem('linsoft-settings') || '{}'); } catch { settingsFromStorage = {}; }
 const settingsState = Object.assign({}, defaultSettings, settingsFromStorage);
@@ -2026,15 +2026,220 @@ function openSettings(section = 'general') {
   addSecuritySettings();
 }
 
+let stopSettingsMicrophoneTest = () => {};
+let stopSettingsCameraTest = () => {};
+
+function addCameraTest(panel) {
+  stopSettingsCameraTest();
+  panel.insertAdjacentHTML('beforeend', '<div class="setting-card camera-test"><div><strong>Test kamery</strong><small>Vyber kameru a spusti živý náhľad. Názvy zariadení sa doplnia po prvom povolení testu. Obraz sa nenahráva ani neposiela na internet. Mikrofón sa nezapne. Test trvá najviac 60 sekúnd.</small><label>Kamera <select data-camera-device><option value="">Predvolená kamera systému</option></select></label><button class="settings-control" data-camera-refresh>Obnoviť zariadenia</button><p data-camera-status role="status">Kamera je vypnutá.</p><video data-camera-preview autoplay muted playsinline hidden aria-label="Živý náhľad kamery"></video></div><div><button class="settings-control" data-camera-start>Spustiť test</button><button class="settings-control" data-camera-stop disabled>Zastaviť</button></div></div>');
+  const card = panel.querySelector('.camera-test');
+  const start = card.querySelector('[data-camera-start]');
+  const stop = card.querySelector('[data-camera-stop]');
+  const status = card.querySelector('[data-camera-status]');
+  const device = card.querySelector('[data-camera-device]');
+  const refresh = card.querySelector('[data-camera-refresh]');
+  const preview = card.querySelector('[data-camera-preview]');
+  let stream, timeout, observer;
+  let generation = 0;
+  let deviceListGeneration = 0;
+  const loadDevices = async () => {
+    const request = ++deviceListGeneration;
+    const selected = device.value;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    if (request !== deviceListGeneration || !card.isConnected) return;
+    const cameras = devices.filter(item => item.kind === 'videoinput' && item.deviceId);
+    device.replaceChildren(new Option('Predvolená kamera systému', ''));
+    cameras.forEach((item, index) => device.add(new Option(item.label || `Kamera ${index + 1}`, item.deviceId)));
+    if (selected && !cameras.some(item => item.deviceId === selected)) {
+      device.add(new Option('Vybraná kamera nie je dostupná', selected));
+    }
+    device.value = selected;
+  };
+  const finish = (message = 'Kamera je vypnutá.') => {
+    generation++;
+    clearTimeout(timeout);
+    observer?.disconnect();
+    stream?.getTracks().forEach(track => track.stop());
+    stream = null;
+    preview.pause();
+    preview.srcObject = null;
+    preview.hidden = true;
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', onPageHide);
+    void window.linsoftBrowser?.releaseCameraTest?.().catch(error => showToast(`Uvoľnenie kamery zlyhalo: ${error.message}`));
+    status.textContent = message;
+    start.disabled = false;
+    stop.disabled = true;
+  };
+  const onVisibility = () => { if (document.hidden) finish(); };
+  const onPageHide = () => finish();
+  const deviceListFailure = error => { status.textContent = `Zoznam kamier sa nepodarilo načítať: ${error.message}`; };
+  stopSettingsCameraTest = finish;
+  device.addEventListener('change', () => finish('Zariadenie bolo zmenené. Klikni na Spustiť test.'));
+  refresh.addEventListener('click', () => { void loadDevices().catch(deviceListFailure); });
+  void loadDevices().catch(deviceListFailure);
+  stop.addEventListener('click', () => finish());
+  start.addEventListener('click', async () => {
+    const request = ++generation;
+    start.disabled = true;
+    stop.disabled = false;
+    status.textContent = 'Čakám na povolenie kamery...';
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    observer = new MutationObserver(() => {
+      if (!card.isConnected || panel.hidden || card.closest('.tab-surface')?.classList.contains('inactive-surface')) finish();
+    });
+    observer.observe(content, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'class'] });
+    try {
+      const permission = await window.linsoftBrowser?.authorizeCameraTest?.();
+      if (request !== generation) return;
+      if (!permission?.ok) {
+        finish(permission?.cancelled ? 'Test bol zrušený.' : `Test zlyhal: ${permission?.message || 'Povolenie kamery nie je dostupné.'}`);
+        return;
+      }
+      const capture = await navigator.mediaDevices.getUserMedia({ video: device.value ? { deviceId: { exact: device.value } } : true, audio: false });
+      if (request !== generation) { capture.getTracks().forEach(track => track.stop()); return; }
+      stream = capture;
+      const track = stream.getVideoTracks()[0];
+      track.addEventListener('ended', () => finish('Kamera bola odpojená.'));
+      timeout = setTimeout(() => finish('Test sa po 60 sekundách skončil. Kamera je vypnutá.'), 60000);
+      await loadDevices();
+      if (request !== generation) return;
+      preview.srcObject = stream;
+      preview.hidden = false;
+      await preview.play();
+      if (request !== generation) return;
+      status.textContent = `Kamera je zapnutá: ${track.label || 'predvolené zariadenie'}. Sleduj živý náhľad.`;
+    } catch (error) {
+      if (request === generation) finish(error.name === 'NotFoundError'
+        ? 'Kamera sa nenašla. Pripoj kameru a klikni na Obnoviť zariadenia.'
+        : `Test zlyhal: ${error.message}. Skontroluj prístup ku kamere v nastaveniach systému a či ju nepoužíva iná aplikácia.`);
+    }
+  });
+}
+
+function addMicrophoneTest(panel) {
+  stopSettingsMicrophoneTest();
+  panel.insertAdjacentHTML('beforeend', '<div class="setting-card microphone-test"><div><strong>Test mikrofónu</strong><small>Vyber vstupné zariadenie. Názvy zariadení sa doplnia po prvom povolení testu. Hovor a sleduj úroveň zvuku. Zvuk sa nenahráva ani neposiela na internet. Test trvá najviac 60 sekúnd.</small><label>Mikrofón <select data-microphone-device><option value="">Predvolený mikrofón systému</option></select></label><button class="settings-control" data-microphone-refresh>Obnoviť zariadenia</button><p data-microphone-status role="status">Mikrofón je vypnutý.</p><label>Úroveň zvuku <meter data-microphone-level min="0" max="1" value="0"></meter></label></div><div><button class="settings-control" data-microphone-start>Spustiť test</button><button class="settings-control" data-microphone-stop disabled>Zastaviť</button></div></div>');
+  const card = panel.querySelector('.microphone-test');
+  const start = card.querySelector('[data-microphone-start]');
+  const stop = card.querySelector('[data-microphone-stop]');
+  const status = card.querySelector('[data-microphone-status]');
+  const meter = card.querySelector('[data-microphone-level]');
+  const device = card.querySelector('[data-microphone-device]');
+  const refresh = card.querySelector('[data-microphone-refresh]');
+  let stream, audioContext, frame, timeout, observer;
+  let generation = 0;
+  let deviceListGeneration = 0;
+  const loadDevices = async () => {
+    const request = ++deviceListGeneration;
+    const selected = device.value;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    if (request !== deviceListGeneration || !card.isConnected) return;
+    const microphones = devices.filter(item => item.kind === 'audioinput' && item.deviceId);
+    device.replaceChildren(new Option('Predvolený mikrofón systému', ''));
+    microphones.forEach((item, index) => device.add(new Option(item.label || `Mikrofón ${index + 1}`, item.deviceId)));
+    if (selected && !microphones.some(item => item.deviceId === selected)) {
+      device.add(new Option('Vybraný mikrofón nie je dostupný', selected));
+    }
+    device.value = selected;
+  };
+  const finish = (message = 'Mikrofón je vypnutý.') => {
+    generation++;
+    cancelAnimationFrame(frame);
+    clearTimeout(timeout);
+    observer?.disconnect();
+    stream?.getTracks().forEach(track => track.stop());
+    stream = null;
+    if (audioContext) void audioContext.close().catch(error => showToast(`Ukončenie testu mikrofónu zlyhalo: ${error.message}`));
+    audioContext = null;
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', onPageHide);
+    void window.linsoftBrowser?.releaseMicrophoneTest?.().catch(error => showToast(`Uvoľnenie mikrofónu zlyhalo: ${error.message}`));
+    meter.value = 0;
+    status.textContent = message;
+    start.disabled = false;
+    stop.disabled = true;
+  };
+  const deviceListFailure = error => { status.textContent = `Zoznam mikrofónov sa nepodarilo načítať: ${error.message}`; };
+  device.addEventListener('change', () => finish('Zariadenie bolo zmenené. Klikni na Spustiť test.'));
+  refresh.addEventListener('click', () => { void loadDevices().catch(deviceListFailure); });
+  void loadDevices().catch(deviceListFailure);
+  const onVisibility = () => { if (document.hidden) finish(); };
+  const onPageHide = () => finish();
+  stopSettingsMicrophoneTest = finish;
+  stop.addEventListener('click', () => finish());
+  start.addEventListener('click', async () => {
+    const request = ++generation;
+    start.disabled = true;
+    stop.disabled = false;
+    status.textContent = 'Čakám na povolenie mikrofónu...';
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    observer = new MutationObserver(() => {
+      if (!card.isConnected || panel.hidden || card.closest('.tab-surface')?.classList.contains('inactive-surface')) finish();
+    });
+    observer.observe(content, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'class'] });
+    try {
+      const permission = await window.linsoftBrowser?.authorizeMicrophoneTest?.();
+      if (request !== generation) return;
+      if (!permission?.ok) {
+        finish(permission?.cancelled ? 'Test bol zrušený.' : `Test zlyhal: ${permission?.message || 'Povolenie mikrofónu nie je dostupné.'}`);
+        return;
+      }
+      const capture = await navigator.mediaDevices.getUserMedia({ audio: device.value ? { deviceId: { exact: device.value } } : true, video: false });
+      if (request !== generation) { capture.getTracks().forEach(track => track.stop()); return; }
+      stream = capture;
+      await loadDevices();
+      if (request !== generation) return;
+      audioContext = new AudioContext();
+      await audioContext.resume();
+      if (request !== generation) return;
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      audioContext.createMediaStreamSource(stream).connect(analyser);
+      const samples = new Float32Array(analyser.fftSize);
+      let detected = false;
+      const track = stream.getAudioTracks()[0];
+      track.addEventListener('ended', () => finish('Mikrofón bol odpojený.'));
+      status.textContent = `Mikrofón je zapnutý: ${track.label || 'predvolené zariadenie'}. Hovor a sleduj ukazovateľ.`;
+      const update = () => {
+        analyser.getFloatTimeDomainData(samples);
+        const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+        meter.value = Math.min(1, rms * 8);
+        if (rms > 0.005 && !detected) {
+          detected = true;
+          status.textContent = `Mikrofón prijíma zvuk: ${track.label || 'predvolené zariadenie'}. Ukazovateľ má reagovať na tvoj hlas.`;
+        }
+        frame = requestAnimationFrame(update);
+      };
+      update();
+      timeout = setTimeout(() => finish('Test sa po 60 sekundách skončil. Mikrofón je vypnutý.'), 60000);
+    } catch (error) {
+      if (request === generation) finish(`Test zlyhal: ${error.message}. Skontroluj prístup k mikrofónu v nastaveniach systému.`);
+    }
+  });
+}
+
 function addSecuritySettings() {
   const surface = getActiveSurface();
   const panel = surface.querySelector('[data-settings-panel="privacy"]');
   if (!panel) return;
+  addMicrophoneTest(panel);
+  addCameraTest(panel);
   panel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">ULOŽENÉ POVOLENIA WEBOV</p><div class="permission-list-toolbar"><input class="settings-input" id="sitePermissionFilter" placeholder="Filtrovať podľa domény" autocomplete="off"><button class="settings-control" id="clearSitePermissions">Odobrať všetko</button></div><div id="sitePermissionList" class="password-list"><small class="update-note">Načítavam povolenia...</small></div></div>');
   panel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">POVOLENIA WEBOV</p><div class="setting-card"><div><strong>Kamera</strong><small>Weby môžu požiadať o prístup ku kamere.</small></div><button class="settings-toggle" data-setting-toggle="camera"><i></i></button></div><div class="setting-card"><div><strong>Mikrofón</strong><small>Weby môžu požiadať o prístup k mikrofónu.</small></div><button class="settings-toggle" data-setting-toggle="microphone"><i></i></button></div><div class="setting-card"><div><strong>Upozornenia</strong><small>Weby môžu zobrazovať systémové upozornenia.</small></div><button class="settings-toggle" data-setting-toggle="webNotifications"><i></i></button></div></div>');
   panel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">ADBLOCK</p><div class="setting-card"><div><strong>Štatistiky blokovania</strong><small id="adBlockStats">Načítavam štatistiky...</small></div><button class="settings-control" id="refreshAdBlockStats">Obnoviť</button></div><div class="setting-card"><div><strong>Výnimka pre aktuálnu stránku</strong><small>Povolí reklamné požiadavky pre doménu otvorenej stránky.</small></div><button class="settings-control" id="toggleAdBlockSite">Povoliť stránku</button></div></div>');
   panel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">HESLÁ</p><div class="setting-card"><div><strong>Uložené prihlasovacie údaje</strong><small>Heslá sa ukladajú šifrovane do systému, nie do histórie prehliadača.</small></div><button class="settings-control" id="refreshPasswords">Obnoviť</button></div><div id="passwordList" class="password-list"></div><div class="password-form"><input class="settings-input" id="passwordHost" placeholder="Doména, napr. example.com" autocomplete="off"><input class="settings-input" id="passwordUsername" placeholder="Používateľ" autocomplete="off"><input class="settings-input" id="passwordValue" type="password" placeholder="Heslo" autocomplete="new-password"><button class="save-settings" id="savePasswordButton">Uložiť heslo</button></div></div>');
-  ['camera', 'microphone', 'webNotifications'].forEach((key) => { const toggle = panel.querySelector(`[data-setting-toggle="${key}"]`); toggle.classList.toggle('on', settingsState[key]); toggle.addEventListener('click', () => toggle.classList.toggle('on')); });
+  ['camera', 'microphone', 'webNotifications'].forEach((key) => {
+    const toggle = panel.querySelector(`[data-setting-toggle="${key}"]`);
+    toggle.classList.toggle('on', settingsState[key]);
+    toggle.addEventListener('click', () => {
+      toggle.classList.toggle('on');
+      settingsState[key] = toggle.classList.contains('on');
+      saveSettings();
+    });
+  });
   let sitePermissionEntries = [];
   const renderSitePermissions = async (reload = true) => {
     const list = panel.querySelector('#sitePermissionList');
@@ -2094,9 +2299,12 @@ function addUpdateCheck() {
     updatePanel.querySelector('[data-update-note]').textContent = 'Kontrolujem aktualizácie...';
     const result = await window.linsoftBrowser?.checkForUpdates?.();
     if (result?.status === 'available') {
-      renderSettingsUpdateState({ status: 'available', version: result.version });
+      renderSettingsUpdateState(result);
       const download = await window.linsoftBrowser?.downloadUpdate?.();
-      if (download?.ok) renderSettingsUpdateState({ status: 'downloading', version: result.version, percent: 0 });
+      if (download?.ok && download.manualInstall) {
+        updatePanel.querySelector('[data-update-note]').textContent = 'Otvorené stiahnutie .deb balíka. Po stiahnutí ho nainštaluj cez správcu balíkov.';
+        updateButton.disabled = false;
+      } else if (download?.ok) renderSettingsUpdateState({ status: 'downloading', version: result.version, percent: 0 });
       else { updatePanel.querySelector('[data-update-note]').textContent = `Sťahovanie zlyhalo: ${download?.message || 'neznáma chyba'}`; updateButton.disabled = false; }
     } else {
       updatePanel.querySelector('[data-update-note]').textContent = result?.status === 'latest' ? `Používaš najnovšiu verziu Linsoft Browser ${result.version}.` : result?.message || 'Aktualizácie nie sú dostupné.';
@@ -2118,7 +2326,7 @@ function renderSettingsUpdateState(state) {
     const note = panel.querySelector('[data-update-note]');
     const button = panel.querySelector('[data-update-action]');
     if (!note || !button) return;
-    if (state.status === 'available') note.textContent = `Dostupná je verzia ${state.version}.`;
+    if (state.status === 'available') note.textContent = state.manualInstall ? `Dostupná je verzia ${state.version}. Stiahni .deb balík a nainštaluj ho cez správcu balíkov.` : `Dostupná je verzia ${state.version}.`;
     else if (state.status === 'downloading') note.textContent = `Sťahuje sa aktualizácia: ${Math.max(0, Math.min(100, Number(state.percent) || 0))} %.`;
     else if (state.status === 'downloaded') note.textContent = `Verzia ${state.version} je pripravená na inštaláciu.`;
     else if (state.status === 'latest') note.textContent = `Používaš najnovšiu verziu Linsoft Browser ${state.version}.`;
@@ -3208,20 +3416,16 @@ function renderUpdateNotice(state) {
     return;
   }
   const version = String(state.version || '');
-  if (state.status === 'available' && sessionStorage.getItem('linsoft-dismissed-update') === version) {
-    updateNotice.hidden = true;
-    return;
-  }
   updateNotice.hidden = false;
   updateNoticeTitle.textContent = state.status === 'downloaded' ? 'Aktualizácia je pripravená' : 'Nová verzia Linsoft Browser';
   updateNoticeText.textContent = state.status === 'available'
-    ? `Verzia ${version} je dostupná.`
+    ? state.manualInstall ? `Verzia ${version} je dostupná. Stiahni .deb balík a nainštaluj ho cez správcu balíkov.` : `Verzia ${version} je dostupná.`
     : state.status === 'downloading'
       ? `Sťahuje sa verzia ${version}: ${Math.max(0, Math.min(100, Number(state.percent) || 0))} %.`
       : `Verzia ${version} sa nainštaluje po reštarte.`;
   updateProgress.hidden = state.status !== 'downloading';
   updateProgressBar.style.width = `${Math.max(0, Math.min(100, Number(state.percent) || 0))}%`;
-  updateNoticeAction.textContent = state.status === 'downloaded' ? 'Reštartovať' : state.status === 'downloading' ? 'Sťahuje sa' : 'Stiahnuť';
+  updateNoticeAction.textContent = state.status === 'downloaded' ? 'Reštartovať' : state.status === 'downloading' ? 'Sťahuje sa' : state.manualInstall ? 'Stiahnuť .deb' : 'Stiahnuť';
   updateNoticeAction.disabled = state.status === 'downloading';
 }
 
@@ -3233,6 +3437,10 @@ updateNoticeAction.addEventListener('click', async () => {
   if (visibleUpdateState?.status !== 'available') return;
   updateNoticeAction.disabled = true;
   const result = await window.linsoftBrowser?.downloadUpdate?.();
+  if (result?.ok && result.manualInstall) {
+    updateNoticeAction.disabled = false;
+    updateNoticeText.textContent = 'Otvorené stiahnutie .deb balíka. Po stiahnutí ho nainštaluj cez správcu balíkov.';
+  }
   if (!result?.ok) {
     updateNoticeAction.disabled = false;
     updateNoticeText.textContent = `Sťahovanie zlyhalo: ${result?.message || 'skús to znova.'}`;
@@ -3240,7 +3448,6 @@ updateNoticeAction.addEventListener('click', async () => {
 });
 
 updateNoticeDismiss.addEventListener('click', () => {
-  if (visibleUpdateState?.status === 'available') sessionStorage.setItem('linsoft-dismissed-update', String(visibleUpdateState.version || ''));
   updateNotice.hidden = true;
 });
 
