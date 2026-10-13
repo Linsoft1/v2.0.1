@@ -9,16 +9,17 @@
 - `npm test` and `npm run test:electron-smoke` pass locally before release.
 - The Windows installer is unsigned; the release workflow disables automatic code-signing discovery.
 - Tag `v2.0.29` triggers the GitHub Actions release workflow. CI builds Windows and Debian artifacts and publishes them to the GitHub Release.
+- Release workflow [38372124661](https://github.com/Linsoft1/v2.0.1/actions/runs/38372124661) succeeded: tests, Windows installer, verified Debian package and GitHub Release upload.
 
 ## Release Gate
 
-- [ ] `npm ci` succeeds on both Windows and Linux runners.
-- [ ] `npm test` passes.
-- [ ] `npm run test:electron-smoke` passes for webview and native tab engines.
-- [ ] Windows installer builds and uploads.
+- [x] `npm ci` succeeds on both Windows and Linux runners.
+- [x] `npm test` passes locally and in CI.
+- [x] `npm run test:electron-smoke` passes for webview and native tab engines.
+- [x] Windows installer builds locally and uploads from CI.
 - [ ] Windows installer is signed with the release code-signing certificate (not included in this release, by approval).
-- [ ] Debian package builds and passes `node tools/verify-deb.cjs`.
-- [ ] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
+- [x] Debian package builds and passes `node tools/verify-deb.cjs` in CI.
+- [x] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
 - [ ] Install the release packages and verify the app starts.
 
 ## Local Commands
