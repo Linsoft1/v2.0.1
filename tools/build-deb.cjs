@@ -5,8 +5,10 @@ const crypto = require('crypto');
 
 const root = path.resolve(__dirname, '..');
 const version = require(path.join(root, 'package.json')).version;
-const appDir = process.env.LINSOFT_DEB_APP_DIR ? path.resolve(process.env.LINSOFT_DEB_APP_DIR) : path.join(root, 'dist-debian-final', 'linux-unpacked');
-const output = process.env.LINSOFT_DEB_OUTPUT ? path.resolve(process.env.LINSOFT_DEB_OUTPUT) : path.join(root, 'dist-debian-final', `Linsoft-Browser-${version}-amd64.deb`);
+const appDir = process.env.LINSOFT_DEB_APP_DIR
+  ? path.resolve(process.env.LINSOFT_DEB_APP_DIR)
+  : path.join(root, 'dist-debian-final', 'linux-unpacked');
+const output = path.join(root, 'dist-debian-final', `Linsoft-Browser-${version}-amd64.deb`);
 const desktopSource = path.join(root, 'packaging', 'linsoft-browser.desktop');
 const iconSource = path.join(root, 'assets', 'linsoft-icon-256.png');
 
@@ -56,6 +58,12 @@ function tarArchive(entries) {
   return Buffer.concat(chunks);
 }
 
+const executableModes = new Map([
+  ['linsoft-browser', 0o755],
+  ['chrome-sandbox', 0o4755],
+  ['chrome_crashpad_handler', 0o755]
+]);
+
 function collectDirectory(directory, prefix, entries) {
   const names = fs.readdirSync(directory).sort();
   for (const name of names) {
@@ -68,7 +76,9 @@ function collectDirectory(directory, prefix, entries) {
     } else if (stat.isSymbolicLink()) {
       entries.push({ name: archiveName, type: '2', mode: 0o777, linkname: fs.readlinkSync(absolute) });
     } else if (stat.isFile()) {
-      entries.push({ name: archiveName, type: '0', mode: stat.mode & 0o7777, data: fs.readFileSync(absolute) });
+      const relativePath = path.relative(appDir, absolute).split(path.sep).join('/');
+      const mode = executableModes.get(relativePath) ?? (stat.mode & 0o7777);
+      entries.push({ name: archiveName, type: '0', mode, data: fs.readFileSync(absolute) });
     } else {
       fail(`Unsupported filesystem entry: ${absolute}`);
     }
@@ -108,23 +118,32 @@ function validateAr(buffer) {
   return members;
 }
 
-function validateTarGz(data, requiredNames) {
+function validateTarGz(data, requiredNames, requiredModes = {}) {
   const tar = zlib.gunzipSync(data);
-  const names = new Set();
+  const entries = new Map();
   for (let offset = 0; offset + 512 <= tar.length;) {
     if (tar.subarray(offset, offset + 512).every(byte => byte === 0)) break;
     const header = tar.subarray(offset, offset + 512);
     const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/, '');
+    const mode = parseInt(header.subarray(100, 108).toString('ascii').replace(/\0.*$/, '').trim(), 8);
     const size = parseInt(header.subarray(124, 136).toString('ascii').trim() || '0', 8);
-    names.add(name);
+    entries.set(name, mode);
     offset += 512 + Math.ceil(size / 512) * 512;
   }
-  for (const name of requiredNames) if (!names.has(name)) fail(`Missing archive entry: ${name}`);
-  return names.size;
+  for (const name of requiredNames) if (!entries.has(name)) fail(`Missing archive entry: ${name}`);
+  for (const [name, modeMask] of Object.entries(requiredModes)) {
+    if (!entries.has(name) || (entries.get(name) & modeMask) !== modeMask) {
+      fail(`Incorrect permissions for archive entry: ${name}`);
+    }
+  }
+  return entries.size;
 }
 
 if (!fs.existsSync(appDir)) fail(`Missing unpacked app: ${appDir}`);
 if (!fs.existsSync(iconSource)) fail(`Missing icon: ${iconSource}`);
+for (const executable of executableModes.keys()) {
+  if (!fs.existsSync(path.join(appDir, executable))) fail(`Missing Linux executable: ${executable}`);
+}
 
 const desktop = fs.readFileSync(desktopSource, 'utf8').replace(
   'Exec=/opt/Linsoft Browser/linsoft-browser %U',
@@ -175,5 +194,13 @@ const deb = Buffer.concat([
 fs.writeFileSync(output, deb);
 const members = validateAr(deb);
 const controlNames = validateTarGz(members[1].data, ['./', './control', './md5sums']);
-const dataNames = validateTarGz(members[2].data, ['./opt/Linsoft Browser/', './usr/share/applications/linsoft-browser.desktop', './usr/share/icons/hicolor/256x256/apps/linsoft-browser.png']);
+const dataNames = validateTarGz(
+  members[2].data,
+  ['./opt/Linsoft Browser/', './usr/share/applications/linsoft-browser.desktop', './usr/share/icons/hicolor/256x256/apps/linsoft-browser.png'],
+  {
+    './opt/Linsoft Browser/linsoft-browser': 0o755,
+    './opt/Linsoft Browser/chrome-sandbox': 0o4755,
+    './opt/Linsoft Browser/chrome_crashpad_handler': 0o755
+  }
+);
 console.log(JSON.stringify({ output, bytes: deb.length, members: members.map(member => ({ name: member.name, bytes: member.data.length })), controlEntries: controlNames, dataEntries: dataNames }, null, 2));

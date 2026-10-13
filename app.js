@@ -656,7 +656,7 @@ const appCatalog = [
   ['Desmos', 'https://www.desmos.com/calculator', 'tools'], ['WolframAlpha', 'https://www.wolframalpha.com', 'tools'], ['GeoGebra', 'https://www.geogebra.org/calculator', 'tools'], ['Reverso', 'https://www.reverso.net/text-translation', 'tools'], ['QR Code Monkey', 'https://www.qrcode-monkey.com', 'tools'],
   ['UptimeRobot', 'https://uptimerobot.com', 'tools'], ['web.dev Measure', 'https://pagespeed.web.dev', 'tools'], ['WebAIM Contrast Checker', 'https://webaim.org/resources/contrastchecker', 'tools']
 ];
-const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://start', search: 'Google', safe: true, popups: true, tracking: false, trackingProtection: true, downloads: 'Downloads', downloadFolderPath: '', askDownload: false, adBlock: true, clearExit: false, restoreTabs: true, suspendInactiveTabs: true, confirmClose: true, camera: true, microphone: true, webNotifications: false, showBookmarksBar: false, showToolbarTools: false, spellcheckLanguages: null, autoUpdateCheck: true };
+const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://start', search: 'Google', safe: true, popups: true, tracking: false, trackingProtection: true, downloads: 'Downloads', downloadFolderPath: '', askDownload: false, adBlock: true, clearExit: false, restoreTabs: true, suspendInactiveTabs: true, confirmClose: true, camera: true, microphone: true, webNotifications: false, showBookmarksBar: false, showToolbarTools: false, compact: false, glassOpacity: 62, glassBlur: 12, reduceMotion: false, spellcheckLanguages: null, autoUpdateCheck: true };
 let settingsFromStorage = {};
 try { settingsFromStorage = JSON.parse(localStorage.getItem('linsoft-settings') || '{}'); } catch { settingsFromStorage = {}; }
 const settingsState = Object.assign({}, defaultSettings, settingsFromStorage);
@@ -671,6 +671,8 @@ try {
 const tabScrollPositions = new Map();
 const tabMeasurements = new Map();
 const tabProtectionReasons = new Map();
+const slowPageLoadTimers = new Map();
+const readerModeTabs = new Set();
 defaultSettings.neverSuspendOrigins = [];
 settingsState.neverSuspendOrigins = Array.isArray(settingsFromStorage.neverSuspendOrigins) ? settingsFromStorage.neverSuspendOrigins.filter(origin => {
   try { const url = new URL(origin); return ['http:', 'https:'].includes(url.protocol) && url.origin === origin; } catch { return false; }
@@ -701,9 +703,19 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>\"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]);
 }
 
-function bookmarkFaviconUrl(value) {
-  try { return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(value).hostname)}&sz=32`; }
+function bookmarkFaviconUrl(value, size = 32) {
+  const iconSize = size === 64 ? 64 : 32;
+  try { return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(value).hostname)}&sz=${iconSize}`; }
   catch { return ''; }
+}
+
+function safeWebsiteFaviconUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) && url.hostname && !url.username && !url.password ? url.href : '';
+  } catch {
+    return '';
+  }
 }
 
 let toastTimeout = null;
@@ -785,10 +797,49 @@ function setTabIcon(id, iconUrl = '', brandIcon = false) {
   try {
     const parsed = new URL(String(iconUrl));
     if (['http:', 'https:'].includes(parsed.protocol) && parsed.hostname && !parsed.username && !parsed.password) safeIconUrl = parsed.href;
-    else if (parsed.protocol === 'data:' && /^data:image\/(?:png|gif|jpeg|webp|x-icon);base64,[A-Za-z0-9+/]+=*$/i.test(String(iconUrl))) safeIconUrl = String(iconUrl);
+    else if (parsed.protocol === 'data:' && /^data:image\/(?:png|gif|jpeg|webp|x-icon|svg\+xml);base64,[A-Za-z0-9+/]+=*$/i.test(String(iconUrl))) safeIconUrl = String(iconUrl);
   } catch {}
+  let image = icon.querySelector('.tab-favicon');
+  if (!image) {
+    image = document.createElement('img');
+    image.className = 'tab-favicon';
+    image.alt = '';
+    image.draggable = false;
+    icon.prepend(image);
+  }
+  image.onerror = () => {
+    image.hidden = true;
+    image.removeAttribute('src');
+    icon.textContent = brandIcon ? '' : 'L';
+    icon.prepend(image);
+  };
   icon.textContent = safeIconUrl || brandIcon ? '' : 'L';
-  icon.style.backgroundImage = safeIconUrl ? `url("${safeIconUrl}")` : brandIcon ? 'url("assets/linsoft-icon.svg")' : '';
+  icon.prepend(image);
+  image.hidden = !safeIconUrl;
+  if (safeIconUrl && image.src !== safeIconUrl) image.src = safeIconUrl;
+  else if (!safeIconUrl) image.removeAttribute('src');
+  icon.style.backgroundImage = brandIcon ? 'url("assets/linsoft-icon.svg")' : '';
+}
+
+async function loadWebsiteTabIcon(viewer, tabId) {
+  const tab = tabs.get(tabId);
+  const pageUrl = viewer?.getURL?.() || tab?.url;
+  if (!tab || !/^https?:\/\//i.test(pageUrl || '')) return;
+  try {
+    const iconUrl = await viewer.executeJavaScript(`(() => {
+      const icon = document.querySelector('link[rel~="icon"][href]') ||
+        document.querySelector('link[rel~="shortcut"][href]') ||
+        document.querySelector('link[rel~="apple-touch-icon"][href]');
+      return icon?.href || new URL('/favicon.ico', location.href).href;
+    })()`, true);
+    if (tabs.get(tabId) !== tab || (viewer.getURL?.() || tab.url) !== pageUrl || typeof iconUrl !== 'string') return;
+    tab.icon = iconUrl;
+    setTabIcon(tabId, iconUrl);
+    updateBrowserHistoryFavicon(pageUrl, iconUrl);
+    saveSession();
+  } catch (error) {
+    console.warn('Linsoft Browser could not read the website favicon:', error.message);
+  }
 }
 
 function setTabAudioIcon(id, muted = false, playing = false) { const audio = document.querySelector(`.managed-tab[data-tab-id="${id}"] .tab-audio`); if (!audio) return; audio.textContent = muted ? '🔇' : playing ? '🔊' : ''; audio.title = muted ? 'Zapnúť zvuk' : 'Stlmiť kartu'; audio.setAttribute('aria-label', audio.title); }
@@ -995,13 +1046,93 @@ function detachTab(id) {
 function closeTabsRight(id) { const ids = [...tabs.keys()]; const index = ids.indexOf(id); ids.slice(index + 1).filter((tabId) => !tabs.get(tabId)?.pinned).forEach(closeTab); }
 
 function searchOpenTabs() {
-  const query = window.prompt('Vyhľadať otvorenú kartu:');
-  if (!query?.trim()) return;
-  const needle = query.toLowerCase();
-  const match = [...tabs.values()].find((tab) => `${tab.title} ${tab.url}`.toLowerCase().includes(needle));
-  if (!match) return showToast('Karta sa nenašla.');
-  selectTab(match.id);
+  closeBrowserMenu();
+  const dialog = document.getElementById('tabSearchDialog');
+  const input = document.getElementById('tabSearchInput');
+  if (!dialog.open) dialog.showModal();
+  input.value = '';
+  renderTabSearchResults();
+  input.focus();
 }
+
+function renderTabSearchResults(activeIndex = 0) {
+  const input = document.getElementById('tabSearchInput');
+  const results = document.getElementById('tabSearchResults');
+  if (!input || !results) return [];
+  const query = input.value.trim().toLocaleLowerCase();
+  const matches = [...tabs.values()]
+    .filter((tab) => !query || `${tab.title || ''} ${tab.url || ''} ${tab.groupName || ''}`.toLocaleLowerCase().includes(query))
+    .sort((left, right) => Number(right.id === activeTabId) - Number(left.id === activeTabId));
+  results.replaceChildren();
+  if (!matches.length) {
+    const empty = document.createElement('p');
+    empty.className = 'tab-search-empty';
+    empty.textContent = 'Nenašli sa žiadne otvorené karty.';
+    results.append(empty);
+    input.removeAttribute('aria-activedescendant');
+    return matches;
+  }
+  const selectedIndex = ((activeIndex % matches.length) + matches.length) % matches.length;
+  matches.forEach((tab, index) => {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.id = `tab-search-option-${tab.id}`;
+    option.className = 'tab-search-option';
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(index === selectedIndex));
+    option.dataset.tabId = String(tab.id);
+    const icon = document.createElement('span');
+    icon.className = 'tab-search-option-icon';
+    const favicon = safeWebsiteFaviconUrl(tab.icon);
+    if (favicon) {
+      const image = document.createElement('img');
+      image.src = favicon;
+      image.alt = '';
+      image.onerror = () => { image.remove(); icon.textContent = (tab.title || 'L').charAt(0).toUpperCase(); };
+      icon.append(image);
+    } else icon.textContent = (tab.title || 'L').charAt(0).toUpperCase();
+    const copy = document.createElement('span');
+    copy.className = 'tab-search-option-copy';
+    const title = document.createElement('strong');
+    title.textContent = tab.title || 'Nová karta';
+    const address = document.createElement('small');
+    address.textContent = tab.url || 'linsoft://start';
+    copy.append(title, address);
+    option.append(icon, copy);
+    if (tab.id === activeTabId) {
+      const active = document.createElement('span');
+      active.className = 'tab-search-current';
+      active.textContent = 'Aktívna';
+      option.append(active);
+    }
+    option.addEventListener('click', () => {
+      document.getElementById('tabSearchDialog').close();
+      selectTab(tab.id);
+    });
+    results.append(option);
+  });
+  input.setAttribute('aria-activedescendant', `tab-search-option-${matches[selectedIndex].id}`);
+  return matches;
+}
+
+document.getElementById('tabSearchInput').addEventListener('input', () => renderTabSearchResults());
+document.getElementById('tabSearchInput').addEventListener('keydown', (event) => {
+  if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) return;
+  const currentIndex = [...document.querySelectorAll('#tabSearchResults [role="option"]')]
+    .findIndex((option) => option.getAttribute('aria-selected') === 'true');
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    document.querySelector('#tabSearchResults [aria-selected="true"]')?.click();
+    return;
+  }
+  event.preventDefault();
+  const direction = event.key === 'ArrowDown' ? 1 : -1;
+  renderTabSearchResults(currentIndex < 0 ? 0 : currentIndex + direction);
+});
+document.getElementById('closeTabSearch').addEventListener('click', () => document.getElementById('tabSearchDialog').close());
+document.getElementById('tabSearchDialog').addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) event.currentTarget.close();
+});
 
 function bindTabDrag(button, id) {
   button.addEventListener('dragstart', (event) => { event.dataTransfer.setData('text/plain', String(id)); event.dataTransfer.effectAllowed = 'move'; lastTabDragPosition = { x: event.clientX, y: event.clientY }; button.classList.add('dragging'); });
@@ -1047,7 +1178,7 @@ function updateBookmarksBar() {
   const bar = document.getElementById('bookmarksBar');
   const toggle = document.getElementById('toggleBookmarksBar');
   if (bar) bar.hidden = !settingsState.showBookmarksBar;
-  if (toggle) toggle.innerHTML = `<svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-bookmark"></use></svg><span>${settingsState.showBookmarksBar ? 'Skryť' : 'Zobraziť'} lištu záložiek</span>`;
+  if (toggle) toggle.innerHTML = `<svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-bookmark"></use></svg><span class="menu-label">${settingsState.showBookmarksBar ? 'Skryť' : 'Zobraziť'} lištu záložiek</span>`;
 }
 
 function addTab(initialUrl = 'linsoft://start') {
@@ -1092,6 +1223,8 @@ function selectTab(id) {
   updateActiveTab(tab.url, tab.title);
   addressInput.value = tab.url;
   tabTitle.textContent = tab.title;
+  renderActiveLoadingState(tab.loading === true);
+  updateReaderModeButton();
   if (tab.crashed) {
     showCrashedTab(id);
   } else if (suspendedTabs.has(id)) {
@@ -1135,6 +1268,9 @@ function closeTab(id) {
   tabScrollPositions.delete(id);
   tabMeasurements.delete(id);
   tabProtectionReasons.delete(id);
+  window.clearTimeout(slowPageLoadTimers.get(id));
+  slowPageLoadTimers.delete(id);
+  readerModeTabs.delete(id);
   suspendedTabs.delete(id);
   if (tab.url === 'linsoft://tor-chat') { torChatUi.generation += 1; clearTorChatUi(); void window.linsoftBrowser?.stopTorChat?.(); }
   const surface = content.querySelector(`.tab-surface[data-tab-id="${id}"]`);
@@ -1196,7 +1332,27 @@ function clearSuggestionLearning(announce = true) {
 function renderTabPerformance() {
   const list = document.getElementById('tabPerformanceList');
   if (!list) return;
-  list.innerHTML = [...tabs.values()].map(tab => {
+  const processes = new Map();
+  for (const [tabId, measurement] of tabMeasurements) {
+    if (!Number.isFinite(measurement?.memoryBytes)) continue;
+    const key = Number.isFinite(measurement.pid) ? measurement.pid : `tab-${tabId}`;
+    const current = processes.get(key) || { memoryBytes: measurement.memoryBytes, tabs: 0 };
+    current.memoryBytes = Math.max(current.memoryBytes, measurement.memoryBytes);
+    current.tabs += 1;
+    processes.set(key, current);
+  }
+  const totalMemory = [...processes.values()].reduce((total, process) => total + process.memoryBytes, 0);
+  const summary = document.getElementById('tabPerformanceSummary');
+  if (summary) {
+    const megabytes = (totalMemory / 1048576).toFixed(0);
+    summary.textContent = processes.size
+      ? `Procesy otvorených kariet používajú približne ${megabytes} MB RAM${totalMemory >= 1200 * 1048576 ? '. Zváž zavretie nepotrebných kariet alebo obnovenie náročnej stránky.' : '.'}`
+      : 'Údaje o pamäti kariet nie sú dostupné.';
+    summary.classList.toggle('performance-warning', totalMemory >= 1200 * 1048576);
+  }
+  list.innerHTML = [...tabs.values()].sort((left, right) =>
+    (tabMeasurements.get(right.id)?.memoryBytes || 0) - (tabMeasurements.get(left.id)?.memoryBytes || 0)
+  ).map(tab => {
     const measurement = tabMeasurements.get(tab.id);
     const tracked = measurement?.reason || tabProtectionReasons.get(tab.id);
     const origin = tabWebOrigin(tab.id);
@@ -1364,6 +1520,10 @@ function updateTabNavigation(tabId, url, { sameDocument = false } = {}) {
   const label = url.replace(/^https?:\/\//, '').split('/')[0] || tab.title;
   tab.title = label;
   tab.loaded = true;
+  if (!sameDocument) {
+    tab.icon = '';
+    setTabIcon(tabId, '');
+  }
   applyTabZoom(tabId, url);
   if (tabId === activeTabId) {
     addressInput.value = url;
@@ -1373,10 +1533,6 @@ function updateTabNavigation(tabId, url, { sameDocument = false } = {}) {
     setInstallAppAvailable(/^https?:\/\//i.test(url));
   }
   if (/^https?:\/\//i.test(url)) {
-    try {
-      tab.icon ||= `https://www.google.com/s2/favicons?domain=${encodeURIComponent(new URL(url).hostname)}&sz=32`;
-      setTabIcon(tabId, tab.icon);
-    } catch {}
     if (!isGuestWindow && !sameDocument) recordBrowserHistoryVisit(url, label);
   }
   saveSession();
@@ -1390,8 +1546,23 @@ function recordBrowserHistoryVisit(url, title) {
   } catch {}
   const previous = visits.find((item) => item.url === url);
   const visitCount = Math.min(1000000, Math.max(0, Number(previous?.visitCount) || 0) + 1);
-  visits = [{ url, title, visitedAt: Date.now(), visitCount }, ...visits.filter((item) => item.url !== url)].slice(0, 200);
+  visits = [{ url, title, favicon: safeWebsiteFaviconUrl(previous?.favicon), visitedAt: Date.now(), visitCount }, ...visits.filter((item) => item.url !== url)].slice(0, 200);
   localStorage.setItem('linsoft-history', JSON.stringify(visits));
+}
+
+function updateBrowserHistoryFavicon(url, faviconUrl) {
+  if (isGuestWindow || !url || !safeWebsiteFaviconUrl(faviconUrl)) return;
+  try {
+    const stored = JSON.parse(localStorage.getItem('linsoft-history') || '[]');
+    if (!Array.isArray(stored)) return;
+    const visit = stored.find((item) => item?.url === url);
+    if (!visit || visit.favicon === faviconUrl) return;
+    visit.favicon = faviconUrl;
+    localStorage.setItem('linsoft-history', JSON.stringify(stored));
+    suggestionSnapshot = '';
+  } catch (error) {
+    console.warn('Linsoft Browser could not save the website favicon:', error.message);
+  }
 }
 
 function updateBrowserHistoryTitle(url, title) {
@@ -1412,10 +1583,91 @@ function updateTabLoading(tabId, loading) {
   if (loading) beginPageLoadMeasurement(tabId, tabs.get(tabId)?.url);
   else finishPageLoadMeasurement(tabId);
   setTabLoading(tabId, loading);
-  if (tabId === activeTabId) {
-    document.getElementById('loadingTrack').classList.toggle('loading', loading);
-    document.getElementById('securityButton').classList.toggle('address-loading', loading);
+  const surface = content.querySelector(`.tab-surface[data-tab-id="${tabId}"]`);
+  surface?.querySelector('.slow-load-notice')?.remove();
+  window.clearTimeout(slowPageLoadTimers.get(tabId));
+  slowPageLoadTimers.delete(tabId);
+  if (tabId === activeTabId) renderActiveLoadingState(loading);
+  if (loading && surface) {
+    slowPageLoadTimers.set(tabId, window.setTimeout(() => {
+      slowPageLoadTimers.delete(tabId);
+      if (!tabs.get(tabId)?.loading || !surface.isConnected) return;
+      let notice = surface.querySelector('.slow-load-notice');
+      if (!notice) {
+        notice = document.createElement('aside');
+        notice.className = 'slow-load-notice';
+        notice.setAttribute('role', 'status');
+        const message = document.createElement('span');
+        message.textContent = 'Táto stránka sa načítava dlhšie, než sa očakávalo.';
+        const stop = document.createElement('button');
+        stop.type = 'button';
+        stop.textContent = 'Zastaviť';
+        stop.setAttribute('aria-label', 'Zastaviť načítavanie stránky');
+        stop.addEventListener('click', () => stopTabLoading(tabId));
+        notice.append(message, stop);
+        surface.append(notice);
+      }
+    }, 15000));
   }
+}
+
+function renderActiveLoadingState(loading = tabs.get(activeTabId)?.loading === true) {
+  document.getElementById('loadingTrack').classList.toggle('loading', loading);
+  document.getElementById('loadingTrack').setAttribute('aria-hidden', String(!loading));
+  document.getElementById('securityButton').classList.toggle('address-loading', loading);
+  const reloadButton = document.getElementById('reloadButton');
+  reloadButton.querySelector('use')?.setAttribute('href', loading ? '#icon-stop' : '#icon-rotate-cw');
+  reloadButton.title = loading ? 'Zastaviť načítavanie' : 'Obnoviť';
+  reloadButton.setAttribute('aria-label', reloadButton.title);
+}
+
+function stopTabLoading(tabId) {
+  const tab = tabs.get(tabId);
+  if (!tab?.loading) return;
+  if (isNativeTabs) {
+    window.linsoftBrowser?.nativeTabCommand?.({ tabId, command: 'stop' })
+      ?.then((result) => { if (!result?.ok && tabs.get(tabId)?.loading) showToast(result?.message || 'Načítavanie stránky sa nepodarilo zastaviť.'); })
+      .catch((error) => showToast(`Načítavanie stránky sa nepodarilo zastaviť: ${error.message}`));
+    return;
+  }
+  const viewer = content.querySelector(`.tab-surface[data-tab-id="${tabId}"] webview`);
+  if (typeof viewer?.stop === 'function') viewer.stop();
+  else showToast('Zastavenie načítavania nie je dostupné pre túto stránku.');
+}
+
+function showNavigationFailure(tabId, message, retry) {
+  const surface = content.querySelector(`.tab-surface[data-tab-id="${tabId}"]`);
+  if (!surface) return;
+  surface.querySelector('.navigation-error-state')?.remove();
+  const notice = document.createElement('section');
+  notice.className = 'navigation-error-state';
+  notice.setAttribute('role', 'alert');
+  const heading = document.createElement('h2');
+  heading.textContent = 'Stránku sa nepodarilo načítať';
+  const detail = document.createElement('p');
+  detail.textContent = message || 'Skontroluj internetové pripojenie a skús to znova.';
+  const actions = document.createElement('div');
+  actions.className = 'navigation-error-actions';
+  const retryButton = document.createElement('button');
+  retryButton.type = 'button';
+  retryButton.className = 'save-settings';
+  retryButton.textContent = 'Skúsiť znova';
+  retryButton.addEventListener('click', () => {
+    notice.remove();
+    retry(tabs.get(tabId)?.url || '');
+  });
+  const addressButton = document.createElement('button');
+  addressButton.type = 'button';
+  addressButton.className = 'settings-reset';
+  addressButton.textContent = 'Skontrolovať adresu';
+  addressButton.addEventListener('click', () => {
+    if (tabId !== activeTabId) selectTab(tabId);
+    addressInput.focus();
+    addressInput.select();
+  });
+  actions.append(retryButton, addressButton);
+  notice.append(heading, detail, actions);
+  surface.append(notice);
 }
 
 function handleTabNavigationFailure(tabId, errorCode, errorDescription, validatedURL, retry) {
@@ -1434,7 +1686,11 @@ function handleTabNavigationFailure(tabId, errorCode, errorDescription, validate
     retry(fallbackUrl);
     return;
   }
-  if (tabId === activeTabId) showToast(navigationErrorMessage(errorCode, errorDescription));
+  updateTabLoading(tabId, false);
+  if (tab) {
+    showNavigationFailure(tabId, navigationErrorMessage(errorCode, errorDescription), retry);
+    if (tabId === activeTabId) showToast(navigationErrorMessage(errorCode, errorDescription));
+  }
 }
 
 function activateSurface(id) { content.querySelectorAll('.tab-surface').forEach((surface) => { const active = Number(surface.dataset.tabId) === id; surface.hidden = false; surface.classList.toggle('inactive-surface', !active); }); }
@@ -1912,6 +2168,12 @@ function openAppCenter() {
 function applyTheme() {
   document.body.classList.toggle('light-theme', settingsState.theme === 'light');
   document.body.classList.toggle('glass-blue-theme', settingsState.theme === 'glass-blue');
+  document.body.classList.toggle('compact-chrome', settingsState.compact === true);
+  document.body.classList.toggle('reduce-motion', settingsState.reduceMotion === true);
+  const opacity = Math.max(35, Math.min(90, Number(settingsState.glassOpacity) || 62));
+  const blur = Math.max(0, Math.min(24, Number(settingsState.glassBlur) || 0));
+  document.body.style.setProperty('--glass-opacity', String(opacity / 100));
+  document.body.style.setProperty('--glass-blur', `${blur}px`);
 }
 
 function saveSettings() {
@@ -2013,13 +2275,32 @@ function openSettings(section = 'general') {
   surface.innerHTML = `<div class="settings-page"><div class="settings-heading"><div><span class="settings-eyebrow">LINSOFT BROWSER</span><h1>Nastavenia</h1><p>Prispôsob si browser podľa svojho spôsobu práce.</p></div></div><div class="settings-layout"><nav class="settings-nav"><button data-settings-section="general">⚙ <span>Všeobecné</span></button><button data-settings-section="appearance">◐ <span>Vzhľad</span></button><button data-settings-section="privacy">♢ <span>Súkromie a bezpečnosť</span></button><button data-settings-section="about">ⓘ <span>O aplikácii</span></button></nav><div class="settings-panels"><section data-settings-panel="general"><p class="settings-label">VŠEOBECNÉ</p><h2>Správanie browsera</h2><div class="setting-card"><div><strong>Pri spustení</strong><small>Vyber, čo sa zobrazí po otvorení Linsoft Browsera.</small></div><select id="startupSetting"><option value="start">Nová karta Linsoft</option><option value="home">Domovská stránka</option></select></div><div class="setting-card"><div><strong>Domovská stránka</strong><small>Adresa, ktorú otvorí tlačidlo Domov.</small></div><input class="settings-input" id="homeSetting" value="${escapeHtml(settingsState.home)}" /></div><div class="setting-card"><div><strong>Vyhľadávač</strong><small>Predvolený vyhľadávač pre otázky v adresnom riadku. Linsoft Search odošle dopyt a zobrazí výsledky.</small></div><select id="searchSetting"><option>Google</option><option>Bing</option><option>DuckDuckGo</option><option>Linsoft Search</option></select></div></section><section data-settings-panel="appearance"><p class="settings-label">VZHĽAD</p><h2>Vzhľad aplikácie</h2><div class="setting-card"><div><strong>Farebná téma</strong><small>Vyber, ako má Linsoft Browser vyzerať.</small></div><select id="themeSetting"><option value="dark">Tmavá</option><option value="light">Svetlá</option></select></div><div class="setting-card"><div><strong>Kompaktný panel</strong><small>Zmenší výšku navigačných panelov pre viac priestoru.</small></div><button class="settings-toggle" data-setting-toggle="compact"><i></i></button></div></section><section data-settings-panel="privacy"><p class="settings-label">SÚKROMIE</p><h2>Súkromie a bezpečnosť</h2><div class="setting-card"><div><strong>Bezpečné prehliadanie</strong><small>Upozorní pred známymi nebezpečnými stránkami.</small></div><button class="settings-toggle ${settingsState.safe ? 'on' : ''}" data-setting-toggle="safe"><i></i></button></div><div class="setting-card"><div><strong>Blokovať vyskakovacie okná</strong><small>Obmedzí automatické otváranie nových okien.</small></div><button class="settings-toggle ${settingsState.popups ? 'on' : ''}" data-setting-toggle="popups"><i></i></button></div><div class="setting-card"><div><strong>Posielať požiadavku Do Not Track</strong><small>Požiada weby, aby nesledovali tvoju aktivitu.</small></div><button class="settings-toggle ${settingsState.tracking ? 'on' : ''}" data-setting-toggle="tracking"><i></i></button></div><button class="danger-button" id="clearBrowserData">Vymazať históriu a údaje prehliadania</button></section><section data-settings-panel="about"><p class="settings-label">O APLIKÁCII</p><h2>Linsoft Browser</h2><div class="about-card"><span class="about-logo">L</span><div><strong>Linsoft Browser 1.0.0</strong><small>Desktopový prehliadač pre Windows postavený na Electron + Chromium.</small><small>© 2026 Linsoft</small></div></div></section><div class="settings-actions"><button class="settings-reset" id="resetSettings">Obnoviť predvolené</button><button class="save-settings" id="saveSettings">Uložiť zmeny</button></div></div></div></div>`;
   const startup = surface.querySelector('#startupSetting'); const theme = surface.querySelector('#themeSetting'); const search = surface.querySelector('#searchSetting'); const home = surface.querySelector('#homeSetting');
   theme.insertAdjacentHTML('beforeend', '<option value="glass-blue">Glass Blue</option>');
+  const appearance = surface.querySelector('[data-settings-panel="appearance"]');
+  appearance.insertAdjacentHTML('beforeend', '<div class="setting-card appearance-range"><div><strong>Priehľadnosť skla <output id="glassOpacityValue"></output></strong><small>Uprav intenzitu skleneného efektu hornej lišty.</small></div><input id="glassOpacitySetting" type="range" min="35" max="90" step="1" aria-label="Priehľadnosť skla" /></div><div class="setting-card appearance-range"><div><strong>Rozmazanie skla <output id="glassBlurValue"></output></strong><small>Zvoľ jemné alebo výraznejšie rozmazanie pozadia.</small></div><input id="glassBlurSetting" type="range" min="0" max="24" step="1" aria-label="Rozmazanie skla" /></div><div class="setting-card"><div><strong>Obmedziť animácie</strong><small>Vypne pohybové efekty rozhrania.</small></div><button class="settings-toggle" data-setting-toggle="reduceMotion" aria-label="Obmedziť animácie"><i></i></button></div>');
   startup.value = settingsState.startup; theme.value = settingsState.theme; search.value = settingsState.search;
+  const compactToggle = surface.querySelector('[data-setting-toggle="compact"]');
+  compactToggle.classList.toggle('on', settingsState.compact === true);
+  surface.querySelector('[data-setting-toggle="reduceMotion"]').classList.toggle('on', settingsState.reduceMotion === true);
+  const glassOpacity = surface.querySelector('#glassOpacitySetting');
+  const glassBlur = surface.querySelector('#glassBlurSetting');
+  const updateGlassControls = () => {
+    surface.querySelector('#glassOpacityValue').textContent = `${glassOpacity.value}%`;
+    surface.querySelector('#glassBlurValue').textContent = `${glassBlur.value}px`;
+    settingsState.glassOpacity = Number(glassOpacity.value);
+    settingsState.glassBlur = Number(glassBlur.value);
+    applyTheme();
+  };
+  glassOpacity.value = String(settingsState.glassOpacity);
+  glassBlur.value = String(settingsState.glassBlur);
+  glassOpacity.addEventListener('input', updateGlassControls);
+  glassBlur.addEventListener('input', updateGlassControls);
+  updateGlassControls();
   theme.addEventListener('change', () => { settingsState.theme = theme.value; applyTheme(); });
   addUpdateCheck();
   surface.querySelectorAll('[data-settings-section]').forEach((button) => button.addEventListener('click', () => { surface.querySelectorAll('[data-settings-section]').forEach((item) => item.classList.toggle('active', item === button)); surface.querySelectorAll('[data-settings-panel]').forEach((panel) => panel.hidden = panel.dataset.settingsPanel !== button.dataset.settingsSection); }));
   surface.querySelector(`[data-settings-section="${section}"]`).click();
   surface.querySelectorAll('[data-setting-toggle]').forEach((toggle) => toggle.addEventListener('click', () => { toggle.classList.toggle('on'); if (toggle.dataset.settingToggle === 'autoUpdateCheck') { settingsState.autoUpdateCheck = toggle.classList.contains('on'); saveSettings(); const note = surface.querySelector('[data-update-note]'); if (note) note.textContent = settingsState.autoUpdateCheck ? 'Automatická kontrola je zapnutá.' : 'Automatická kontrola je vypnutá.'; } }));
-  surface.querySelector('#saveSettings').addEventListener('click', () => { settingsState.startup = startup.value; settingsState.theme = theme.value; settingsState.search = search.value; settingsState.home = home.value.trim() || 'linsoft://start'; settingsState.safe = surface.querySelector('[data-setting-toggle="safe"]').classList.contains('on'); settingsState.popups = surface.querySelector('[data-setting-toggle="popups"]').classList.contains('on'); settingsState.tracking = surface.querySelector('[data-setting-toggle="tracking"]').classList.contains('on'); ['camera', 'microphone', 'webNotifications'].forEach((key) => { const toggle = surface.querySelector(`[data-setting-toggle="${key}"]`); if (toggle) settingsState[key] = toggle.classList.contains('on'); }); const spellcheckOptions = surface.querySelector('#spellcheckLanguageOptions'); if (spellcheckOptions?.dataset.ready === 'true') settingsState.spellcheckLanguages = [...spellcheckOptions.querySelectorAll('input:checked')].map((input) => input.value); saveSettings(); showToast('Nastavenia boli uložené.'); });
+  surface.querySelector('#saveSettings').addEventListener('click', () => { settingsState.startup = startup.value; settingsState.theme = theme.value; settingsState.search = search.value; settingsState.home = home.value.trim() || 'linsoft://start'; settingsState.compact = compactToggle.classList.contains('on'); settingsState.reduceMotion = surface.querySelector('[data-setting-toggle="reduceMotion"]').classList.contains('on'); settingsState.glassOpacity = Number(glassOpacity.value); settingsState.glassBlur = Number(glassBlur.value); settingsState.safe = surface.querySelector('[data-setting-toggle="safe"]').classList.contains('on'); settingsState.popups = surface.querySelector('[data-setting-toggle="popups"]').classList.contains('on'); settingsState.tracking = surface.querySelector('[data-setting-toggle="tracking"]').classList.contains('on'); ['camera', 'microphone', 'webNotifications'].forEach((key) => { const toggle = surface.querySelector(`[data-setting-toggle="${key}"]`); if (toggle) settingsState[key] = toggle.classList.contains('on'); }); const spellcheckOptions = surface.querySelector('#spellcheckLanguageOptions'); if (spellcheckOptions?.dataset.ready === 'true') settingsState.spellcheckLanguages = [...spellcheckOptions.querySelectorAll('input:checked')].map((input) => input.value); saveSettings(); showToast('Nastavenia boli uložené.'); });
   surface.querySelector('#resetSettings').addEventListener('click', () => { localStorage.removeItem('linsoft-settings'); Object.assign(settingsState, defaultSettings); saveSettings(); openSettings(section); showToast('Nastavenia boli obnovené.'); });
   surface.querySelector('#clearBrowserData').addEventListener('click', () => { localStorage.removeItem('linsoft-history'); clearSuggestionLearning(false); localStorage.removeItem('linsoft-session'); localStorage.removeItem('linsoft-bookmarks'); localStorage.removeItem('linsoft-start-favorites'); localStorage.removeItem('linsoft-apps'); savedBookmarks.splice(0); startFavorites.splice(0); installedApps.splice(0); renderSavedBookmarks(); showToast('História a údaje boli vymazané.'); });
   addAdvancedSettings();
@@ -2347,6 +2628,141 @@ function renderSettingsUpdateState(state) {
   });
 }
 
+function exportBrowserBackup() {
+  const settingKeys = [
+    'theme', 'startup', 'home', 'search', 'safe', 'popups', 'tracking', 'trackingProtection',
+    'downloads', 'askDownload', 'adBlock', 'clearExit', 'restoreTabs', 'suspendInactiveTabs',
+    'confirmClose', 'camera', 'microphone', 'webNotifications', 'showBookmarksBar',
+    'showToolbarTools', 'compact', 'glassOpacity', 'glassBlur', 'reduceMotion',
+    'spellcheckLanguages', 'autoUpdateCheck', 'zoom', 'neverSuspendOrigins'
+  ];
+  const backup = {
+    format: 'linsoft-browser-backup',
+    version: 1,
+    createdAt: new Date().toISOString(),
+    settings: Object.fromEntries(settingKeys.filter((key) => settingsState[key] !== undefined).map((key) => [key, settingsState[key]])),
+    bookmarks: savedBookmarks,
+    startFavorites,
+    installedApps,
+    siteZooms
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'linsoft-browser-backup.json';
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  showToast('Záloha nastavení a záložiek bola vytvorená. História, heslá a údaje webov neobsahuje.');
+  return backup;
+}
+
+function importBrowserBackup(file) {
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    showToast('Záloha je príliš veľká. Maximálna veľkosť súboru je 5 MB.');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onerror = () => showToast('Zálohu sa nepodarilo prečítať zo súboru.');
+  reader.onload = () => {
+    try {
+      const backup = JSON.parse(String(reader.result));
+      if (!backup || backup.format !== 'linsoft-browser-backup' || backup.version !== 1 ||
+          !backup.settings || typeof backup.settings !== 'object' || Array.isArray(backup.settings) ||
+          !Array.isArray(backup.bookmarks) || !Array.isArray(backup.startFavorites) ||
+          !Array.isArray(backup.installedApps) || !backup.siteZooms ||
+          typeof backup.siteZooms !== 'object' || Array.isArray(backup.siteZooms)) {
+        throw new Error('Súbor nemá rozpoznateľný formát zálohy Linsoft Browser.');
+      }
+      const importedBookmarks = backup.bookmarks.slice(0, 5000).flatMap((item) => {
+        if (!item || typeof item.url !== 'string') return [];
+        try {
+          const url = new URL(item.url);
+          if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) return [];
+          return [{ title: String(item.title || url.hostname).slice(0, 200), url: url.href }];
+        } catch { return []; }
+      }).filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index);
+      const allowedUrls = new Set(importedBookmarks.map((item) => item.url));
+      const importedFavorites = backup.startFavorites.slice(0, 1000).flatMap((item) => {
+        if (!item || typeof item.url !== 'string') return [];
+        try {
+          const url = new URL(item.url);
+          return ['http:', 'https:'].includes(url.protocol) && allowedUrls.has(url.href)
+            ? [{ title: String(item.title || url.hostname).slice(0, 200), url: url.href }] : [];
+        } catch { return []; }
+      }).filter((item, index, items) => items.findIndex((candidate) => candidate.url === item.url) === index);
+      const importedApps = backup.installedApps.slice(0, 1000).map((item, index) => normalizeInstalledApp(item, index)).filter(Boolean);
+      const importedSiteZooms = {};
+      for (const [origin, zoom] of Object.entries(backup.siteZooms).slice(0, 1000)) {
+        try {
+          const parsed = new URL(origin);
+          const value = Number(zoom);
+          if (['http:', 'https:'].includes(parsed.protocol) && parsed.origin === origin && value >= 50 && value <= 200) importedSiteZooms[origin] = value;
+        } catch {}
+      }
+      const validSettings = {};
+      const booleans = new Set([
+        'safe', 'popups', 'tracking', 'trackingProtection', 'askDownload', 'adBlock', 'clearExit',
+        'restoreTabs', 'suspendInactiveTabs', 'confirmClose', 'camera', 'microphone',
+        'webNotifications', 'showBookmarksBar', 'showToolbarTools', 'compact', 'reduceMotion', 'autoUpdateCheck'
+      ]);
+      for (const key of booleans) if (typeof backup.settings[key] === 'boolean') validSettings[key] = backup.settings[key];
+      if (['dark', 'light', 'glass-blue'].includes(backup.settings.theme)) validSettings.theme = backup.settings.theme;
+      if (['start', 'home'].includes(backup.settings.startup)) validSettings.startup = backup.settings.startup;
+      if (['Google', 'Bing', 'DuckDuckGo', 'Linsoft Search'].includes(backup.settings.search)) validSettings.search = backup.settings.search;
+      if (['Downloads', 'Desktop', 'Documents'].includes(backup.settings.downloads)) validSettings.downloads = backup.settings.downloads;
+      if (typeof backup.settings.home === 'string' && backup.settings.home.length <= 2048 &&
+          !/^\s*(?:javascript|data|file):/i.test(backup.settings.home)) validSettings.home = backup.settings.home;
+      if (Number.isInteger(backup.settings.glassOpacity) && backup.settings.glassOpacity >= 35 && backup.settings.glassOpacity <= 90) validSettings.glassOpacity = backup.settings.glassOpacity;
+      if (Number.isInteger(backup.settings.glassBlur) && backup.settings.glassBlur >= 0 && backup.settings.glassBlur <= 24) validSettings.glassBlur = backup.settings.glassBlur;
+      if ([80, 90, 100, 110, 125, 150, 175, 200].includes(Number(backup.settings.zoom))) validSettings.zoom = Number(backup.settings.zoom);
+      if (Array.isArray(backup.settings.neverSuspendOrigins)) validSettings.neverSuspendOrigins = backup.settings.neverSuspendOrigins.filter((origin) => {
+        try { const parsed = new URL(origin); return ['http:', 'https:'].includes(parsed.protocol) && parsed.origin === origin; } catch { return false; }
+      }).slice(0, 1000);
+      if (Array.isArray(backup.settings.spellcheckLanguages)) validSettings.spellcheckLanguages = backup.settings.spellcheckLanguages.filter((language) => typeof language === 'string' && /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(language)).slice(0, 20);
+      if (!window.confirm('Importovať zálohu? Nastavenia, záložky, obľúbené a webové aplikácie sa nahradia. Lokálne priečinky, história, heslá a údaje webov zostanú nedotknuté.')) return;
+      const previousStorage = new Map(['linsoft-settings', 'linsoft-bookmarks', 'linsoft-start-favorites', 'linsoft-apps', 'linsoft-site-zooms']
+        .map((key) => [key, localStorage.getItem(key)]));
+      const previousState = {
+        settings: { ...settingsState },
+        bookmarks: savedBookmarks,
+        favorites: startFavorites,
+        apps: installedApps,
+        siteZooms
+      };
+      try {
+        Object.assign(settingsState, validSettings);
+        savedBookmarks = importedBookmarks;
+        startFavorites = importedFavorites;
+        installedApps = importedApps;
+        siteZooms = importedSiteZooms;
+        localStorage.setItem('linsoft-bookmarks', JSON.stringify(savedBookmarks));
+        localStorage.setItem('linsoft-start-favorites', JSON.stringify(startFavorites));
+        localStorage.setItem('linsoft-apps', JSON.stringify(installedApps));
+        localStorage.setItem('linsoft-site-zooms', JSON.stringify(siteZooms));
+        saveSettings();
+        renderSavedBookmarks();
+        showToast('Záloha bola importovaná. Niektoré zmeny sa prejavia po opätovnom otvorení stránky.');
+      } catch (error) {
+        for (const [key, value] of previousStorage) {
+          if (value === null) localStorage.removeItem(key);
+          else localStorage.setItem(key, value);
+        }
+        Object.assign(settingsState, previousState.settings);
+        savedBookmarks = previousState.bookmarks;
+        startFavorites = previousState.favorites;
+        installedApps = previousState.apps;
+        siteZooms = previousState.siteZooms;
+        applyTheme();
+        throw new Error(`Import sa nepodarilo uložiť: ${error.message}`);
+      }
+    } catch (error) {
+      showToast(`Záloha sa nepodarilo importovať: ${error.message}`);
+    }
+  };
+  reader.readAsText(file);
+}
+
 function addAdvancedSettings() {
   const surface = getActiveSurface();
   const navigation = surface.querySelector('.settings-nav');
@@ -2357,7 +2773,15 @@ function addAdvancedSettings() {
   panels.insertAdjacentHTML('beforeend', '<section data-settings-panel="vpn" hidden><p class="settings-label">OPENVPN</p><h2>VPN pripojenie</h2><div class="vpn-card"><div><strong>OpenVPN profil</strong><small id="openVpnProfileName">Nie je vybraný žiadny .ovpn súbor.</small></div><button class="settings-control" id="chooseOpenVpn">Vybrať profil</button></div><div class="vpn-card"><div><strong>Stav pripojenia</strong><small id="openVpnStatus">VPN je odpojená.</small></div><span class="vpn-status-dot" id="openVpnDot"></span></div><div class="vpn-actions"><button class="save-settings" id="connectOpenVpn">Pripojiť VPN</button><button class="settings-reset" id="disconnectOpenVpn">Odpojiť</button></div><div class="vpn-log-wrap"><div class="vpn-log-title">Živý log</div><pre id="openVpnLog">Čaká sa na operáciu...</pre></div><p class="update-note">Vyžaduje nainštalovaný OpenVPN klient vo Windowse a platný .ovpn profil.</p></section>');
   panels.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">SPRÁVA A VÝKON</p><div class="setting-card"><div><strong>Potvrdiť zatvorenie viacerých kariet</strong><small>Zobrazí potvrdenie pred zatvorením okna s viacerými kartami.</small></div><button class="settings-toggle" data-setting-toggle="confirmClose"><i></i></button></div><div class="setting-card"><div><strong>Pozastavovať neaktívne karty</strong><small>Šetrí pamäť; aktívne, pripnuté a YouTube karty zostanú aktívne.</small></div><button class="settings-toggle" data-setting-toggle="suspendInactiveTabs"><i></i></button></div><div class="setting-card"><div><strong>Vymazať cache</strong><small>Vyčistí dočasné Chromium dáta bez odstránenia záložiek a kariet.</small></div><button class="settings-control" id="clearCacheButton">Vymazať</button></div></div>');
   const advancedButton = navigation.querySelector('[data-settings-section="advanced"]'); const advancedPanel = panels.querySelector('[data-settings-panel="advanced"]'); const downloads = surface.querySelector('#downloadsSetting'); const zoom = surface.querySelector('#zoomSetting'); downloads.value = settingsState.downloads; zoom.value = settingsState.zoom;
-  advancedPanel.insertAdjacentHTML('afterbegin', '<div class="security-subsection"><p class="settings-label">LOKÁLNE NÁVRHY</p><div class="setting-card"><div><strong>Učiť poradie z mojich výberov</strong><small>Len v tomto počítači. Vypnutie zastaví učenie aj použitie naučeného poradia.</small></div><button class="settings-toggle" id="learnSuggestionsToggle"><i></i></button></div><button class="settings-control" id="clearSuggestionLearning">Vymazať naučené poradie</button></div><div class="security-subsection"><p class="settings-label">VÝKON KARIET</p><p>Spotreba je meraná pre proces Chromia; viac kariet môže zdieľať jeden proces. Meranie prebieha len lokálne.</p><button class="settings-control" id="refreshTabPerformance">Obnoviť prehľad</button><div id="tabPerformanceList" class="password-list" aria-live="polite"></div></div>');
+  advancedPanel.insertAdjacentHTML('afterbegin', '<div class="security-subsection"><p class="settings-label">LOKÁLNE NÁVRHY</p><div class="setting-card"><div><strong>Učiť poradie z mojich výberov</strong><small>Len v tomto počítači. Vypnutie zastaví učenie aj použitie naučeného poradia.</small></div><button class="settings-toggle" id="learnSuggestionsToggle"><i></i></button></div><button class="settings-control" id="clearSuggestionLearning">Vymazať naučené poradie</button></div><div class="security-subsection"><p class="settings-label">VÝKON KARIET</p><p>Spotreba je meraná pre proces Chromia; viac kariet môže zdieľať jeden proces. Meranie prebieha len lokálne.</p><p id="tabPerformanceSummary" class="performance-summary" aria-live="polite"></p><button class="settings-control" id="refreshTabPerformance">Obnoviť prehľad</button><div id="tabPerformanceList" class="password-list" aria-live="polite"></div></div>');
+  advancedPanel.insertAdjacentHTML('beforeend', '<div class="security-subsection"><p class="settings-label">ZÁLOHOVANIE</p><p>Exportuje nastavenia, záložky, obľúbené a nainštalované webové aplikácie. História, heslá, cookies ani údaje webov sa do súboru nezahrnú.</p><div class="backup-actions"><button class="settings-control" id="exportBrowserBackup">Exportovať zálohu</button><button class="settings-control" id="importBrowserBackup">Importovať zálohu</button><input id="browserBackupFile" type="file" accept=".json,application/json" hidden /></div></div>');
+  advancedPanel.querySelector('#exportBrowserBackup').addEventListener('click', exportBrowserBackup);
+  const backupInput = advancedPanel.querySelector('#browserBackupFile');
+  advancedPanel.querySelector('#importBrowserBackup').addEventListener('click', () => backupInput.click());
+  backupInput.addEventListener('change', () => {
+    importBrowserBackup(backupInput.files?.[0]);
+    backupInput.value = '';
+  });
   const learningToggle = advancedPanel.querySelector('#learnSuggestionsToggle');
   learningToggle.classList.toggle('on', settingsState.learnSuggestions);
   learningToggle.addEventListener('click', () => {
@@ -2643,8 +3067,10 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
     activeViewer.addEventListener('did-stop-loading', () => updateTabLoading(viewerTabId, false));
     activeViewer.addEventListener('render-process-gone', (event) => handleTabCrash(viewerTabId, event.reason));
     activeViewer.addEventListener('did-finish-load', () => { void restoreSuspendedScroll(viewerTabId); });
+    activeViewer.addEventListener('did-finish-load', () => { void loadWebsiteTabIcon(activeViewer, viewerTabId); });
     activeViewer.addEventListener('dom-ready', () => {
       readyViewers.add(activeViewer);
+      applyReaderModeToPage(activeViewer, viewerTabId);
       updateNavigationButtons();
       activeViewer.insertCSS('*::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }').catch(() => {});
       setInstallAppAvailable(/^https?:\/\//i.test(activeViewer.getURL?.() || addressInput.value));
@@ -2654,7 +3080,15 @@ function navigate(value, addHistory = true, skipTorProxy = false) {
     activeViewer.addEventListener('dom-ready', () => installOverlayCloseFallback(activeViewer));
     activeViewer.addEventListener('did-navigate', (event) => updateTabNavigation(viewerTabId, event.url));
     activeViewer.addEventListener('did-navigate-in-page', (event) => updateTabNavigation(viewerTabId, event.url, { sameDocument: true }));
-    activeViewer.addEventListener('page-favicon-updated', (event) => { const iconUrl = event.favicons?.[0] || ''; const tab = tabs.get(viewerTabId); if (tab) tab.icon = iconUrl; setTabIcon(viewerTabId, iconUrl); saveSession(); });
+    activeViewer.addEventListener('page-favicon-updated', (event) => {
+      const iconUrl = event.favicons?.find((candidate) => typeof candidate === 'string' && candidate) || '';
+      if (!iconUrl) return;
+      const tab = tabs.get(viewerTabId);
+      if (tab) tab.icon = iconUrl;
+      setTabIcon(viewerTabId, iconUrl);
+      updateBrowserHistoryFavicon(tab?.url || activeViewer.getURL?.(), iconUrl);
+      saveSession();
+    });
     activeViewer.addEventListener('page-title-updated', (event) => { const tab = tabs.get(viewerTabId); if (event.title && tab) { tab.title = event.title; updateBrowserHistoryTitle(tab.url, event.title); if (viewerTabId === activeTabId) { tabTitle.textContent = event.title; updateActiveTab(tab.url, event.title); } saveSession(); } });
     activeViewer.addEventListener('did-fail-load', (event) => {
       if (event.isMainFrame === false) return;
@@ -2677,6 +3111,26 @@ function closeAddressSuggestions() {
   addressInput.setAttribute('aria-expanded', 'false');
   addressInput.removeAttribute('aria-activedescendant');
   activeAddressSuggestion = -1;
+}
+function positionAddressSuggestions() {
+  if (addressSuggestions.hidden) return;
+  const addressForm = document.getElementById('addressForm');
+  const rect = addressForm.getBoundingClientRect();
+  const padding = 8;
+  const gap = 6;
+  const width = Math.max(0, Math.min(Math.max(220, rect.width), window.innerWidth - padding * 2));
+  const below = Math.max(0, window.innerHeight - rect.bottom - gap - padding);
+  const above = Math.max(0, rect.top - gap - padding);
+  const desiredHeight = Math.min(420, addressSuggestions.scrollHeight);
+  const showAbove = desiredHeight > below && (desiredHeight <= above || above > below);
+  const availableHeight = showAbove ? above : below;
+  const maxHeight = Math.min(420, availableHeight);
+  addressSuggestions.style.left = `${Math.max(padding, Math.min(rect.left, window.innerWidth - width - padding))}px`;
+  addressSuggestions.style.width = `${width}px`;
+  addressSuggestions.style.maxHeight = `${maxHeight}px`;
+  addressSuggestions.style.top = showAbove
+    ? `${Math.max(padding, rect.top - gap - Math.min(desiredHeight, maxHeight))}px`
+    : `${rect.bottom + gap}px`;
 }
 function renderAddressSuggestions(queryOverride) {
   window.clearTimeout(addressSuggestionTimer);
@@ -2702,18 +3156,23 @@ function renderAddressSuggestions(queryOverride) {
   const resultMarkup = addressSuggestionItems.length ? addressSuggestionItems.map((item, index) => {
     const title = String(item.title || item.url);
     const hostname = new URL(item.url).hostname;
-    const favicon = bookmarkFaviconUrl(item.url);
+    const openTabFavicon = [...tabs.values()].find((tab) => tab.url === item.url && tab.icon)?.icon;
+    const historyFavicon = suggestionHistoryItems.find((visit) => visit.url === item.url)?.favicon;
+    const favicon = safeWebsiteFaviconUrl(openTabFavicon || historyFavicon) || bookmarkFaviconUrl(item.url, 64);
     const historyLabel = item.tabId !== undefined ? `${hostname} · Prepnúť na otvorenú kartu` : `${hostname}${item.source === 'bookmark' ? ' · Záložka' : ''}${item.typo ? ' · Podobný názov' : ''}`;
     const removeButton = item.hasHistory ? `<button type="button" class="address-suggestion-remove" data-remove-address-suggestion="${index}" aria-label="Odstrániť z histórie: ${escapeHtml(title)}" title="Odstrániť z histórie"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-x"></use></svg></button>` : '';
-    return `<div class="address-suggestion-row"><button type="button" role="option" id="address-suggestion-${index}" aria-selected="false" data-address-suggestion="${index}"><span class="address-suggestion-icon">${favicon ? `<img src="${escapeHtml(favicon)}" alt="">` : escapeHtml(title.slice(0, 1).toUpperCase())}</span><span class="address-suggestion-copy"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(historyLabel)}</small></span></button>${removeButton}</div>`;
+    const faviconMarkup = favicon ? `<img src="${escapeHtml(favicon)}" alt="" loading="lazy" decoding="async"><span class="address-suggestion-fallback" hidden>${escapeHtml(title.slice(0, 1).toUpperCase())}</span>` : `<span class="address-suggestion-fallback">${escapeHtml(title.slice(0, 1).toUpperCase())}</span>`;
+    return `<div class="address-suggestion-row"><button type="button" role="option" id="address-suggestion-${index}" aria-selected="false" data-address-suggestion="${index}"><span class="address-suggestion-icon">${faviconMarkup}</span><span class="address-suggestion-copy"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(historyLabel)}</small></span></button>${removeButton}</div>`;
   }).join('') : `<div class="address-suggestions-empty">${emptyState}</div><button type="button" class="address-suggestions-open-history" data-open-address-history>Otvoriť históriu</button>`;
   addressSuggestions.innerHTML = `<div class="address-suggestions-heading"><span>Návrhy stránok</span>${clearButton}</div>${resultMarkup}`;
-  const rect = document.getElementById('addressForm').getBoundingClientRect();
-  const width = Math.min(Math.max(220, rect.width), window.innerWidth - 16);
-  addressSuggestions.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
-  addressSuggestions.style.top = `${rect.bottom + 6}px`;
-  addressSuggestions.style.width = `${width}px`;
+  addressSuggestions.querySelectorAll('.address-suggestion-icon img').forEach((image) => {
+    image.addEventListener('error', () => {
+      image.hidden = true;
+      image.nextElementSibling.hidden = false;
+    }, { once: true });
+  });
   addressSuggestions.hidden = false;
+  positionAddressSuggestions();
   addressInput.setAttribute('aria-expanded', 'true');
   const clearHistoryButton = addressSuggestions.querySelector('[data-clear-address-history]');
   clearHistoryButton?.addEventListener('mousedown', (event) => event.preventDefault());
@@ -2754,13 +3213,9 @@ function renderAddressSuggestions(queryOverride) {
       closeAddressSuggestions();
       if (item) activateAddressSuggestion(item);
     });
-    button.querySelector('img')?.addEventListener('error', (event) => {
-      const fallback = document.createElement('span');
-      fallback.textContent = String(button.querySelector('strong')?.textContent || '?').slice(0, 1).toUpperCase();
-      event.currentTarget.replaceWith(fallback);
-    });
   });
 }
+window.addEventListener('resize', positionAddressSuggestions);
 function activateAddressSuggestion(item) {
   if (item.tabId !== undefined && !tabs.has(item.tabId)) return showToast('Táto karta už bola zatvorená.');
   if (!isGuestWindow && settingsState.learnSuggestions) {
@@ -2817,7 +3272,58 @@ document.getElementById('clearAddress').addEventListener('click', () => { addres
 document.getElementById('installAppButton').addEventListener('click', installCurrentApp);
 document.getElementById('cancelInstall').addEventListener('click', closeInstallDialog); document.getElementById('cancelInstallButton').addEventListener('click', closeInstallDialog); document.getElementById('confirmInstall').addEventListener('click', async () => { const button = document.getElementById('confirmInstall'); const url = addressInput.value; const title = tabTitle.textContent; button.disabled = true; const result = await window.linsoftBrowser?.installWebApp(url, title); button.disabled = false; closeInstallDialog(); if (!result?.ok) return showToast(result?.message || 'Webovú aplikáciu sa nepodarilo nainštalovať.'); const existing = installedApps.find((item) => item.url === url); if (existing) existing.title = title; else installedApps.push({ url, title, installedAt: Date.now() }); localStorage.setItem('linsoft-apps', JSON.stringify(installedApps)); showToast('Aplikácia bola pridaná do App Centra Linsoft Browser.'); openAppCenter(); });
 const securityPanel = document.getElementById('securityPanel'); const publicIp = document.getElementById('publicIp'); const publicNetwork = document.getElementById('publicNetwork'); const ipNote = document.getElementById('ipNote'); let ipLoaded = false;
-document.getElementById('securityButton').addEventListener('click', async (event) => { event.preventDefault(); event.stopPropagation(); securityPanel.hidden = !securityPanel.hidden; if (securityPanel.hidden || ipLoaded) return; publicIp.textContent = 'Načítavam...'; publicNetwork.textContent = 'Načítavam...'; const endpoints = [{ url: 'https://ipapi.co/json/', parse: (data) => ({ ip: data.ip, network: `${data.org || 'Neznáma sieť'} · ${data.country_name || 'Neznáma krajina'}` }) }, { url: 'https://ipwho.is/', parse: (data) => ({ ip: data.ip, network: `${data.connection?.isp || 'Neznáma sieť'} · ${data.country || 'Neznáma krajina'}` }) }, { url: 'https://api.ipify.org?format=json', parse: (data) => ({ ip: data.ip, network: 'Sieť a krajina nie sú dostupné' }) }]; let lastError = 'IP služby neodpovedali'; for (const endpoint of endpoints) { try { const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 7000); const response = await fetch(endpoint.url, { cache: 'no-store', signal: controller.signal }); window.clearTimeout(timeout); if (!response.ok) throw new Error(`HTTP ${response.status}`); const result = endpoint.parse(await response.json()); if (!result.ip) throw new Error('Prázdna odpoveď'); publicIp.textContent = result.ip; publicNetwork.textContent = result.network; ipNote.textContent = 'Verejná IP podľa aktuálneho internetového pripojenia.'; ipLoaded = true; return; } catch (error) { lastError = error.name === 'AbortError' ? 'Časový limit vypršal' : error.message; } } publicIp.textContent = 'Nepodarilo sa načítať'; publicNetwork.textContent = 'Neznáme'; ipNote.textContent = `${lastError}. Skontroluj internet, VPN alebo firewall a skús znova.`; }); document.getElementById('closeSecurity').addEventListener('click', () => { securityPanel.hidden = true; }); securityPanel.addEventListener('click', (event) => event.stopPropagation()); document.addEventListener('click', () => { securityPanel.hidden = true; });
+const securityButton = document.getElementById('securityButton');
+const setSecurityPanelOpen = (open) => {
+  securityPanel.hidden = !open;
+  securityButton.setAttribute('aria-expanded', String(open));
+};
+const positionSecurityPanel = () => {
+  const toolbarBottom = document.querySelector('.toolbar').getBoundingClientRect().bottom;
+  const buttonRect = securityButton.getBoundingClientRect();
+  const panelWidth = Number.parseFloat(getComputedStyle(securityPanel).width);
+  const left = Math.max(8, Math.min(buttonRect.left, innerWidth - panelWidth - 8));
+  const top = Math.ceil(Math.max(toolbarBottom, buttonRect.bottom) + 8);
+  securityPanel.style.setProperty('--security-panel-left', `${left}px`);
+  securityPanel.style.setProperty('--security-panel-top', `${top}px`);
+};
+securityButton.addEventListener('click', async (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  setSecurityPanelOpen(securityPanel.hidden);
+  if (securityPanel.hidden) return;
+  positionSecurityPanel();
+  if (ipLoaded) return;
+  publicIp.textContent = 'Načítavam...';
+  publicNetwork.textContent = 'Načítavam...';
+  const endpoints = [{ url: 'https://ipapi.co/json/', parse: (data) => ({ ip: data.ip, network: `${data.org || 'Neznáma sieť'} · ${data.country_name || 'Neznáma krajina'}` }) }, { url: 'https://ipwho.is/', parse: (data) => ({ ip: data.ip, network: `${data.connection?.isp || 'Neznáma sieť'} · ${data.country || 'Neznáma krajina'}` }) }, { url: 'https://api.ipify.org?format=json', parse: (data) => ({ ip: data.ip, network: 'Sieť a krajina nie sú dostupné' }) }];
+  let lastError = 'IP služby neodpovedali';
+  for (const endpoint of endpoints) {
+    try {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 7000);
+      const response = await fetch(endpoint.url, { cache: 'no-store', signal: controller.signal });
+      window.clearTimeout(timeout);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = endpoint.parse(await response.json());
+      if (!result.ip) throw new Error('Prázdna odpoveď');
+      publicIp.textContent = result.ip;
+      publicNetwork.textContent = result.network;
+      ipNote.textContent = 'Verejná IP podľa aktuálneho internetového pripojenia.';
+      ipLoaded = true;
+      return;
+    } catch (error) {
+      lastError = error.name === 'AbortError' ? 'Časový limit vypršal' : error.message;
+    }
+  }
+  publicIp.textContent = 'Nepodarilo sa načítať';
+  publicNetwork.textContent = 'Neznáme';
+  ipNote.textContent = `${lastError}. Skontroluj internet, VPN alebo firewall a skús znova.`;
+});
+window.addEventListener('resize', () => {
+  if (!securityPanel.hidden) positionSecurityPanel();
+  if (!downloadPanel.hidden) positionDownloadPanel();
+});
+securityPanel.addEventListener('click', (event) => event.stopPropagation()); document.addEventListener('click', () => setSecurityPanelOpen(false));
 document.getElementById('homeButton').addEventListener('click', () => {
   const homeUrl = String(settingsState.home || defaultSettings.home).trim() || 'linsoft://start';
   navigate(homeUrl);
@@ -2846,6 +3352,12 @@ function findOnPage() {
   const query = window.prompt('Hľadať na stránke:');
   if (query) viewer.findInPage(query);
 }
+function updateMenuZoomLevel() {
+  const zoomLevel = document.getElementById('menuZoomLevel');
+  if (!zoomLevel) return;
+  const url = tabs.get(activeTabId)?.url || addressInput.value;
+  zoomLevel.textContent = `${pageZoomForUrl(url)} %`;
+}
 function changePageZoom(delta) {
   const tab = tabs.get(activeTabId);
   const url = tab?.url || addressInput.value;
@@ -2855,6 +3367,7 @@ function changePageZoom(delta) {
   siteZooms[origin] = zoom;
   localStorage.setItem('linsoft-site-zooms', JSON.stringify(siteZooms));
   applyTabZoom(activeTabId, url);
+  updateMenuZoomLevel();
   showToast(`Priblíženie pre ${new URL(origin).hostname}: ${zoom} %`);
 }
 function resetPageZoom() {
@@ -2865,13 +3378,74 @@ function resetPageZoom() {
   delete siteZooms[origin];
   localStorage.setItem('linsoft-site-zooms', JSON.stringify(siteZooms));
   applyTabZoom(activeTabId, url);
+  updateMenuZoomLevel();
   showToast(`Predvolené priblíženie pre ${new URL(origin).hostname}: ${pageZoomForUrl(url)} %`);
 }
 function printCurrentPage() { const viewer = ensureActiveTabLoaded(); if (!viewer?.print) return showToast('Tlač nie je dostupná na tejto stránke.'); viewer.print(); }
+function updateReaderModeButton() {
+  const button = document.getElementById('readerModeButton');
+  if (!button) return;
+  const enabled = readerModeTabs.has(activeTabId);
+  button.classList.toggle('active', enabled);
+  button.setAttribute('aria-pressed', String(enabled));
+  button.title = enabled ? 'Vypnúť čitateľský režim' : 'Zapnúť čitateľský režim';
+  button.setAttribute('aria-label', button.title);
+}
+
+const readerModeCss = 'body.linsoft-reader-active { background:#f7f3ea !important; color:#252525 !important; font-family: Georgia, "Times New Roman", serif !important; } body.linsoft-reader-active main, body.linsoft-reader-active article, body.linsoft-reader-active [role="main"] { width:min(760px,calc(100% - 40px)) !important; max-width:760px !important; margin:32px auto !important; font-size:18px !important; line-height:1.8 !important; } body.linsoft-reader-active p, body.linsoft-reader-active li { font-size:1em !important; line-height:1.8 !important; } body.linsoft-reader-active nav, body.linsoft-reader-active header, body.linsoft-reader-active aside, body.linsoft-reader-active footer, body.linsoft-reader-active [role="banner"], body.linsoft-reader-active [role="navigation"], body.linsoft-reader-active [role="complementary"], body.linsoft-reader-active .ad, body.linsoft-reader-active .ads, body.linsoft-reader-active .advert, body.linsoft-reader-active [class*="advert" i], body.linsoft-reader-active [id*="advert" i] { display:none !important; } body.linsoft-reader-active img, body.linsoft-reader-active video { max-width:100% !important; height:auto !important; }';
+
+function applyReaderModeToPage(viewer, tabId) {
+  if (!readerModeTabs.has(tabId) || !viewer?.executeJavaScript) return;
+  viewer.executeJavaScript(`(() => {
+    if (!document.body) return false;
+    if (!document.getElementById('linsoft-reader-mode')) {
+      const style = document.createElement('style');
+      style.id = 'linsoft-reader-mode';
+      style.textContent = ${JSON.stringify(readerModeCss)};
+      (document.head || document.documentElement).appendChild(style);
+    }
+    document.body.classList.add('linsoft-reader-active');
+    return true;
+  })()`).catch((error) => console.warn('Linsoft Browser could not restore reader mode:', error.message));
+}
+
 async function toggleReaderMode() {
+  if (isNativeTabs) {
+    const enabled = !readerModeTabs.has(activeTabId);
+    try {
+      const result = await window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: 'reader-mode', value: enabled });
+      if (!result?.ok) return showToast(result?.message || 'Čitateľský režim nie je dostupný na tejto stránke.');
+      if (enabled) readerModeTabs.add(activeTabId);
+      else readerModeTabs.delete(activeTabId);
+      updateReaderModeButton();
+      showToast(enabled ? 'Čitateľský režim zapnutý.' : 'Čitateľský režim vypnutý.');
+    } catch (error) {
+      console.error('Linsoft Browser could not toggle native reader mode:', error);
+      showToast(`Čitateľský režim zlyhal: ${error.message}`);
+    }
+    return;
+  }
   const viewer = ensureActiveTabLoaded();
   if (!viewer?.executeJavaScript) return showToast('Čitateľský režim nie je dostupný na tejto stránke.');
-  await viewer.executeJavaScript(`(() => { const existing = document.getElementById('linsoft-reader-mode'); if (existing) { existing.remove(); return false; } const style = document.createElement('style'); style.id = 'linsoft-reader-mode'; style.textContent = 'body { background: #f7f3ea !important; color: #252525 !important; } body > * { max-width: 760px !important; margin-left: auto !important; margin-right: auto !important; } nav, header, aside, footer, [role="banner"], [role="navigation"], [role="complementary"], .ad, .ads, .advert, [class*="advert" i], [id*="advert" i] { display: none !important; } p, li { font-size: 18px !important; line-height: 1.75 !important; }'; document.head.appendChild(style); return true; })()`).then((enabled) => showToast(enabled ? 'Čitateľský režim zapnutý.' : 'Čitateľský režim vypnutý.')).catch(() => showToast('Čitateľský režim sa nedá použiť na tejto stránke.'));
+  try {
+    const enabled = await viewer.executeJavaScript(`(() => {
+      const existing = document.getElementById('linsoft-reader-mode');
+      if (existing) { existing.remove(); document.body.classList.remove('linsoft-reader-active'); return false; }
+      const style = document.createElement('style');
+      style.id = 'linsoft-reader-mode';
+      style.textContent = ${JSON.stringify(readerModeCss)};
+      document.head.appendChild(style);
+      document.body.classList.add('linsoft-reader-active');
+      return true;
+    })()`);
+    if (enabled) readerModeTabs.add(activeTabId);
+    else readerModeTabs.delete(activeTabId);
+    updateReaderModeButton();
+    showToast(enabled ? 'Čitateľský režim zapnutý.' : 'Čitateľský režim vypnutý.');
+  } catch (error) {
+    console.warn('Linsoft Browser could not toggle reader mode:', error.message);
+    showToast('Čitateľský režim sa nedá použiť na tejto stránke.');
+  }
 }
 async function saveCurrentPagePdf() { const viewer = ensureActiveTabLoaded(); const webContentsId = viewer?.getWebContentsId?.(); if (!webContentsId) return showToast('PDF nie je dostupné na tejto stránke.'); const result = await window.linsoftBrowser?.savePagePdf?.(webContentsId); if (result?.ok) showToast('Stránka bola uložená ako PDF.'); else if (!result?.canceled) showToast(result?.message || 'PDF sa nepodarilo uložiť.'); }
 async function captureCurrentPage() { const viewer = ensureActiveTabLoaded(); const webContentsId = viewer?.getWebContentsId?.(); if (!webContentsId) return showToast('Snímka nie je dostupná na tejto stránke.'); const result = await window.linsoftBrowser?.capturePage?.(webContentsId); if (result?.ok) showToast('Snímka webu bola uložená.'); else if (!result?.canceled) showToast(result?.message || 'Snímku sa nepodarilo uložiť.'); }
@@ -2993,7 +3567,12 @@ toolbarToolsToggle.addEventListener('click', () => {
 });
 document.getElementById('newTab').addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); openNewTab(); });
 document.getElementById('reloadButton').addEventListener('click', () => {
-  if (tabs.get(activeTabId)?.crashed) {
+  const tab = tabs.get(activeTabId);
+  if (tab?.loading) {
+    stopTabLoading(activeTabId);
+    return;
+  }
+  if (tab?.crashed) {
     showCrashedTab(activeTabId);
     showToast('Obnovu potvrď tlačidlom Obnoviť túto kartu.');
     return;
@@ -3010,13 +3589,24 @@ const adBlockButton = document.getElementById('adBlockButton');
 const updateAdBlockButton = () => { adBlockButton.classList.toggle('active', settingsState.adBlock); adBlockButton.querySelector('use').setAttribute('href', settingsState.adBlock ? '#icon-shield-check' : '#icon-shield-off'); adBlockButton.title = settingsState.adBlock ? 'AdBlock zapnutý' : 'AdBlock vypnutý'; adBlockButton.setAttribute('aria-label', adBlockButton.title); };
 adBlockButton.addEventListener('click', () => { settingsState.adBlock = !settingsState.adBlock; saveSettings(); updateAdBlockButton(); showToast(settingsState.adBlock ? 'AdBlock je zapnutý.' : 'AdBlock je vypnutý.'); });
 document.getElementById('minimizeWindow').addEventListener('click', () => window.linsoftBrowser?.windowControl('minimize'));
-document.getElementById('maximizeWindow').addEventListener('click', () => {
+function updateMaximizeButton(state) {
   const button = document.getElementById('maximizeWindow');
-  const shouldRestore = button.dataset.state === 'maximized';
-  button.dataset.state = shouldRestore ? 'restored' : 'maximized';
-  button.textContent = shouldRestore ? '□' : '❐';
-  if (shouldRestore) window.linsoftBrowser?.windowControl('restore');
-  else window.linsoftBrowser?.windowControl('maximize');
+  const maximized = state?.maximized === true;
+  button.dataset.state = maximized ? 'maximized' : 'restored';
+  button.setAttribute('aria-label', maximized ? 'Obnoviť' : 'Maximalizovať');
+  button.title = maximized ? 'Obnoviť' : 'Maximalizovať';
+  button.querySelector('use')?.setAttribute('href', maximized ? '#icon-window-restore' : '#icon-maximize');
+}
+window.linsoftBrowser?.onWindowState?.(updateMaximizeButton);
+window.linsoftBrowser?.getWindowState?.().then(updateMaximizeButton).catch((error) => {
+  console.error('Linsoft Browser could not read window state:', error);
+});
+document.getElementById('maximizeWindow').addEventListener('click', (event) => {
+  if (event.detail > 1) {
+    event.preventDefault();
+    return;
+  }
+  window.linsoftBrowser?.windowControl('maximize');
 });
 document.getElementById('fullscreenWindow').addEventListener('click', () => window.linsoftBrowser?.windowControl('fullscreen'));
 document.getElementById('pinWindow').addEventListener('click', () => {
@@ -3030,6 +3620,22 @@ document.getElementById('pinWindow').addEventListener('click', () => {
 document.getElementById('closeWindow').addEventListener('click', () => window.linsoftBrowser?.windowControl('close'));
 const browserMenu = document.getElementById('browserMenu');
 const downloadPanel = document.getElementById('downloadPanel');
+const downloadsButton = document.getElementById('downloadsButton');
+const positionDownloadPanel = () => {
+  const toolbarBottom = document.querySelector('.toolbar').getBoundingClientRect().bottom;
+  const anchor = getComputedStyle(downloadsButton).display === 'none' ? document.getElementById('menuButton') : downloadsButton;
+  const anchorRect = anchor.getBoundingClientRect();
+  const panelWidth = downloadPanel.getBoundingClientRect().width || Number.parseFloat(getComputedStyle(downloadPanel).width);
+  const left = Math.max(8, Math.min(anchorRect.right - panelWidth, innerWidth - panelWidth - 8));
+  const top = Math.ceil(Math.max(toolbarBottom, anchorRect.bottom) + 8);
+  downloadPanel.style.setProperty('--download-panel-left', `${left}px`);
+  downloadPanel.style.setProperty('--download-panel-top', `${top}px`);
+};
+const setDownloadPanelOpen = (open) => {
+  downloadPanel.hidden = !open;
+  downloadsButton.setAttribute('aria-expanded', String(open));
+  if (open) positionDownloadPanel();
+};
 const pageSourceDialog = document.getElementById('pageSourceDialog');
 const pageSourceCode = document.getElementById('pageSourceCode');
 let currentPageSource = '';
@@ -3062,20 +3668,68 @@ const closeBrowserMenu = () => {
   browserMenuDismissLayer = null;
   closeContextMenus();
 };
-const closeTransientPanels = () => { closeBrowserMenu(); downloadPanel.hidden = true; securityPanel.hidden = true; };
+const closeTransientPanels = () => { closeBrowserMenu(); setDownloadPanelOpen(false); setSecurityPanelOpen(false); };
 browserMenu.setAttribute('role', 'menu');
 browserMenu.insertAdjacentHTML('beforeend', '<div class="menu-divider"></div><button id="menuTranslatePage">文 <span>Preložiť stránku do slovenčiny</span></button>');
+browserMenu.insertAdjacentHTML('afterbegin', '<div class="menu-section-label">ZÁLOŽKY</div><button id="menuExportBookmarks">Exportovať záložky</button><button id="menuImportBookmarks">Importovať záložky</button><div class="menu-divider"></div>');
+browserMenu.insertAdjacentHTML('beforeend', '<button id="menuPrintPage">Tlačiť stránku</button><button id="menuSavePagePdf">Uložiť stránku ako PDF</button><button id="menuFindPage">Hľadať na stránke</button>');
+browserMenu.insertAdjacentHTML('afterbegin', '<button id="menuBack">Späť</button>');
+const browserMenuDivider = () => Object.assign(document.createElement('div'), { className: 'menu-divider' });
+const browserMenuZoom = document.createElement('div');
+browserMenuZoom.className = 'menu-zoom-row';
+browserMenuZoom.setAttribute('role', 'group');
+browserMenuZoom.setAttribute('aria-label', 'Priblíženie stránky');
+browserMenuZoom.innerHTML = '<button id="menuZoomOut" type="button" aria-label="Oddialiť" title="Oddialiť">−</button><output id="menuZoomLevel" aria-live="polite">100 %</output><button id="menuZoomIn" type="button" aria-label="Priblížiť" title="Priblížiť">+</button><button id="menuFullscreen" type="button" aria-label="Celá obrazovka" title="Celá obrazovka"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-fullscreen"></use></svg></button><button id="menuPinWindow" type="button" aria-label="Pripnúť okno navrch" title="Pripnúť okno navrch"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-pin"></use></svg></button>';
+const browserMenuOrder = [
+  'menuBack', 'menuNewTab', 'menuGuestWindow', 'menuAppCenter', null,
+  'menuLinsoftChat', 'menuLinsoftOffice', 'menuLinsoftBrowserWebsite', null,
+  'menuHistory', 'menuBookmarks', 'menuDownloads', null,
+  'menuPrintPage', 'menuSavePagePdf', 'menuTranslatePage', 'menuFindPage', browserMenuZoom, null,
+  'menuSettings'
+];
+const visibleBrowserMenuItems = new Set(browserMenuOrder.filter((item) => typeof item === 'string'));
+const orderedBrowserMenuNodes = browserMenuOrder.map((item) => {
+  if (item === null) return browserMenuDivider();
+  if (typeof item !== 'string') return item;
+  const row = browserMenu.querySelector(`#${item}`);
+  if (!row) throw new Error(`Missing browser menu item: ${item}`);
+  return row;
+});
+const hiddenBrowserMenuItems = document.createElement('div');
+hiddenBrowserMenuItems.hidden = true;
+hiddenBrowserMenuItems.setAttribute('aria-hidden', 'true');
+for (const item of [...browserMenu.children]) {
+  if (!visibleBrowserMenuItems.has(item.id)) hiddenBrowserMenuItems.append(item);
+}
+browserMenu.replaceChildren(...orderedBrowserMenuNodes, hiddenBrowserMenuItems);
+const browserMenuShortcuts = {
+  menuBack: 'Alt+←',
+  menuNewTab: 'Ctrl+T',
+  menuSearchTabs: 'Ctrl+Shift+A',
+  menuPrintPage: 'Ctrl+P',
+  menuFindPage: 'Ctrl+F'
+};
 const menuButton = document.getElementById('menuButton');
+const positionBrowserMenu = () => {
+  const toolbarBottom = document.querySelector('.toolbar').getBoundingClientRect().bottom;
+  const menuTop = Math.ceil(Math.max(toolbarBottom, menuButton.getBoundingClientRect().bottom) + 8);
+  browserMenu.style.setProperty('--browser-menu-top', `${menuTop}px`);
+};
 menuButton.addEventListener('click', (event) => {
   event.stopPropagation();
   if (!browserMenu.hidden) return closeBrowserMenu();
+  positionBrowserMenu();
   browserMenu.hidden = false;
+  updateMenuZoomLevel();
   browserMenuDismissLayer = document.createElement('div');
   browserMenuDismissLayer.className = 'browser-menu-dismiss-layer';
   browserMenuDismissLayer.addEventListener('pointerdown', closeBrowserMenu, { once: true });
   browserMenuDismissLayer.addEventListener('click', closeBrowserMenu, { once: true });
   document.body.appendChild(browserMenuDismissLayer);
-  browserMenu.querySelector('button')?.focus();
+  browserMenu.querySelector('button:not([hidden])')?.focus();
+});
+window.addEventListener('resize', () => {
+  if (!browserMenu.hidden) positionBrowserMenu();
 });
 document.addEventListener('pointerdown', (event) => {
   if (browserMenu.hidden || browserMenu.contains(event.target) || menuButton.contains(event.target)) return;
@@ -3084,9 +3738,15 @@ document.addEventListener('pointerdown', (event) => {
 document.addEventListener('pointerdown', (event) => {
   const target = event.target;
   if (target.closest?.('#browserMenu, #downloadPanel, #securityPanel, #pageSourceDialog, .tab-context-menu, .webview-context-menu')) return;
+  if (target.closest?.('#downloadsButton')) {
+    closeBrowserMenu();
+    setSecurityPanelOpen(false);
+    closeContextMenus();
+    return;
+  }
   if (target.closest?.('#menuButton')) {
-    downloadPanel.hidden = true;
-    securityPanel.hidden = true;
+    setDownloadPanelOpen(false);
+    setSecurityPanelOpen(false);
     closeContextMenus();
     return;
   }
@@ -3096,7 +3756,7 @@ document.addEventListener('click', closeBrowserMenu);
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') { closeTransientPanels(); closePageSourcePreview(); } });
 browserMenu.addEventListener('click', (event) => event.stopPropagation());
 browserMenu.addEventListener('keydown', (event) => {
-  const buttons = [...browserMenu.querySelectorAll('button:not(:disabled)')];
+  const buttons = [...browserMenu.querySelectorAll('button:not(:disabled):not([hidden])')].filter((button) => !button.closest('[hidden]'));
   const current = buttons.indexOf(document.activeElement);
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
@@ -3104,7 +3764,7 @@ browserMenu.addEventListener('keydown', (event) => {
     buttons[(current + direction + buttons.length) % buttons.length]?.focus();
   }
 });
-const browserMenuIcons = { menuAppCenter: 'layout-grid', menuInstallApp: 'plus', menuNewTab: 'plus', menuGuestWindow: 'user-round', menuSearchTabs: 'search', menuBookmarks: 'bookmark', menuHistory: 'history', menuSettings: 'settings', menuDownloads: 'download', menuClearData: 'trash-2', menuAbout: 'info', menuTranslatePage: 'languages' };
+const browserMenuIcons = { menuExportBookmarks: 'download', menuImportBookmarks: 'upload', menuAppCenter: 'layout-grid', toggleBookmarksBar: 'bookmark', menuInstallApp: 'plus', menuNewTab: 'plus', menuGuestWindow: 'user-round', menuSearchTabs: 'search', menuBookmarks: 'bookmark', menuHistory: 'history', menuSettings: 'settings', menuDownloads: 'download', menuClearData: 'trash-2', menuAbout: 'info', menuTranslatePage: 'languages', menuPrintPage: 'printer', menuSavePagePdf: 'file-down', menuFindPage: 'search', menuBack: 'arrow-left', menuLinsoftChat: 'messages-square', menuLinsoftOffice: 'file-text', menuLinsoftBrowserWebsite: 'external-link' };
 Object.entries(browserMenuIcons).forEach(([id, iconName]) => {
   const button = document.getElementById(id);
   if (!button) return;
@@ -3116,10 +3776,36 @@ Object.entries(browserMenuIcons).forEach(([id, iconName]) => {
   const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
   use.setAttribute('href', `#icon-${iconName}`);
   icon.append(use);
-  button.replaceChildren(icon, document.createTextNode(label));
+  const text = document.createElement('span');
+  text.className = 'menu-label';
+  text.textContent = label;
+  button.replaceChildren(icon, text);
+  if (browserMenuShortcuts[id]) {
+    const shortcut = document.createElement('span');
+    shortcut.className = 'menu-shortcut';
+    shortcut.textContent = browserMenuShortcuts[id];
+    button.append(shortcut);
+  }
 });
+browserMenu.querySelectorAll('button span:not(.menu-shortcut)').forEach((label) => label.classList.add('menu-label'));
 document.getElementById('menuNewTab').addEventListener('click', () => { closeBrowserMenu(); addTab(); }); document.getElementById('menuBookmarks').addEventListener('click', () => { closeBrowserMenu(); openNewTab('linsoft://bookmarks'); }); document.getElementById('menuHistory').addEventListener('click', () => { closeBrowserMenu(); openNewTab('linsoft://history'); }); document.getElementById('menuSettings').addEventListener('click', () => { closeBrowserMenu(); openNewTab('linsoft://settings'); }); document.getElementById('menuDownloads').addEventListener('click', () => { closeBrowserMenu(); document.getElementById('downloadsButton').click(); }); document.getElementById('menuClearData').addEventListener('click', () => { closeBrowserMenu(); localStorage.clear(); showToast('Údaje prehliadania boli vymazané.'); }); document.getElementById('menuAbout').addEventListener('click', () => { closeBrowserMenu(); openNewTab('linsoft://settings'); });
+document.getElementById('menuBack').addEventListener('click', () => { closeBrowserMenu(); navigateTabHistory(-1); });
 document.getElementById('menuTranslatePage').addEventListener('click', () => { closeBrowserMenu(); translateWebPage(); });
+document.getElementById('menuPrintPage').addEventListener('click', () => { closeBrowserMenu(); printCurrentPage(); });
+document.getElementById('menuSavePagePdf').addEventListener('click', () => { closeBrowserMenu(); saveCurrentPagePdf(); });
+document.getElementById('menuFindPage').addEventListener('click', () => { closeBrowserMenu(); findOnPage(); });
+document.getElementById('menuZoomOut').addEventListener('click', () => changePageZoom(-10));
+document.getElementById('menuZoomIn').addEventListener('click', () => changePageZoom(10));
+document.getElementById('menuFullscreen').addEventListener('click', () => { closeBrowserMenu(); document.getElementById('fullscreenWindow').click(); });
+document.getElementById('menuPinWindow').addEventListener('click', () => {
+  const pinButton = document.getElementById('pinWindow');
+  pinButton.click();
+  const menuPinButton = document.getElementById('menuPinWindow');
+  const pinned = pinButton.classList.contains('active');
+  menuPinButton.classList.toggle('active', pinned);
+  menuPinButton.title = pinned ? 'Odopnúť okno navrchu' : 'Pripnúť okno navrch';
+  menuPinButton.setAttribute('aria-label', menuPinButton.title);
+});
 document.getElementById('menuInstallApp').addEventListener('click', () => { closeBrowserMenu(); installCurrentApp(); }); document.getElementById('menuAppCenter').addEventListener('click', () => { closeBrowserMenu(); openNewTab('linsoft://apps'); });
 document.getElementById('menuGuestWindow').addEventListener('click', () => { closeBrowserMenu(); window.linsoftBrowser?.openGuestWindow?.(); });
 document.getElementById('menuSearchTabs').addEventListener('click', () => { closeBrowserMenu(); searchOpenTabs(); });
@@ -3128,6 +3814,102 @@ document.getElementById('hideBookmarksBar').addEventListener('click', () => { se
 document.querySelectorAll('[data-app-url]').forEach((button) => button.addEventListener('click', () => { closeBrowserMenu(); openNewTab(button.dataset.appUrl); }));
 document.querySelectorAll('.managed-tab').forEach((button) => bindTabButton(button, Number(button.dataset.tabId))); renderSavedBookmarks(); updateBookmarksBar();
 document.querySelector('.tabs-bar').addEventListener('auxclick', (event) => { const tab = event.target.closest('.managed-tab'); if (event.button === 1 && tab) closeTab(Number(tab.dataset.tabId)); });
+const windowDragRegion = document.getElementById('windowDragRegion');
+let windowDragPointerId = null;
+let pendingWindowDragPoint = null;
+let windowDragFrame = 0;
+function sendWindowDrag(phase, point) {
+  window.linsoftBrowser?.moveWindow?.(phase, point?.x, point?.y);
+}
+function finishWindowDrag(event) {
+  if (windowDragPointerId === null || event.pointerId !== windowDragPointerId) return;
+  const pointerId = windowDragPointerId;
+  if (windowDragFrame) window.cancelAnimationFrame(windowDragFrame);
+  windowDragFrame = 0;
+  if (pendingWindowDragPoint) sendWindowDrag('move', pendingWindowDragPoint);
+  pendingWindowDragPoint = null;
+  sendWindowDrag('end');
+  windowDragRegion.classList.remove('dragging');
+  windowDragPointerId = null;
+  if (windowDragRegion.hasPointerCapture(pointerId)) windowDragRegion.releasePointerCapture(pointerId);
+}
+windowDragRegion.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 || !event.isPrimary || windowDragPointerId !== null) return;
+  event.preventDefault();
+  windowDragPointerId = event.pointerId;
+  pendingWindowDragPoint = { x: event.screenX, y: event.screenY };
+  windowDragRegion.classList.add('dragging');
+  windowDragRegion.setPointerCapture(event.pointerId);
+  sendWindowDrag('start', pendingWindowDragPoint);
+});
+windowDragRegion.addEventListener('pointermove', (event) => {
+  if (event.pointerId !== windowDragPointerId) return;
+  pendingWindowDragPoint = { x: event.screenX, y: event.screenY };
+  if (windowDragFrame) return;
+  windowDragFrame = window.requestAnimationFrame(() => {
+    windowDragFrame = 0;
+    if (pendingWindowDragPoint) sendWindowDrag('move', pendingWindowDragPoint);
+  });
+});
+windowDragRegion.addEventListener('pointerup', finishWindowDrag);
+windowDragRegion.addEventListener('pointercancel', finishWindowDrag);
+windowDragRegion.addEventListener('lostpointercapture', finishWindowDrag);
+document.querySelector('.tabs-bar').addEventListener('dblclick', (event) => {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, true);
+const tabPreview = document.createElement('div');
+tabPreview.className = 'tab-hover-preview';
+tabPreview.hidden = true;
+tabPreview.setAttribute('role', 'tooltip');
+tabPreview.innerHTML = '<span class="tab-hover-preview-icon"><img alt="" hidden /><i>L</i></span><span class="tab-hover-preview-copy"><strong></strong><small></small><em></em></span>';
+document.body.append(tabPreview);
+let tabPreviewTimer = 0;
+let tabPreviewTargetId = null;
+const hideTabPreview = () => {
+  window.clearTimeout(tabPreviewTimer);
+  tabPreview.hidden = true;
+  tabPreviewTargetId = null;
+};
+document.querySelector('.tabs-bar').addEventListener('pointerover', (event) => {
+  if (event.pointerType === 'touch') return;
+  const tabButton = event.target.closest('.managed-tab');
+  if (!tabButton || tabButton.contains(event.relatedTarget)) return;
+  const tabId = Number(tabButton.dataset.tabId);
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  window.clearTimeout(tabPreviewTimer);
+  tabPreviewTargetId = tabId;
+  tabPreviewTimer = window.setTimeout(() => {
+    if (tabPreviewTargetId !== tabId || !tabButton.isConnected) return;
+    const currentTab = tabs.get(tabId);
+    if (!currentTab) return;
+    const [image, fallback] = tabPreview.querySelector('.tab-hover-preview-icon').children;
+    const title = tabPreview.querySelector('.tab-hover-preview-copy strong');
+    const address = tabPreview.querySelector('.tab-hover-preview-copy small');
+    const group = tabPreview.querySelector('.tab-hover-preview-copy em');
+    const iconUrl = safeWebsiteFaviconUrl(currentTab.icon);
+    title.textContent = currentTab.title || 'Nová karta';
+    address.textContent = currentTab.url || 'linsoft://start';
+    group.textContent = currentTab.groupName ? `Skupina · ${currentTab.groupName}` : currentTab.group ? `Skupina · ${currentTab.group}` : '';
+    group.hidden = !group.textContent;
+    fallback.textContent = (currentTab.title || 'L').trim().charAt(0).toUpperCase() || 'L';
+    image.hidden = !iconUrl;
+    fallback.hidden = Boolean(iconUrl);
+    image.onerror = () => { image.hidden = true; fallback.hidden = false; };
+    if (iconUrl) image.src = iconUrl;
+    const rect = tabButton.getBoundingClientRect();
+    const width = 276;
+    tabPreview.style.left = `${Math.max(8, Math.min(rect.left + rect.width / 2 - width / 2, window.innerWidth - width - 8))}px`;
+    tabPreview.style.top = `${Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 112))}px`;
+    tabPreview.hidden = false;
+  }, 420);
+});
+document.querySelector('.tabs-bar').addEventListener('pointerout', (event) => {
+  const tabButton = event.target.closest('.managed-tab');
+  if (tabButton && !tabButton.contains(event.relatedTarget)) hideTabPreview();
+});
+document.querySelector('.tabs-bar').addEventListener('scroll', hideTabPreview, { passive: true });
 document.querySelector('.tabs-bar').addEventListener('wheel', (event) => {
   if (!event.target.closest('.managed-tab')) return;
   const delta = event.deltaY || event.deltaX;
@@ -3139,7 +3921,6 @@ document.querySelector('.tabs-bar').addEventListener('wheel', (event) => {
   selectTab(tabIds[(currentIndex + direction + tabIds.length) % tabIds.length]);
 }, { passive: false });
 const downloadItems = new Map();
-browserMenu.insertAdjacentHTML('afterbegin', '<div class="menu-section-label">ZÁLOŽKY</div><button id="menuExportBookmarks">Exportovať záložky</button><button id="menuImportBookmarks">Importovať záložky</button><div class="menu-divider"></div>');
 document.getElementById('menuExportBookmarks').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(savedBookmarks, null, 2)], { type: 'application/json' });
   const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'linsoft-bookmarks.json'; link.click(); URL.revokeObjectURL(link.href); closeBrowserMenu();
@@ -3151,10 +3932,13 @@ document.getElementById('menuImportBookmarks').addEventListener('click', () => {
 const activeDownloadStatuses = new Set(['Pripravuje sa', 'Sťahovanie začalo', 'Sťahuje sa', 'Pozastavené']);
 
 function updateDownloadButton() {
-  const button = document.getElementById('downloadsButton');
+  const button = downloadsButton;
   if (!button) return;
   const active = [...downloadItems.values()].some((download) => activeDownloadStatuses.has(download.status));
+  const downloading = [...downloadItems.values()].some((download) => ['Pripravuje sa', 'Sťahovanie začalo', 'Sťahuje sa'].includes(download.status));
   button.classList.toggle('active', active);
+  button.classList.toggle('download-active', active);
+  button.classList.toggle('downloading', downloading);
   button.title = active ? 'Sťahovanie prebieha - otvoriť históriu' : 'Sťahovania - otvoriť históriu';
   button.setAttribute('aria-label', active ? 'Sťahovanie prebieha, otvoriť históriu' : 'Otvoriť históriu sťahovaní');
 }
@@ -3201,8 +3985,14 @@ function renderDownloads() {
 
     const progressAction = isPaused ? `<button data-resume-download="${escapeHtml(effectiveId)}">Pokračovať</button>` : `<button data-pause-download="${escapeHtml(effectiveId)}">Pozastaviť</button>`;
     const destination = item.filePath ? `<small title="${escapeHtml(item.filePath)}">${escapeHtml(item.filePath)}</small>` : '';
-    const retryAction = !isInProgress && item.status !== 'Stiahnuté' && /^https?:\/\//i.test(item.sourceUrl || '') ? `<button data-retry-download="${escapeHtml(effectiveId)}">Stiahnuť znova</button>` : '';
-    return `<div class="download-item" data-download-id="${escapeHtml(effectiveId)}"><span class="download-file-icon">${item.status === 'Stiahnuté' ? '✓' : isPaused ? 'Ⅱ' : '↓'}</span><div class="download-item-body"><strong>${escapeHtml(item.fileName)}</strong><span>${escapeHtml(item.status)}${size ? ` · ${size}` : ''}${speed && !isPaused ? ` · ${speed}` : ''}</span>${remaining ? `<small>${remaining}</small>` : ''}${completedAt ? `<small>${escapeHtml(completedAt)}</small>` : ''}${destination}<div class="download-item-progress"><i style="width:${percent}%"></i></div><div class="download-item-actions">${item.status === 'Stiahnuté' ? `<button data-open-download="${escapeHtml(item.filePath || '')}">Otvoriť</button><button data-show-download="${escapeHtml(item.filePath || '')}">Zobraziť v priečinku</button>` : isInProgress ? `${progressAction}<button data-cancel-download="${escapeHtml(effectiveId)}">Zrušiť</button>` : retryAction}<button data-remove-download="${escapeHtml(effectiveId)}">Odstrániť</button></div></div><span class="download-item-percent">${percent}%</span></div>`;
+    const canRetry = !isInProgress && item.status !== 'Stiahnuté' && /^https?:\/\//i.test(item.sourceUrl || '');
+    const retryAction = canRetry ? `<button data-retry-download="${escapeHtml(effectiveId)}">Stiahnuť znova</button>` : '';
+    const fileIcon = canRetry
+      ? `<button class="download-file-icon download-retry-icon" type="button" data-retry-download="${escapeHtml(effectiveId)}" aria-label="Znova stiahnuť ${escapeHtml(item.fileName)}" title="Znova stiahnuť súbor"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-rotate-cw"></use></svg></button>`
+      : `<span class="download-file-icon">${item.status === 'Stiahnuté' ? '✓' : isPaused ? 'Ⅱ' : '↓'}</span>`;
+    const downloadStateClass = isInProgress ? (isPaused ? 'is-paused' : 'is-downloading') : item.status === 'Stiahnuté' ? 'is-complete' : item.status === 'Zrušené' || item.status.startsWith('Sťahovanie zlyhalo') ? 'is-failed' : '';
+    const completionClass = item.justCompleted ? ' just-completed' : '';
+    return `<div class="download-item ${downloadStateClass}${completionClass}" data-download-id="${escapeHtml(effectiveId)}">${fileIcon}<div class="download-item-body"><strong>${escapeHtml(item.fileName)}</strong><span>${escapeHtml(item.status)}${size ? ` · ${size}` : ''}${speed && !isPaused ? ` · ${speed}` : ''}</span>${remaining ? `<small>${remaining}</small>` : ''}${completedAt ? `<small>${escapeHtml(completedAt)}</small>` : ''}${destination}<div class="download-item-progress"><i style="width:${percent}%"></i></div><div class="download-item-actions">${item.status === 'Stiahnuté' ? `<button data-open-download="${escapeHtml(item.filePath || '')}">Otvoriť</button><button data-show-download="${escapeHtml(item.filePath || '')}">Zobraziť v priečinku</button>` : isInProgress ? `${progressAction}<button data-cancel-download="${escapeHtml(effectiveId)}">Zrušiť</button>` : retryAction}<button data-remove-download="${escapeHtml(effectiveId)}">Odstrániť</button></div></div><span class="download-item-percent">${percent}%</span></div>`;
   }).join('') || '<div class="downloads-empty"><span>↓</span><strong>Žiadne sťahovania</strong><small>Stiahnuté súbory sa zobrazia tu.</small></div>';
 
   list.querySelectorAll('[data-open-download]').forEach((button) => button.addEventListener('click', async () => {
@@ -3241,10 +4031,18 @@ function renderDownloads() {
     window.linsoftBrowser?.removeDownload?.(id);
     renderDownloads();
   }));
-  list.querySelectorAll('[data-retry-download]').forEach((button) => button.addEventListener('click', () => {
+  list.querySelectorAll('[data-retry-download]').forEach((button) => button.addEventListener('click', async () => {
     const sourceUrl = downloadItems.get(button.dataset.retryDownload)?.sourceUrl;
+    if (!/^https?:\/\//i.test(sourceUrl || '')) return showToast('Tento súbor sa nedá znova stiahnuť.');
+    if (isNativeTabs) {
+      try {
+        const result = await window.linsoftBrowser?.nativeTabCommand?.({ tabId: activeTabId, command: 'download-url', value: sourceUrl });
+        if (!result?.ok) showToast(result?.message || 'Sťahovanie sa nepodarilo znova spustiť.');
+      } catch (error) { showToast(`Sťahovanie sa nepodarilo znova spustiť: ${error.message}`); }
+      return;
+    }
     const viewer = activeViewer();
-    if (!/^https?:\/\//i.test(sourceUrl || '') || !viewer?.downloadURL) return showToast('Tento súbor sa nedá znova stiahnuť.');
+    if (!viewer?.downloadURL) return showToast('Tento súbor sa nedá znova stiahnuť.');
     viewer.downloadURL(sourceUrl);
   }));
   updateDownloadButton();
@@ -3252,11 +4050,9 @@ function renderDownloads() {
 
 renderDownloads();
 
-document.getElementById('closeDownload').addEventListener('click', () => { document.getElementById('downloadPanel').hidden = true; });
-document.getElementById('downloadsButton').addEventListener('click', (event) => {
+downloadsButton.addEventListener('click', (event) => {
   event.stopPropagation();
-  const panel = document.getElementById('downloadPanel');
-  panel.hidden = !panel.hidden;
+  setDownloadPanelOpen(downloadPanel.hidden);
   updateDownloadButton();
 });
 document.getElementById('openDownloads').addEventListener('click', () => window.linsoftBrowser?.openDownloads());
@@ -3270,12 +4066,22 @@ document.getElementById('downloadFilter').addEventListener('change', renderDownl
 
 window.linsoftBrowser?.onDownload((download) => {
   const id = String(download.id || download.fileName || `${Date.now()}-${Math.random()}`);
-  const isNewDownload = !downloadItems.has(id);
-  downloadItems.set(id, { ...download, id, active: !['Stiahnuté', 'Zrušené', 'Sťahovanie zlyhalo'].includes(download.status), percent: Number(download.percent) || 0, received: Number(download.received) || 0, total: Number(download.total) || 0 });
-  const panel = document.getElementById('downloadPanel');
-  if (isNewDownload) panel.hidden = false;
+  const previous = downloadItems.get(id);
+  const wasInProgress = previous && activeDownloadStatuses.has(previous.status) && previous.status !== 'Pozastavené';
+  const isNewDownload = !previous;
+  const justCompleted = download.status === 'Stiahnuté' && wasInProgress;
+  downloadItems.set(id, { ...download, id, active: !['Stiahnuté', 'Zrušené', 'Sťahovanie zlyhalo'].includes(download.status), percent: Number(download.percent) || 0, received: Number(download.received) || 0, total: Number(download.total) || 0, justCompleted });
   renderDownloads();
   updateDownloadButton();
+  if (isNewDownload) setDownloadPanelOpen(true);
+  if (justCompleted) {
+    window.setTimeout(() => {
+      const completed = downloadItems.get(id);
+      if (!completed) return;
+      completed.justCompleted = false;
+      renderDownloads();
+    }, 900);
+  }
 });
 
 window.linsoftBrowser?.listDownloads?.().then((downloads) => {
@@ -3286,7 +4092,7 @@ window.linsoftBrowser?.listDownloads?.().then((downloads) => {
   renderDownloads();
 }).catch(() => renderDownloads());
 
-document.addEventListener('click', () => { document.getElementById('downloadPanel').hidden = true; });
+document.addEventListener('click', () => setDownloadPanelOpen(false));
 
 window.linsoftBrowser?.onExternalUrl((url) => navigate(url));
 window.linsoftBrowser?.onExternalUrlInNewTab?.((url) => openNewTab(url));
@@ -3324,7 +4130,15 @@ window.linsoftBrowser?.onNativeTabEvent?.((event) => {
     handleTabCrash(event.tabId, event.reason);
     return;
   }
-  if (event.type === 'ready') { void restoreSuspendedScroll(event.tabId); return; }
+  if (event.type === 'ready') {
+    void restoreSuspendedScroll(event.tabId);
+    if (readerModeTabs.has(event.tabId)) {
+      window.linsoftBrowser.nativeTabCommand({ tabId: event.tabId, command: 'reader-mode', value: true })
+        ?.then((result) => { if (!result?.ok) showToast(result?.message || 'Čitateľský režim sa nepodarilo obnoviť.'); })
+        .catch((error) => showToast(`Čitateľský režim sa nepodarilo obnoviť: ${error.message}`));
+    }
+    return;
+  }
   if (event.type === 'failed') {
     handleTabNavigationFailure(event.tabId, event.errorCode, event.errorDescription, event.validatedURL, (url) => loadNativeTab(event.tabId, url));
     return;
@@ -3332,6 +4146,7 @@ window.linsoftBrowser?.onNativeTabEvent?.((event) => {
   if (event.type === 'favicon' && event.favicon) {
     tab.icon = event.favicon;
     setTabIcon(event.tabId, event.favicon);
+    updateBrowserHistoryFavicon(tab.url, event.favicon);
     saveSession();
     return;
   }
@@ -3352,7 +4167,15 @@ window.linsoftBrowser?.onDismissWebviewOverlay?.(() => {
 });
 window.linsoftBrowser?.onWebviewFullscreen?.((active) => document.querySelector('.browser-window')?.classList.toggle('webview-fullscreen', active));
 window.linsoftBrowser?.onBrowserShortcut?.(({ key, shift }) => {
-  if (key === 'escape') { document.querySelector('.webview-context-menu')?.closeContextMenu?.(); closeTransientPanels(); return; }
+  if (key === 'escape') {
+    if (document.querySelector('.browser-window')?.classList.contains('webview-fullscreen')) {
+      window.linsoftBrowser?.windowControl('fullscreen');
+      return;
+    }
+    document.querySelector('.webview-context-menu')?.closeContextMenu?.();
+    closeTransientPanels();
+    return;
+  }
   if (key === 'l' || key === 'k') { addressInput.focus(); addressInput.select(); return; }
   if (key === 'r') { document.getElementById('reloadButton').click(); return; }
   if (key === 't' && shift) { restoreClosedTab(); return; }
@@ -3393,7 +4216,37 @@ window.linsoftBrowser?.onLinkInTab((url) => { if (settingsState.popups) openNewT
 applyTheme();
 updateAdBlockButton();
   window.linsoftBrowser?.setBrowserPreferences({ downloads: settingsState.downloads, downloadFolderPath: settingsState.downloadFolderPath || '', askDownload: settingsState.askDownload, adBlock: settingsState.adBlock, trackingProtection: settingsState.trackingProtection, camera: settingsState.camera, microphone: settingsState.microphone, webNotifications: settingsState.webNotifications, spellcheckLanguages: settingsState.spellcheckLanguages, clearExit: settingsState.clearExit, autoUpdateCheck: settingsState.autoUpdateCheck, neverSuspendOrigins: settingsState.neverSuspendOrigins, suspendInactiveTabs: settingsState.suspendInactiveTabs });
-document.addEventListener('keydown', (event) => { const command = event.ctrlKey || event.metaKey; if (command && event.shiftKey && event.key.toLowerCase() === 'i') { event.preventDefault(); content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"] .webview`)?.openDevTools?.(); return; } if (command && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosedTab(); return; } if (command && (event.key.toLowerCase() === 'l' || event.key.toLowerCase() === 'k')) { event.preventDefault(); addressInput.focus(); addressInput.select(); return; } if (command && event.key.toLowerCase() === 'r') { event.preventDefault(); document.getElementById('reloadButton').click(); return; } if (command && event.key.toLowerCase() === 't') { event.preventDefault(); openNewTab(); return; } if (command && event.key.toLowerCase() === 'w') { event.preventDefault(); closeTab(activeTabId); return; } if (command && event.key === 'Tab') { event.preventDefault(); const ids = [...tabs.keys()]; const current = ids.indexOf(activeTabId); const next = event.shiftKey ? (current - 1 + ids.length) % ids.length : (current + 1) % ids.length; selectTab(ids[next]); return; } if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); document.getElementById('backButton').click(); return; } if (event.altKey && event.key === 'ArrowRight') { event.preventDefault(); document.getElementById('forwardButton').click(); } });
+document.addEventListener('keydown', (event) => {
+  const command = event.ctrlKey || event.metaKey;
+  const targetIsEditable = event.target instanceof HTMLElement &&
+    (event.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName));
+  if (command && event.shiftKey && event.key.toLowerCase() === 'a' &&
+      !document.getElementById('tabSearchDialog').open && !targetIsEditable) {
+    event.preventDefault();
+    searchOpenTabs();
+    return;
+  }
+  if (command && event.shiftKey && event.key.toLowerCase() === 'i') {
+    event.preventDefault();
+    content.querySelector(`.tab-surface[data-tab-id="${activeTabId}"] .webview`)?.openDevTools?.();
+    return;
+  }
+  if (command && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosedTab(); return; }
+  if (command && (event.key.toLowerCase() === 'l' || event.key.toLowerCase() === 'k')) { event.preventDefault(); addressInput.focus(); addressInput.select(); return; }
+  if (command && event.key.toLowerCase() === 'r') { event.preventDefault(); document.getElementById('reloadButton').click(); return; }
+  if (command && event.key.toLowerCase() === 't') { event.preventDefault(); openNewTab(); return; }
+  if (command && event.key.toLowerCase() === 'w') { event.preventDefault(); closeTab(activeTabId); return; }
+  if (command && event.key === 'Tab') {
+    event.preventDefault();
+    const ids = [...tabs.keys()];
+    const current = ids.indexOf(activeTabId);
+    const next = event.shiftKey ? (current - 1 + ids.length) % ids.length : (current + 1) % ids.length;
+    selectTab(ids[next]);
+    return;
+  }
+  if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); document.getElementById('backButton').click(); return; }
+  if (event.altKey && event.key === 'ArrowRight') { event.preventDefault(); document.getElementById('forwardButton').click(); }
+});
 restoreSession();
 if (hadCrash) showToast('Obnovené karty po neočakávanom ukončení.');
 if (addressInput.value === 'linsoft://apps') openAppCenter();

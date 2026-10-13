@@ -10,8 +10,9 @@ have separate administrator-controlled settings.
 The repository is published alongside the website at
 `https://linsoft1.github.io/v2.0.1/apt/`. The Pages workflow downloads the latest
 stable amd64 release asset and builds a signed repository with only that package.
-The package is not added to Git history. The existing 2.0.27 package is about
-175 MiB; Pages allows a site up to 1 GB and has a soft 100 GB/month transfer limit.
+The package is not added to Git history. The current 2.0.28 package is about
+102 MiB; package size varies by release. Pages allows a site up to 1 GB and has
+a soft 100 GB/month transfer limit.
 The workflow checks total site size before uploading. Consider dedicated hosting
 if downloads approach the bandwidth limit.
 

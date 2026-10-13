@@ -189,14 +189,579 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
     }
     if (initial?.ready !== 'complete' || initial.tabs < 1 || !initial.api) throw new Error(`Unexpected initial UI state: ${JSON.stringify(initial)}`);
     if (await evaluate('window.linsoftBrowser.nativeTabsEnabled()') !== nativeTabs) throw new Error('Tab engine IPC state did not match the requested mode.');
+    const originalWindowState = await mainDebugger.evaluate(`(() => {
+      const BrowserWindow = process.mainModule.require('electron').BrowserWindow;
+      const browserWindow = BrowserWindow.getAllWindows().find(window => !window.isDestroyed());
+      if (!browserWindow) throw new Error('Browser window not found for drag-region test.');
+      globalThis.smokeDragTestWindow = browserWindow;
+      browserWindow.__smokeActualIsMaximized = browserWindow.isMaximized.bind(browserWindow);
+      browserWindow.__smokeMaximized = browserWindow.__smokeActualIsMaximized();
+      browserWindow.isMaximized = () => browserWindow.__smokeMaximized;
+      browserWindow.maximize = () => {
+        browserWindow.__smokeMaximized = true;
+        browserWindow.webContents.send('window-state', { maximized: true });
+      };
+      browserWindow.unmaximize = () => {
+        browserWindow.__smokeMaximized = false;
+        browserWindow.webContents.send('window-state', { maximized: false });
+      };
+      return { bounds: browserWindow.getBounds(), maximized: browserWindow.isMaximized() };
+    })()`);
+    try {
+      await waitFor(() => evaluate(`document.querySelector('#maximizeWindow')?.dataset.state`), originalWindowState.maximized ? 'maximized' : 'restored');
+      await mainDebugger.evaluate('smokeDragTestWindow.maximize(); true');
+      await waitFor(() => mainDebugger.evaluate('smokeDragTestWindow.isMaximized()'), true);
+      await waitFor(() => evaluate(`document.querySelector('#maximizeWindow')?.dataset.state`), 'maximized');
+      const dragRegionState = await evaluate(`(() => {
+        const header = document.querySelector('.tabs-bar');
+        const region = document.querySelector('#windowDragRegion');
+        const doubleClick = new MouseEvent('dblclick', { bubbles: true, cancelable: true });
+        region.dispatchEvent(doubleClick);
+        return {
+          exists: Boolean(region),
+          headerRegion: getComputedStyle(header).getPropertyValue('-webkit-app-region'),
+          dragRegion: getComputedStyle(region).getPropertyValue('-webkit-app-region'),
+          doubleClickPrevented: doubleClick.defaultPrevented
+        };
+      })()`);
+      if (!dragRegionState.exists || dragRegionState.headerRegion !== 'no-drag' ||
+          dragRegionState.dragRegion !== 'no-drag' || !dragRegionState.doubleClickPrevented ||
+          await mainDebugger.evaluate('smokeDragTestWindow.isMaximized()') !== true) {
+        throw new Error(`Maximized window can still be toggled by titlebar double-click: ${JSON.stringify(dragRegionState)}`);
+      }
+      await evaluate(`(() => {
+        const button = document.querySelector('#maximizeWindow');
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 2 }));
+        return true;
+      })()`);
+      await waitFor(() => mainDebugger.evaluate('smokeDragTestWindow.isMaximized()'), false);
+      await waitFor(() => evaluate(`document.querySelector('#maximizeWindow')?.dataset.state`), 'restored');
+      await evaluate(`document.querySelector('#maximizeWindow').click()`);
+      await waitFor(() => mainDebugger.evaluate('smokeDragTestWindow.isMaximized()'), true);
+      await waitFor(() => evaluate(`document.querySelector('#maximizeWindow')?.dataset.state`), 'maximized');
+      await evaluate(`document.querySelector('#maximizeWindow').click()`);
+      await waitFor(() => mainDebugger.evaluate('smokeDragTestWindow.isMaximized()'), false);
+      await waitFor(() => evaluate(`document.querySelector('#maximizeWindow')?.dataset.state`), 'restored');
+      await evaluate(`document.querySelector('#maximizeWindow').click()`);
+      await waitFor(() => mainDebugger.evaluate('smokeDragTestWindow.isMaximized()'), true);
+      await waitFor(() => evaluate(`document.querySelector('#maximizeWindow')?.dataset.state`), 'maximized');
+      await mainDebugger.evaluate(`if (smokeDragTestWindow.isMaximized()) smokeDragTestWindow.unmaximize(); smokeDragTestWindow.setBounds({ x: 120, y: 110, width: 1100, height: 720 }); true`);
+      await evaluate(`window.linsoftBrowser.moveWindow('start', 100, 100); window.linsoftBrowser.moveWindow('move', 130, 145); window.linsoftBrowser.moveWindow('end'); true`);
+      await waitFor(() => mainDebugger.evaluate(`JSON.stringify(smokeDragTestWindow.getBounds())`), JSON.stringify({ x: 150, y: 155, width: 1100, height: 720 }));
+    } finally {
+      await mainDebugger.evaluate(`(() => {
+        const actualIsMaximized = smokeDragTestWindow.__smokeActualIsMaximized;
+        delete smokeDragTestWindow.isMaximized;
+        delete smokeDragTestWindow.maximize;
+        delete smokeDragTestWindow.unmaximize;
+        delete smokeDragTestWindow.__smokeActualIsMaximized;
+        delete smokeDragTestWindow.__smokeMaximized;
+        if (actualIsMaximized()) smokeDragTestWindow.unmaximize();
+        smokeDragTestWindow.setBounds(${JSON.stringify(originalWindowState.bounds)});
+        if (${JSON.stringify(originalWindowState.maximized)}) smokeDragTestWindow.maximize();
+        return true;
+      })()`);
+    }
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    const glassChrome = await evaluate(`(() => {
+      const body = getComputedStyle(document.body);
+      const window = getComputedStyle(document.querySelector('.browser-window'));
+      const toolbar = getComputedStyle(document.querySelector('.toolbar'));
+      const content = getComputedStyle(document.querySelector('.content'));
+      const activeTab = getComputedStyle(document.querySelector('.managed-tab.active'));
+      const addressBar = getComputedStyle(document.querySelector('.address-bar'));
+      return {
+        enabled: document.body.classList.contains('glass-blue-theme'),
+        bodyBackground: body.backgroundColor,
+        windowBackground: window.backgroundColor,
+        toolbarBackground: toolbar.backgroundImage,
+        toolbarFilter: toolbar.backdropFilter,
+        contentBackground: content.backgroundColor,
+        activeTabBackground: activeTab.backgroundImage,
+        addressBarBackground: addressBar.backgroundImage,
+        inactiveTabMinimum: getComputedStyle(document.querySelector('.managed-tab')).minWidth
+      };
+    })()`);
+    if (!glassChrome.enabled || glassChrome.bodyBackground !== 'rgba(0, 0, 0, 0)' ||
+        glassChrome.windowBackground !== 'rgba(0, 0, 0, 0)' ||
+        glassChrome.contentBackground !== 'rgb(18, 43, 64)' ||
+        !glassChrome.toolbarBackground.includes('rgba(26, 59, 84, 0.62)') ||
+        !glassChrome.toolbarFilter.includes('blur(12px)') ||
+        !glassChrome.activeTabBackground.includes('rgba(76, 154, 207, 0.82)') ||
+        !glassChrome.addressBarBackground.includes('rgba(5, 22, 37, 0.58)') ||
+        glassChrome.inactiveTabMinimum !== '62px') {
+      throw new Error(`Glass should be limited to browser chrome: ${JSON.stringify(glassChrome)}`);
+    }
+    const chromePolish = await evaluate(`(() => {
+      const fullscreen = document.querySelector('#fullscreenWindow');
+      const pin = document.querySelector('#pinWindow');
+      const preview = document.querySelector('.tab-hover-preview');
+      return {
+        secondaryControlsMoved: getComputedStyle(fullscreen).display === 'none' && getComputedStyle(pin).display === 'none',
+        menuFullscreen: Boolean(document.querySelector('#menuFullscreen')),
+        menuPin: Boolean(document.querySelector('#menuPinWindow')),
+        previewReady: Boolean(preview && preview.hidden)
+      };
+    })()`);
+    if (!chromePolish.secondaryControlsMoved || !chromePolish.menuFullscreen || !chromePolish.menuPin || !chromePolish.previewReady) {
+      throw new Error(`Window controls or tab preview are not available as expected: ${JSON.stringify(chromePolish)}`);
+    }
+    await evaluate(`(() => {
+      const tab = document.querySelector('.managed-tab.active');
+      tab.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+      return true;
+    })()`);
+    await waitFor(() => evaluate(`document.querySelector('.tab-hover-preview')?.hidden`), false);
+    await evaluate(`document.querySelector('.managed-tab.active').dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }))`);
+    await waitFor(() => evaluate(`document.querySelector('.tab-hover-preview')?.hidden`), true);
+    await evaluate(`openSettings('appearance')`);
+    const appearanceSettings = await evaluate(`(() => {
+      const opacity = document.querySelector('#glassOpacitySetting');
+      const blur = document.querySelector('#glassBlurSetting');
+      const compact = document.querySelector('[data-setting-toggle="compact"]');
+      const motion = document.querySelector('[data-setting-toggle="reduceMotion"]');
+      if (!opacity || !blur || !compact || !motion) return false;
+      opacity.value = '74';
+      opacity.dispatchEvent(new Event('input', { bubbles: true }));
+      blur.value = '18';
+      blur.dispatchEvent(new Event('input', { bubbles: true }));
+      const result = {
+        opacity: getComputedStyle(document.body).getPropertyValue('--glass-opacity').trim(),
+        blur: getComputedStyle(document.body).getPropertyValue('--glass-blur').trim(),
+        compact: Boolean(compact),
+        reduceMotion: Boolean(motion)
+      };
+      settingsState.glassOpacity = 62;
+      settingsState.glassBlur = 12;
+      applyTheme();
+      return result;
+    })()`);
+    if (!appearanceSettings || appearanceSettings.opacity !== '0.74' || appearanceSettings.blur !== '18px' ||
+        !appearanceSettings.compact || !appearanceSettings.reduceMotion) {
+      throw new Error(`Appearance controls did not update the browser chrome: ${JSON.stringify(appearanceSettings)}`);
+    }
+    const tabSearchState = await evaluate(`(() => {
+      const originalIds = new Set(tabs.keys());
+      openNewTab();
+      openNewTab();
+      const createdIds = [...tabs.keys()].filter(id => !originalIds.has(id));
+      searchOpenTabs();
+      const input = document.querySelector('#tabSearchInput');
+      input.value = 'linsoft://start';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const options = [...document.querySelectorAll('#tabSearchResults [role="option"]')];
+      if (options.length < 2) return { error: 'Search did not return multiple matching cards', createdIds };
+      const expectedId = Number(options[1].dataset.tabId);
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+      const selectedId = Number(document.querySelector('#tabSearchResults [aria-selected="true"]')?.dataset.tabId);
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const result = { expectedId, selectedId, activeTabId, dialogClosed: !document.querySelector('#tabSearchDialog').open, createdIds };
+      for (const id of createdIds) closeTab(id);
+      return result;
+    })()`);
+    if (tabSearchState.error || tabSearchState.expectedId !== tabSearchState.selectedId ||
+        tabSearchState.expectedId !== tabSearchState.activeTabId || !tabSearchState.dialogClosed) {
+      throw new Error(`Keyboard tab search did not select the highlighted result: ${JSON.stringify(tabSearchState)}`);
+    }
+    const backupState = await evaluate(`(() => {
+      openSettings('general');
+      document.querySelector('[data-settings-section="advanced"]').click();
+      const previousDownloadPath = settingsState.downloadFolderPath;
+      const previousVpnProfile = settingsState.openvpnProfile;
+      settingsState.downloadFolderPath = 'C:/private/downloads';
+      settingsState.openvpnProfile = 'C:/private/profile.ovpn';
+      const anchorClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = () => {};
+      let backup;
+      try { backup = exportBrowserBackup(); globalThis.smokeBrowserBackup = backup; }
+      finally { HTMLAnchorElement.prototype.click = anchorClick; }
+      const result = {
+        format: backup.format,
+        version: backup.version,
+        hasBookmarks: Array.isArray(backup.bookmarks),
+        hasSettings: Boolean(backup.settings),
+        excludesLocalPaths: !Object.hasOwn(backup.settings, 'downloadFolderPath') && !Object.hasOwn(backup.settings, 'openvpnProfile'),
+        hasUserData: ['history', 'passwords', 'cookies'].every(key => !Object.hasOwn(backup, key))
+      };
+      settingsState.downloadFolderPath = previousDownloadPath;
+      settingsState.openvpnProfile = previousVpnProfile;
+      return result;
+    })()`);
+    if (backupState.format !== 'linsoft-browser-backup' || backupState.version !== 1 ||
+        !backupState.hasBookmarks || !backupState.hasSettings || !backupState.excludesLocalPaths || !backupState.hasUserData) {
+      throw new Error(`Browser backup contains the wrong data scope: ${JSON.stringify(backupState)}`);
+    }
+    const memoryWarning = await evaluate(`(() => {
+      const saved = new Map(tabMeasurements);
+      tabMeasurements.clear();
+      tabMeasurements.set(activeTabId, { tabId: activeTabId, pid: 98765, memoryBytes: 1300 * 1048576 });
+      renderTabPerformance();
+      const summary = document.querySelector('#tabPerformanceSummary');
+      const result = {
+        warning: summary.classList.contains('performance-warning'),
+        includesUsage: summary.textContent.includes('1300 MB')
+      };
+      tabMeasurements.clear();
+      for (const [id, measurement] of saved) tabMeasurements.set(id, measurement);
+      renderTabPerformance();
+      return result;
+    })()`);
+    if (!memoryWarning.warning || !memoryWarning.includesUsage) {
+      throw new Error(`High-memory browser-process usage was not surfaced: ${JSON.stringify(memoryWarning)}`);
+    }
+    const importBackupState = await evaluate(`(() => {
+      const backup = JSON.parse(JSON.stringify(smokeBrowserBackup));
+      const previousOpacity = settingsState.glassOpacity;
+      const expectedOpacity = previousOpacity === 90 ? 89 : previousOpacity + 1;
+      backup.settings.glassOpacity = expectedOpacity;
+      globalThis.smokeOriginalConfirm = window.confirm;
+      window.confirm = () => true;
+      importBrowserBackup(new File([JSON.stringify(backup)], 'smoke-backup.json', { type: 'application/json' }));
+      return { previousOpacity, expectedOpacity };
+    })()`);
+    await waitFor(() => evaluate('settingsState.glassOpacity'), importBackupState.expectedOpacity);
+    await evaluate(`window.confirm = smokeOriginalConfirm; delete globalThis.smokeOriginalConfirm; delete globalThis.smokeBrowserBackup; settingsState.glassOpacity = ${importBackupState.previousOpacity}; saveSettings()`);
+    const toolbarVisibility = await evaluate(`(() => {
+      const toolbar = document.querySelector('.toolbar');
+      toolbar.classList.remove('tools-collapsed');
+      const hiddenDuplicates = ['findPageButton', 'zoomOutButton', 'zoomInButton', 'printButton', 'savePdfButton'];
+      const retainedTools = ['bookmarkButton', 'adBlockButton', 'capturePageButton', 'readerModeButton', 'downloadsButton'];
+      const result = {
+        hiddenDuplicates: hiddenDuplicates.filter(id => getComputedStyle(document.getElementById(id)).display === 'none'),
+        retainedTools: retainedTools.filter(id => {
+          const button = document.getElementById(id);
+          return button && !button.hidden && getComputedStyle(button).display !== 'none';
+        }),
+        downloadsHiddenWhenIdle: false
+      };
+      toolbar.classList.add('tools-collapsed');
+      result.downloadsHiddenWhenIdle = getComputedStyle(document.querySelector('#downloadsButton')).display === 'none';
+      return result;
+    })()`);
+    if (toolbarVisibility.hiddenDuplicates.join(',') !== 'findPageButton,zoomOutButton,zoomInButton,printButton,savePdfButton' ||
+        toolbarVisibility.retainedTools.join(',') !== 'bookmarkButton,adBlockButton,capturePageButton,readerModeButton,downloadsButton' ||
+        !toolbarVisibility.downloadsHiddenWhenIdle) {
+      throw new Error(`Toolbar still shows duplicate actions or hides unique tools: ${JSON.stringify(toolbarVisibility)}`);
+    }
+    const downloadButtonState = await evaluate(`(() => {
+      const button = document.querySelector('#downloadsButton');
+      const panel = document.querySelector('#downloadPanel');
+      const toolbar = document.querySelector('.toolbar');
+      downloadItems.set('smoke-download-animation', {
+        id: 'smoke-download-animation',
+        fileName: 'smoke-download.bin',
+        status: 'Sťahuje sa',
+        active: true,
+        startedAt: Date.now(),
+        percent: 42,
+        received: 42,
+        total: 100
+      });
+      updateDownloadButton();
+      renderDownloads();
+      const downloadRow = document.querySelector('[data-download-id="smoke-download-animation"]');
+      const activeState = {
+        visible: getComputedStyle(button).display !== 'none',
+        active: button.classList.contains('download-active'),
+        animating: button.classList.contains('downloading') &&
+          getComputedStyle(button.querySelector('.ui-icon')).animationName === 'download-arrow-bounce',
+        rowClass: downloadRow.classList.contains('is-downloading'),
+        fileIconAnimation: getComputedStyle(downloadRow.querySelector('.download-file-icon')).animationName,
+        progressAnimation: getComputedStyle(downloadRow.querySelector('.download-item-progress i')).animationName,
+        progressShineAnimation: getComputedStyle(downloadRow.querySelector('.download-item-progress i'), '::after').animationName
+      };
+      button.click();
+      const bounds = panel.getBoundingClientRect();
+      const panelState = {
+        open: !panel.hidden,
+        expanded: button.getAttribute('aria-expanded'),
+        animation: getComputedStyle(panel).animationName,
+        top: bounds.top,
+        bottom: bounds.bottom,
+        toolbarBottom: toolbar.getBoundingClientRect().bottom
+      };
+      button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      button.click();
+      const closedByIcon = panel.hidden && button.getAttribute('aria-expanded') === 'false';
+      button.click();
+      const reopenedByIcon = !panel.hidden && button.getAttribute('aria-expanded') === 'true';
+      document.body.click();
+      downloadItems.set('smoke-download-animation', {
+        id: 'smoke-download-animation',
+        fileName: 'smoke-download.bin',
+        status: 'Stiahnuté',
+        active: false,
+        percent: 100,
+        justCompleted: true
+      });
+      renderDownloads();
+      const completedRow = document.querySelector('[data-download-id="smoke-download-animation"]');
+      const completionState = {
+        rowClass: completedRow.classList.contains('is-complete'),
+        popAnimation: getComputedStyle(completedRow.querySelector('.download-file-icon')).animationName
+      };
+      downloadItems.delete('smoke-download-animation');
+      settingsState.downloadFolderPath = ${JSON.stringify(path.join(profilePath, 'downloads'))};
+      settingsState.askDownload = false;
+      saveSettings();
+      const retryUrl = ${JSON.stringify(new URL('/retry-download', startUrl).href)};
+      downloadItems.set('smoke-download-retry', {
+        id: 'smoke-download-retry',
+        fileName: 'smoke-retry.bin',
+        sourceUrl: retryUrl,
+        status: 'Sťahovanie zlyhalo: test',
+        active: false,
+        percent: 0
+      });
+      renderDownloads();
+      const retryButton = document.querySelector('[data-download-id="smoke-download-retry"] .download-retry-icon');
+      const retryState = {
+        failedRow: retryButton?.closest('.download-item').classList.contains('is-failed') === true,
+        visible: Boolean(retryButton),
+        accessible: retryButton?.getAttribute('aria-label') === 'Znova stiahnuť smoke-retry.bin',
+        icon: retryButton?.querySelector('use')?.getAttribute('href'),
+        actionVisible: Boolean(document.querySelector('[data-download-id="smoke-download-retry"] .download-item-actions [data-retry-download]'))
+      };
+      downloadItems.delete('smoke-download-retry');
+      renderDownloads();
+      updateDownloadButton();
+      return {
+        activeState,
+        panelState,
+        closedByIcon,
+        reopenedByIcon,
+        completionState,
+        retryState,
+        idleButtonHidden: getComputedStyle(button).display === 'none',
+        panelClosed: panel.hidden && button.getAttribute('aria-expanded') === 'false'
+      };
+    })()`);
+    if (!downloadButtonState.activeState.visible || !downloadButtonState.activeState.active || !downloadButtonState.activeState.animating ||
+        !downloadButtonState.activeState.rowClass || downloadButtonState.activeState.fileIconAnimation !== 'download-file-pulse' ||
+        downloadButtonState.activeState.progressAnimation !== 'download-progress-flow' ||
+        downloadButtonState.activeState.progressShineAnimation !== 'download-progress-shine' ||
+        !downloadButtonState.panelState.open || downloadButtonState.panelState.expanded !== 'true' ||
+        downloadButtonState.panelState.animation !== 'download-panel-in' ||
+        downloadButtonState.panelState.top < downloadButtonState.panelState.toolbarBottom + 7 ||
+        downloadButtonState.panelState.bottom > 900 || !downloadButtonState.closedByIcon || !downloadButtonState.reopenedByIcon ||
+        !downloadButtonState.panelClosed ||
+        !downloadButtonState.completionState.rowClass || downloadButtonState.completionState.popAnimation !== 'download-complete-pop' ||
+        !downloadButtonState.retryState.failedRow || !downloadButtonState.retryState.visible ||
+        !downloadButtonState.retryState.accessible || downloadButtonState.retryState.icon !== '#icon-rotate-cw' ||
+        !downloadButtonState.retryState.actionVisible ||
+        !downloadButtonState.idleButtonHidden) {
+      throw new Error(`Download button animation or panel positioning failed: ${JSON.stringify(downloadButtonState)}`);
+    }
+    const securityPanelLayout = await evaluate(`(() => {
+      window.smokeOriginalFetch = window.fetch;
+      window.fetch = async () => ({ ok: true, json: async () => ({ ip: '203.0.113.10', org: 'Smoke ISP', country_name: 'Test' }) });
+      document.querySelector('#securityButton').click();
+      const panel = document.querySelector('#securityPanel');
+      const button = document.querySelector('#securityButton');
+      const bounds = panel.getBoundingClientRect();
+      return {
+        open: !panel.hidden,
+        expanded: button.getAttribute('aria-expanded'),
+        lockAnimation: getComputedStyle(button.querySelector('.ui-icon')).animationName,
+        rippleAnimation: getComputedStyle(button, '::before').animationName,
+        panelAnimation: getComputedStyle(panel).animationName,
+        checkAnimation: getComputedStyle(panel.querySelector('.security-check')).animationName,
+        top: bounds.top,
+        left: bounds.left,
+        right: bounds.right,
+        bottom: bounds.bottom,
+        toolbarBottom: document.querySelector('.toolbar').getBoundingClientRect().bottom
+      };
+    })()`);
+    if (!securityPanelLayout.open || securityPanelLayout.expanded !== 'true' ||
+        securityPanelLayout.lockAnimation !== 'security-lock-pop' || securityPanelLayout.rippleAnimation !== 'security-ring' ||
+        securityPanelLayout.panelAnimation !== 'security-panel-in' || securityPanelLayout.checkAnimation !== 'security-check-in' ||
+        securityPanelLayout.top < securityPanelLayout.toolbarBottom + 7 ||
+        securityPanelLayout.left < 0 || securityPanelLayout.right > 1280 || securityPanelLayout.bottom > 900) {
+      throw new Error(`Security panel overlaps the toolbar or exceeds the viewport: ${JSON.stringify(securityPanelLayout)}`);
+    }
+    const securityPanelClosed = await evaluate(`document.querySelector('#securityButton').click(); ({
+      expanded: document.querySelector('#securityButton').getAttribute('aria-expanded'),
+      hidden: document.querySelector('#securityPanel').hidden
+    })`);
+    if (securityPanelClosed.expanded !== 'false' || !securityPanelClosed.hidden) {
+      throw new Error(`Security button state did not reset after closing the panel: ${JSON.stringify(securityPanelClosed)}`);
+    }
+    await evaluate(`window.fetch = window.smokeOriginalFetch; delete window.smokeOriginalFetch`);
+    await evaluate(`document.querySelector('#menuButton').click()`);
+    const menuLayout = await evaluate(`(() => {
+      const menu = document.querySelector('#browserMenu');
+      const allRows = [...menu.querySelectorAll('button')];
+      const rows = [...menu.querySelectorAll(':scope > button')].filter(row => !row.hidden);
+      const visibleButtons = allRows.filter(row => !row.closest('[hidden]'));
+      const zoomRow = menu.querySelector('.menu-zoom-row');
+      const toolbar = document.querySelector('.toolbar');
+      const menuButton = document.querySelector('#menuButton');
+      const menuBounds = menu.getBoundingClientRect();
+      return {
+        open: !menu.hidden,
+        visibleRowIds: rows.map(row => row.id),
+        visibleButtonIds: visibleButtons.map(row => row.id),
+        hiddenExtraRows: allRows.filter(row => row.closest('[hidden]')).length,
+        rowsHaveIconsAndLabels: rows.every(row => row.querySelector('.menu-icon') && row.querySelector('.menu-label')),
+        missingIcons: rows.filter(row => !row.querySelector('.menu-icon')).map(row => row.id || row.textContent.trim()),
+        missingLabels: rows.filter(row => !row.querySelector('.menu-label')).map(row => row.id || row.textContent.trim()),
+        rowHeights: [...new Set(rows.map(row => Math.round(row.getBoundingClientRect().height)))],
+        zoomControls: [...zoomRow.querySelectorAll('button')].map(button => button.id),
+        zoomLevel: menu.querySelector('#menuZoomLevel').textContent,
+        menuTop: menuBounds.top,
+        toolbarBottom: toolbar.getBoundingClientRect().bottom,
+        menuButtonBottom: menuButton.getBoundingClientRect().bottom,
+        fitsViewport: menuBounds.bottom <= innerHeight,
+        scrollableWhenNeeded: menu.scrollHeight <= menu.clientHeight || getComputedStyle(menu).overflowY === 'auto'
+      };
+    })()`);
+    if (!menuLayout.open || menuLayout.visibleRowIds.join(',') !== 'menuBack,menuNewTab,menuGuestWindow,menuAppCenter,menuLinsoftChat,menuLinsoftOffice,menuLinsoftBrowserWebsite,menuHistory,menuBookmarks,menuDownloads,menuPrintPage,menuSavePagePdf,menuTranslatePage,menuFindPage,menuSettings' ||
+        menuLayout.visibleButtonIds.join(',') !== 'menuBack,menuNewTab,menuGuestWindow,menuAppCenter,menuLinsoftChat,menuLinsoftOffice,menuLinsoftBrowserWebsite,menuHistory,menuBookmarks,menuDownloads,menuPrintPage,menuSavePagePdf,menuTranslatePage,menuFindPage,menuZoomOut,menuZoomIn,menuFullscreen,menuPinWindow,menuSettings' ||
+        menuLayout.hiddenExtraRows === 0 || !menuLayout.rowsHaveIconsAndLabels || menuLayout.rowHeights.length !== 1 ||
+        menuLayout.zoomControls.join(',') !== 'menuZoomOut,menuZoomIn,menuFullscreen,menuPinWindow' || !/^\d+ %$/.test(menuLayout.zoomLevel) ||
+        menuLayout.menuTop < menuLayout.toolbarBottom + 7 || menuLayout.menuTop < menuLayout.menuButtonBottom + 7 ||
+        !menuLayout.fitsViewport || !menuLayout.scrollableWhenNeeded) {
+      throw new Error(`Browser menu rows are not evenly aligned: ${JSON.stringify(menuLayout)}`);
+    }
+    await evaluate(`document.querySelector('#menuButton').click()`);
 
     await evaluate(`document.querySelector('#addressInput').value = ${JSON.stringify(startUrl)}; document.querySelector('#addressForm').requestSubmit()`);
     await waitFor(() => evaluate(`document.querySelector('#tabTitle')?.textContent`), 'Smoke One');
+    const expectedFavicon = new URL('/favicon.svg', startUrl).href;
+    await waitFor(() => evaluate(`tabs.get(activeTabId)?.icon`), expectedFavicon);
+    await waitFor(() => evaluate(`document.querySelector('.managed-tab.active .tab-favicon')?.naturalWidth > 0`), true);
+    const displayedFavicon = await evaluate(`(() => {
+      const image = document.querySelector('.managed-tab.active .tab-favicon');
+      return { src: image?.src, visible: image?.hidden === false, loaded: image?.naturalWidth > 0 };
+    })()`);
+    if (displayedFavicon.src !== expectedFavicon || !displayedFavicon.visible || !displayedFavicon.loaded) {
+      const iconDebug = await evaluate(`({
+        stored: tabs.get(activeTabId)?.icon,
+        source: document.querySelector('.managed-tab.active .tab-favicon')?.getAttribute('src'),
+        hidden: document.querySelector('.managed-tab.active .tab-favicon')?.hidden
+      })`);
+      throw new Error(`Tab is not displaying the website's original favicon: ${JSON.stringify({ displayedFavicon, iconDebug })}`);
+    }
+    await waitFor(() => evaluate(`JSON.parse(localStorage.getItem('linsoft-history') || '[]').find(item => item.url === ${JSON.stringify(startUrl)})?.favicon`), expectedFavicon);
+    await evaluate(`renderAddressSuggestions('smoke one')`);
+    const historySuggestionFavicon = await evaluate(`document.querySelector('.address-suggestion-icon img')?.src`);
+    if (historySuggestionFavicon !== expectedFavicon) {
+      throw new Error(`Address suggestions did not reuse the website's original favicon: ${historySuggestionFavicon}`);
+    }
+    const noFaviconUrl = new URL('/no-favicon', startUrl).href;
+    await evaluate(`document.querySelector('#addressInput').value = ${JSON.stringify(noFaviconUrl)}; document.querySelector('#addressForm').requestSubmit()`);
+    await waitFor(() => evaluate(`document.querySelector('#tabTitle')?.textContent`), 'Smoke No Favicon');
+    const fallbackFavicon = new URL('/favicon.ico', startUrl).href;
+    await waitFor(() => evaluate(`tabs.get(activeTabId)?.icon`), fallbackFavicon);
+    await waitFor(() => evaluate(`document.querySelector('.managed-tab.active .tab-favicon')?.naturalWidth > 0`), true);
+    const displayedFallback = await evaluate(`document.querySelector('.managed-tab.active .tab-favicon')?.src`);
+    if (displayedFallback !== fallbackFavicon) throw new Error(`Default website favicon was not displayed: ${displayedFallback}`);
+    await evaluate(`document.querySelector('#addressInput').value = ${JSON.stringify(startUrl)}; document.querySelector('#addressForm').requestSubmit()`);
+    await waitFor(() => evaluate(`tabs.get(activeTabId)?.icon`), expectedFavicon);
+    await evaluate(`document.querySelector('#readerModeButton').click()`);
+    await waitFor(() => evaluate(`readerModeTabs.has(activeTabId) && document.querySelector('#readerModeButton')?.getAttribute('aria-pressed') === 'true'`), true);
+    if (!nativeTabs) {
+      const readerModePageState = await evaluate(`activeViewer().executeJavaScript('Boolean(document.body.classList.contains("linsoft-reader-active") && document.querySelector("#linsoft-reader-mode"))')`);
+      if (readerModePageState !== true) throw new Error('Reader mode did not apply its readable page styling.');
+    }
+    await evaluate(`document.querySelector('#readerModeButton').click()`);
+    await waitFor(() => evaluate(`!readerModeTabs.has(activeTabId) && document.querySelector('#readerModeButton')?.getAttribute('aria-pressed') === 'false'`), true);
+    if (!nativeTabs) {
+      const readerModeRestored = await evaluate(`activeViewer().executeJavaScript('!document.body.classList.contains("linsoft-reader-active") && !document.querySelector("#linsoft-reader-mode")')`);
+      if (readerModeRestored !== true) throw new Error('Reader mode could not restore the original page styling.');
+    }
+    const loadingNotice = await evaluate(`(() => {
+      const originalSetTimeout = window.setTimeout;
+      window.setTimeout = (callback, delay, ...args) => {
+        if (delay === 15000) { window.smokeSlowLoadCallback = () => callback(...args); return 987654321; }
+        return originalSetTimeout(callback, delay, ...args);
+      };
+      try {
+        updateTabLoading(activeTabId, true);
+        window.smokeSlowLoadCallback();
+        const notice = document.querySelector('.slow-load-notice');
+        const stopLabel = document.querySelector('#reloadButton').getAttribute('aria-label');
+        return { notice: Boolean(notice && notice.textContent.includes('načítava dlhšie')), stopLabel };
+      } finally {
+        window.setTimeout = originalSetTimeout;
+        delete window.smokeSlowLoadCallback;
+        updateTabLoading(activeTabId, false);
+      }
+    })()`);
+    if (!loadingNotice.notice || loadingNotice.stopLabel !== 'Zastaviť načítavanie') {
+      throw new Error(`Slow page load was not clearly indicated: ${JSON.stringify(loadingNotice)}`);
+    }
+    const navigationFailure = await evaluate(`(() => {
+      let retried = '';
+      showNavigationFailure(activeTabId, 'Testovacia chyba načítania', url => { retried = url; });
+      const message = document.querySelector('.navigation-error-state [role="alert"], .navigation-error-state p')?.textContent;
+      document.querySelector('.navigation-error-state button').click();
+      const result = { message, retried, removed: !document.querySelector('.navigation-error-state') };
+      return result;
+    })()`);
+    if (!navigationFailure.message?.includes('Testovacia chyba načítania') ||
+        navigationFailure.retried !== startUrl || !navigationFailure.removed) {
+      throw new Error(`Navigation error recovery UI failed: ${JSON.stringify(navigationFailure)}`);
+    }
+    await evaluate(`changePageZoom(10)`);
+    if (await evaluate(`siteZooms[new URL(${JSON.stringify(startUrl)}).origin]`) !== 110) {
+      throw new Error('Per-site zoom was not saved for the current website.');
+    }
+    await evaluate(`resetPageZoom()`);
+    await evaluate(`document.querySelector('#downloadsButton').click(); !document.querySelector('#downloadPanel').hidden`);
+    const firstPage = await connectPageDebugger(debugPort, startUrl);
+    try {
+      await firstPage.evaluate(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`);
+      await waitFor(() => evaluate(`document.querySelector('#downloadPanel').hidden && document.querySelector('#downloadsButton').getAttribute('aria-expanded') === 'false'`), true);
+    } finally {
+      firstPage.close();
+    }
     await evaluate(`savedBookmarks.push({ url: ${JSON.stringify(new URL('/two', startUrl).href)}, title: 'Počasie Bratislava' }); renderAddressSuggestions('pocasie bratislava')`);
     const suggestionUrl = await evaluate(`addressSuggestionItems[0]?.url`);
     if (suggestionUrl !== new URL('/two', startUrl).href) throw new Error('Accent-insensitive bookmark suggestion was not shown.');
     await evaluate(`addressInput.focus(); addressInput.value = 'pocasue bratislava'; addressInput.dispatchEvent(new Event('input', { bubbles: true }))`);
     await waitFor(() => evaluate(`addressSuggestionItems[0]?.typo && !addressSuggestions.hidden`), true);
+    const suggestionPresentation = await evaluate(`(() => {
+      const icon = document.querySelector('.address-suggestion-icon');
+      const image = icon?.querySelector('img');
+      const fallback = icon?.querySelector('.address-suggestion-fallback');
+      const popup = getComputedStyle(addressSuggestions);
+      const iconStyle = icon && getComputedStyle(icon);
+      const result = {
+        faviconUrl: image?.src || '',
+        iconSize: iconStyle?.width || '',
+        popupRadius: popup.borderRadius,
+        popupBelowAnchor: addressSuggestions.getBoundingClientRect().top >= document.querySelector('#addressForm').getBoundingClientRect().bottom,
+        popupInsideViewport: addressSuggestions.getBoundingClientRect().right <= window.innerWidth &&
+          addressSuggestions.getBoundingClientRect().bottom <= window.innerHeight,
+        fallbackReady: Boolean(fallback && fallback.hidden)
+      };
+      image?.dispatchEvent(new Event('error'));
+      result.fallbackAfterError = Boolean(fallback && !fallback.hidden && image.hidden);
+      return result;
+    })()`);
+    if (!suggestionPresentation.faviconUrl.includes('&sz=64') ||
+        suggestionPresentation.iconSize !== '38px' ||
+        suggestionPresentation.popupRadius !== '15px' ||
+        !suggestionPresentation.popupBelowAnchor ||
+        !suggestionPresentation.popupInsideViewport ||
+        !suggestionPresentation.fallbackReady ||
+        !suggestionPresentation.fallbackAfterError) {
+      throw new Error(`Address suggestion icons or styling are incomplete: ${JSON.stringify(suggestionPresentation)}`);
+    }
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 170, deviceScaleFactor: 1, mobile: false });
+    const constrainedSuggestionPosition = await evaluate(`(() => {
+      positionAddressSuggestions();
+      const popup = addressSuggestions.getBoundingClientRect();
+      return { top: popup.top, bottom: popup.bottom, viewportHeight: window.innerHeight };
+    })()`);
+    if (constrainedSuggestionPosition.top < 0 || constrainedSuggestionPosition.bottom > constrainedSuggestionPosition.viewportHeight) {
+      throw new Error(`Address suggestions overflow a short viewport: ${JSON.stringify(constrainedSuggestionPosition)}`);
+    }
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await evaluate('positionAddressSuggestions()');
     await evaluate(`document.querySelector('[data-address-suggestion="0"]').click()`);
     await waitFor(() => evaluate(`document.querySelector('#tabTitle')?.textContent`), 'Smoke Two');
     await evaluate(`document.querySelector('#addressInput').value = ${JSON.stringify(startUrl)}; document.querySelector('#addressForm').requestSubmit()`);
@@ -247,6 +812,25 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
     } finally {
       officePage.close();
     }
+
+    const googlePopupTestUrl = new URL('/google-popup', startUrl).href;
+    await evaluate(`openNewTab(${JSON.stringify(googlePopupTestUrl)})`);
+    await waitFor(() => evaluate(`document.querySelector('#tabTitle')?.textContent`), 'Google popup test');
+    const googlePopupTestPage = await connectPageDebugger(debugPort, googlePopupTestUrl);
+    let googlePopupTarget;
+    try {
+      await googlePopupTestPage.evaluate(`document.querySelector('#open-google-popup').click(); true`);
+      await waitFor(async () => {
+        const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
+        const targets = response.ok ? await response.json() : [];
+        googlePopupTarget = targets.find((target) => target.type === 'page' && target.url.startsWith('https://accounts.google.com/gsi/select'));
+        return Boolean(googlePopupTarget);
+      }, true);
+    } finally {
+      googlePopupTestPage.close();
+      if (googlePopupTarget) await fetch(`http://127.0.0.1:${debugPort}/json/close/${googlePopupTarget.id}`);
+    }
+    console.log(`${nativeTabs ? 'native' : 'webview'} tabs: Google OAuth popup opens in an isolated browser window`);
 
     const bareLocalUrl = startUrl.replace('http://', '');
     await evaluate(`document.querySelector('#addressInput').value = ${JSON.stringify(bareLocalUrl)}; document.querySelector('#addressForm').requestSubmit()`);
@@ -421,6 +1005,25 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
       await evaluate('suspendInactiveTabs()');
       if (await evaluate(`tabs.get(${activityId}).suspended === true`)) throw new Error('A source tab with an active download was suspended.');
       await waitFor(() => evaluate(`window.linsoftBrowser.inspectTab(liveTabTarget(${activityId})).then(result => result.reason)`), '');
+      const retryFile = path.join(profilePath, 'downloads', 'smoke-retry.bin');
+      const retryUrl = new URL('/retry-download', startUrl).href;
+      await evaluate(`(() => {
+        downloadItems.set('smoke-download-retry', {
+          id: 'smoke-download-retry',
+          fileName: 'smoke-retry.bin',
+          sourceUrl: ${JSON.stringify(retryUrl)},
+          status: 'Sťahovanie zlyhalo: test',
+          active: false,
+          percent: 0
+        });
+        renderDownloads();
+        const retryButton = document.querySelector('[data-download-id="smoke-download-retry"] .download-retry-icon');
+        if (!retryButton) throw new Error('Failed download retry icon was not rendered.');
+        retryButton.click();
+        downloadItems.delete('smoke-download-retry');
+        renderDownloads();
+      })()`);
+      await waitFor(() => fs.existsSync(retryFile) ? fs.readFileSync(retryFile, 'utf8') : '', 'Retry file');
       const downloadedFile = path.join(profilePath, 'downloads', 'smoke.exe');
       await waitFor(() => fs.existsSync(downloadedFile) ? fs.readFileSync(downloadedFile, 'utf8') : '', 'Smoke file');
       const metrics = await evaluate('measureLiveTabs()');
@@ -506,6 +1109,16 @@ async function waitFor(read, expected) {
 
 async function main() {
   const server = http.createServer((request, response) => {
+    if (request.url === '/favicon.svg') {
+      response.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+      response.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#14b8a6"/><text x="16" y="23" text-anchor="middle" font-size="22" fill="#102030">S</text></svg>');
+      return;
+    }
+    if (request.url === '/favicon.ico') {
+      response.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+      response.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="#14b8a6"/></svg>');
+      return;
+    }
     if (request.url === '/upload') {
       request.resume();
       setTimeout(() => { response.writeHead(200); response.end('Uploaded'); }, 2500);
@@ -517,12 +1130,20 @@ async function main() {
       setTimeout(() => response.end(' file'), 2500);
       return;
     }
+    if (request.url === '/retry-download') {
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="smoke-retry.bin"', 'Content-Length': '10' });
+      response.write('Retry');
+      setTimeout(() => response.end(' file'), 100);
+      return;
+    }
     const routes = {
       '/one': ['Smoke One', '<p>Smoke One</p>'],
       '/two': ['Smoke Two', '<p style="height:5000px">Smoke Two</p>'],
+      '/no-favicon': ['Smoke No Favicon', '<p>No explicit favicon</p>'],
       '/activity': ['Smoke Activity', '<p>Activity test</p>'],
       '/crash': ['Smoke Crash', '<p>Crash recovery test</p>'],
       '/draft': ['Smoke Draft', '<textarea id="draft" aria-label="Draft"></textarea>'],
+      '/google-popup': ['Google popup test', "<button id=\"open-google-popup\" onclick=\"window.open('https://accounts.google.com/gsi/select', 'google_signin', 'popup,width=500,height=650')\">Open Google popup</button>"],
       '/office': ['Linsoft Office', '<button id="open-word" onclick="window.open(\'/office/word\', \'_blank\')">Word</button><button id="open-excel" onclick="window.open(\'/office/excel\', \'_blank\')">Excel</button><button id="open-presentation" onclick="window.open(\'/office/presentation\', \'_blank\')">Prezentácia</button>'],
       '/office/word': ['Linsoft Word', '<p>Word editor</p>'],
       '/office/excel': ['Linsoft Excel', '<p>Excel editor</p>'],
@@ -530,7 +1151,7 @@ async function main() {
     };
     const [title, content] = routes[request.url] || ['Not Found', '<p>Not Found</p>'];
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    response.end(`<!doctype html><title>${title}</title>${content}`);
+    response.end(`<!doctype html>${request.url === '/no-favicon' ? '' : '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'}<title>${title}</title>${content}`);
   });
   const port = await listen(server);
   const startUrl = `http://127.0.0.1:${port}/one`;

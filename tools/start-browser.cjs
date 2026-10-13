@@ -11,8 +11,16 @@ async function prepareWindowsExecutable() {
   const outputDirectory = path.dirname(electronPath);
   const outputPath = path.join(outputDirectory, 'Linsoft Browser.exe');
   const markerPath = path.join(outputDirectory, 'build-info.json');
+  const iconPath = path.resolve(__dirname, '..', 'assets', 'linsoft-icon.ico');
   const sourceStats = fs.statSync(electronPath);
-  const buildInfo = { version: packageInfo.version, size: sourceStats.size, modifiedAt: sourceStats.mtimeMs };
+  const iconStats = fs.statSync(iconPath);
+  const buildInfo = {
+    version: packageInfo.version,
+    size: sourceStats.size,
+    modifiedAt: sourceStats.mtimeMs,
+    iconSize: iconStats.size,
+    iconModifiedAt: iconStats.mtimeMs
+  };
   let previousBuildInfo = null;
   try { previousBuildInfo = JSON.parse(fs.readFileSync(markerPath, 'utf8')); } catch {}
 
@@ -21,6 +29,7 @@ async function prepareWindowsExecutable() {
     fs.copyFileSync(electronPath, outputPath);
     const { rcedit } = require('rcedit');
     await rcedit(outputPath, {
+      icon: iconPath,
       'version-string': {
         CompanyName: 'Linsoft',
         FileDescription: 'Linsoft Browser',

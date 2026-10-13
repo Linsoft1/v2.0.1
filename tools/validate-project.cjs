@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '..');
 const files = ['app.js', 'main.cjs', 'preload.cjs', path.join('lib', 'browser-policies.cjs'), path.join('lib', 'google-signin.cjs'), path.join('lib', 'native-tab-manager.cjs'), path.join('lib', 'permission-handlers.cjs'), path.join('lib', 'tab-state.js'), path.join('tools', 'smoke-electron.cjs'), path.join('Linsoft centrum app', 'app.js')];
 files.push(path.join('lib', 'search-page-preload.cjs'));
 files.push(path.join('lib', 'page-activity-preload.cjs'));
+files.push(path.join('lib', 'overlay-dismiss-preload.cjs'));
 files.push(path.join('lib', 'browser-algorithms.js'));
 files.push(path.join('lib', 'debian-updates.cjs'));
 for (const file of files) {
@@ -33,6 +34,19 @@ const preloadSource = fs.readFileSync(path.join(root, 'preload.cjs'), 'utf8');
 if (!preloadSource.includes(`appName: '${browserName}'`)) throw new Error('Preload application name is not Linsoft Browser');
 const desktopEntry = fs.readFileSync(path.join(root, 'packaging', 'linsoft-browser.desktop'), 'utf8');
 if (!desktopEntry.includes(`Name=${browserName}`)) throw new Error('Linux desktop application name is not Linsoft Browser');
+const mimeTypeLine = desktopEntry.match(/^MimeType=(.+)$/m)?.[1] || '';
+if (!mimeTypeLine.split(';').includes('application/pdf')) throw new Error('Linux desktop application is not associated with PDF documents');
+const iconPath = path.join(root, 'assets', 'linsoft-icon.ico');
+const icon = fs.readFileSync(iconPath);
+if (icon.readUInt16LE(0) !== 0 || icon.readUInt16LE(2) !== 1) throw new Error('Windows application icon is not a valid ICO file');
+const iconCount = icon.readUInt16LE(4);
+const iconSizes = Array.from({ length: iconCount }, (_, index) => {
+  const offset = 6 + index * 16;
+  return `${icon[offset] || 256}x${icon[offset + 1] || 256}`;
+});
+for (const size of ['16x16', '24x24', '32x32', '48x48', '64x64', '128x128', '256x256']) {
+  if (!iconSizes.includes(size)) throw new Error(`Windows application icon is missing the ${size} resolution`);
+}
 if (packageJson.license !== 'MIT') throw new Error('Linsoft source code must declare its MIT license');
 if (!fs.existsSync(path.join(root, 'LICENSE')) || !packageJson.build.files.includes('LICENSE')) {
   throw new Error('MIT license file is missing from the repository or packaged application');

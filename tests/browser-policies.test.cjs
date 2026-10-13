@@ -340,17 +340,48 @@ test('search preload hides the home view before rendering and restores it when r
 
 test('search initialization waits for scripts, avoids duplicate native searches and reports failure', async () => {
   const url = 'https://linsoft.ddns.net/linsoft-search/?q=hello';
-  for (const mode of ['delayed', 'native', 'form', 'missing', 'rejected', 'navigated']) {
+  for (const mode of ['delayed', 'native', 'form', 'missing', 'rejected', 'empty-results', 'search-error', 'url-updated', 'navigated']) {
     let time = 0;
     let submissions = 0;
     let hidden = mode === 'native';
+    let errorVisible = false;
     const input = { value: '' };
     const results = { value: hidden ? 'hello' : '' };
-    const complete = () => { submissions += 1; hidden = true; results.value = input.value; };
+    const resultRoot = {
+      children: [{}], textContent: 'Search result',
+      getAttribute: name => name === 'aria-busy' ? 'false' : null
+    };
+    const errorNode = {
+      hidden: true,
+      classList: { contains: () => !errorVisible },
+      getAttribute: () => null,
+      querySelector: () => ({ textContent: 'Provider unavailable' })
+    };
+    const complete = () => {
+      submissions += 1;
+      hidden = true;
+      results.value = input.value;
+      if (mode === 'url-updated') context.location.href = `${url}&tab=all&page=1`;
+      if (mode === 'empty-results') { resultRoot.children = []; resultRoot.textContent = ''; }
+      if (mode === 'search-error') { errorVisible = true; errorNode.hidden = false; }
+    };
     const context = {
+      URL,
       location: { href: mode === 'navigated' ? 'https://example.com/' : url },
       Date: { now: () => time },
-      document: { getElementById: id => id === 'home-view' ? { classList: { contains: () => hidden } } : id === 'results-input' ? results : input },
+      document: {
+        getElementById: id => ({
+          'home-view': { classList: { contains: () => hidden } },
+          'results-input': results,
+          'results-search-input': results,
+          'search-input': input,
+          'results-container': resultRoot,
+          'results-content': null,
+          loading: { hidden: true, classList: { contains: () => true }, getAttribute: () => null },
+          'search-error': errorNode,
+          'no-results': { hidden: true, classList: { contains: () => true }, getAttribute: () => null }
+        })[id] || null
+      },
       setTimeout: callback => {
         time += 100;
         if (mode === 'delayed' && time === 300) context.doSearch = complete;
@@ -358,11 +389,15 @@ test('search initialization waits for scripts, avoids duplicate native searches 
       }
     };
     if (mode === 'form') input.form = { requestSubmit: complete };
+    if (['empty-results', 'search-error', 'url-updated'].includes(mode)) context.doSearch = complete;
     if (mode === 'rejected') context.doSearch = () => { submissions += 1; return Promise.reject(new Error('Search offline')); };
     const script = linsoftSearchInitializationScript(url);
-    if (['missing', 'rejected'].includes(mode)) await assert.rejects(vm.runInNewContext(script, context), mode === 'rejected' ? /Search offline/ : /10 seconds/);
+    if (['missing', 'rejected', 'empty-results', 'search-error'].includes(mode)) {
+      const expected = mode === 'rejected' ? /Search offline/ : mode === 'missing' ? /10 seconds/ : mode === 'empty-results' ? /žiadne výsledky/ : /Provider unavailable/;
+      await assert.rejects(vm.runInNewContext(script, context), expected);
+    }
     else assert.equal(await vm.runInNewContext(script, context), mode !== 'navigated');
-    assert.equal(submissions, ['delayed', 'form', 'rejected'].includes(mode) ? 1 : 0);
+    assert.equal(submissions, ['delayed', 'form', 'rejected', 'empty-results', 'search-error', 'url-updated'].includes(mode) ? 1 : 0);
   }
   assert.throws(() => linsoftSearchInitializationScript('https://example.com/?q=x'));
   assert.equal(linsoftSearchQueryFromUrl('https://linsoft.ddns.net:444/linsoft-search/?q=x'), '');
@@ -370,8 +405,17 @@ test('search initialization waits for scripts, avoids duplicate native searches 
   const hostileUrl = `https://linsoft.ddns.net/linsoft-search/?q=${encodeURIComponent(hostileQuery)}`;
   let received;
   await vm.runInNewContext(linsoftSearchInitializationScript(hostileUrl), {
+    URL,
     location: { href: hostileUrl }, Date: { now: () => 0 },
-    document: { getElementById: id => id === 'search-input' ? { value: '' } : id === 'results-input' ? { value: received } : { classList: { contains: () => Boolean(received) } } },
+    document: {
+      getElementById: id => ({
+        'search-input': { value: '' },
+        'results-input': { value: received },
+        'home-view': { classList: { contains: () => Boolean(received) } },
+        'results-container': { children: [{}], textContent: 'Search result', getAttribute: () => 'false' },
+        loading: { hidden: true, classList: { contains: () => true }, getAttribute: () => null }
+      })[id] || null
+    },
     doSearch: query => { received = query; }, setTimeout: callback => callback()
   });
   assert.equal(received, hostileQuery);

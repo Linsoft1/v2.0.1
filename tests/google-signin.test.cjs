@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { createGoogleSignInRecovery, findSignInBrowser, isBlockedGoogleSignIn, openSignInWebsite } = require('../lib/google-signin.cjs');
+const { createGoogleSignInRecovery, findSignInBrowser, isBlockedGoogleSignIn, isGoogleSignInPopup, openSignInWebsite } = require('../lib/google-signin.cjs');
 
 class FakeContents extends EventEmitter {
   constructor(url = '') { super(); this.url = url; this.destroyed = false; }
@@ -29,6 +29,21 @@ test('Google rejection detection requires the exact secure account origin', () =
     'https://accounts.google.com:8443/v3/signin/deniedsigninrejected',
     'javascript:alert(1)'
   ]) assert.equal(isBlockedGoogleSignIn(url), false, url);
+});
+
+test('only Google Identity Services and OAuth account popups are allowed as windows', () => {
+  for (const url of [
+    'https://accounts.google.com/gsi/select?client_id=example',
+    'https://accounts.google.com/o/oauth2/v2/auth?client_id=example'
+  ]) assert.equal(isGoogleSignInPopup(url), true, url);
+  for (const url of [
+    'https://accounts.google.com/signin/identifier',
+    'https://accounts.google.com.evil.example/gsi/select',
+    'http://accounts.google.com/gsi/select',
+    'https://accounts.google.com:8443/o/oauth2/auth',
+    'https://example.com/gsi/select',
+    'javascript:alert(1)'
+  ]) assert.equal(isGoogleSignInPopup(url), false, url);
 });
 
 test('website registration rejection offers its original origin once without secrets', async () => {

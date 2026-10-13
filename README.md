@@ -5,6 +5,9 @@ Linsoft Browser is a desktop browser for Windows and Linux Debian, focused on a 
 ## Features
 
 - Browser tabs and navigation
+- Per-site zoom, reader mode, clear slow-load feedback and navigation recovery
+- Search open tabs with `Ctrl+Shift+A`; use the arrow keys and Enter to switch
+- Settings backup and restore for preferences, bookmarks, favorites, installed web apps, and per-site zoom. Backups intentionally exclude history, passwords, cookies, website data, and local folder paths.
 - Bookmarks and history
 - Home/start page
 - Web app installation support
@@ -55,10 +58,10 @@ files are validated before opening). `npm test` covers these shared policies
 and lifecycle rules. Run `npm run test:electron-smoke` for an isolated,
 headless Electron check of startup, local navigation, back/forward, bookmark
 suggestions, popup tabs, suspension/restoration and draft preservation in both
-tab engines. This smoke test does not cover downloads,
-PDF rendering, session restoration, crash recovery, or real websites. Keep the
-native engine opt-in until those workflows are manually checked on Windows and
-Linux.
+tab engines, including keyboard tab search, backup export/import, and explicit
+renderer crash recovery. It does not cover downloads, PDF rendering, full
+session restoration, or real websites. Keep the native engine opt-in until
+those workflows are manually checked on Windows and Linux.
 
 To also verify two consecutive address-bar searches against the live Linsoft
 Search website, run:
@@ -259,6 +262,10 @@ npm run test:tor
 Google can reject sign-in with "This browser or app may not be secure". Linsoft
 Browser detects Google's `deniedsigninrejected`, `disallowed_useragent`, and
 `restricted_useragent` error URLs in regular and native tabs, including popups.
+Google Identity Services and OAuth popup URLs from the exact HTTPS
+`accounts.google.com` origin open in a separate sandboxed window using the
+originating tab's browser session; other site popups continue to open as tabs.
+This preserves the popup flow without bypassing Google's user-agent restrictions.
 It offers to restart at the originating website's home address in an installed
 Microsoft Edge or Google Chrome on Windows, or Google Chrome, Firefox, or
 Microsoft Edge on Linux. If none is found, the address can be copied manually.
@@ -273,8 +280,10 @@ when the originating Linsoft Browser window is a guest window; a confirmation
 is required before launching it. This does not sign the user into the original
 Linsoft Browser tab or add USB/passkey device support.
 
-`npm test` includes offline tests for rejected sign-in detection, popup origin
-tracking, subframe isolation, safe launch arguments, and launch failures.
+`npm test` includes offline tests for rejected sign-in detection, the allowed
+Google popup origins, popup origin tracking, subframe isolation, safe launch
+arguments, and launch failures. `npm run test:electron-smoke` verifies the
+Google popup window in both tab engines.
 Actual Google sign-in and device registration still require a manual test on
 the affected website with the user's device and account.
 
@@ -298,8 +307,9 @@ node tools/verify-deb.cjs
 
 ## Release state
 
-The current project state is validated and ready for release based on successful project validation and Debian package verification.
+Release build and package validation results are recorded in
+[RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md).
 
 ## Notes
 
-The shell environment used during verification did not have `npm` on PATH in one session, but the project itself passed validation when run with the explicit npm path. The core app and packaging flow are therefore considered valid.
+Use `npm.cmd` from PowerShell on Windows when the `npm` command is not available.

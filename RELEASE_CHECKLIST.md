@@ -1,25 +1,24 @@
 # Linsoft Browser Release Checklist
 
-## Current Release: 2.0.28
+## Current Release: 2.0.29
 
-- Adds microphone/device level testing, local camera preview, immediate media permission settings, Debian update notifications and repeated update reminders.
-- Removes the extension-based download warning without automatically executing downloads.
-- Includes opt-in signed APT repository preparation; APT publication and system installation remain disabled until separately configured.
-- `npm test` passes locally (85 tests).
-- `npm run test:electron-smoke` passes for both webview and native tab engines.
-- The Windows installer is intentionally unsigned, as approved for this release.
-- Tag `v2.0.28` triggers the GitHub Actions release workflow. Linux CI stages and verifies the Debian package; build jobs use `--publish never`, and the release job uploads assets using `GITHUB_TOKEN`.
-- Release workflow `38101161320` succeeded: tests, Windows installer, verified Debian package and stable release upload.
+- Improves page presentation with reader mode, per-site zoom, slow-load feedback and navigation recovery.
+- Adds browser settings backup/restore and keyboard tab search.
+- Improves Google OAuth popup handling and expands browser smoke coverage for both tab engines.
+- Includes the accumulated browser, privacy, tab lifecycle and Debian packaging changes since 2.0.28.
+- `npm test` and `npm run test:electron-smoke` pass locally before release.
+- The Windows installer is unsigned; the release workflow disables automatic code-signing discovery.
+- Tag `v2.0.29` triggers the GitHub Actions release workflow. CI builds Windows and Debian artifacts and publishes them to the GitHub Release.
 
 ## Release Gate
 
-- [x] `npm ci` succeeds on both Windows and Linux runners.
-- [x] `npm test` passes locally (85 tests).
-- [x] `npm run test:electron-smoke` passes for webview and native tab engines.
-- [x] Windows installer builds and uploads.
+- [ ] `npm ci` succeeds on both Windows and Linux runners.
+- [ ] `npm test` passes.
+- [ ] `npm run test:electron-smoke` passes for webview and native tab engines.
+- [ ] Windows installer builds and uploads.
 - [ ] Windows installer is signed with the release code-signing certificate (not included in this release, by approval).
-- [x] Debian package builds and passes `node tools/verify-deb.cjs`.
-- [x] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
+- [ ] Debian package builds and passes `node tools/verify-deb.cjs`.
+- [ ] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
 - [ ] Install the release packages and verify the app starts.
 
 ## Local Commands

@@ -13,7 +13,7 @@ const { clearTorChatFileTransfer, createTorChatRoom, createTorChatServer, enqueu
 const { createPermissionCheckHandler, createPermissionRequestHandler, mediaTypesFromDetails } = require('./lib/permission-handlers.cjs');
 const { NativeTabManager } = require('./lib/native-tab-manager.cjs');
 const { tabInspectionScript, scrollRestorationScript } = require('./lib/browser-algorithms.js');
-const { createGoogleSignInRecovery, findSignInBrowser, openSignInWebsite } = require('./lib/google-signin.cjs');
+const { createGoogleSignInRecovery, findSignInBrowser, isGoogleSignInPopup, openSignInWebsite } = require('./lib/google-signin.cjs');
 const { checkDebianUpdate } = require('./lib/debian-updates.cjs');
 const browserName = 'Linsoft Browser';
 app.setName(browserName);
@@ -74,6 +74,40 @@ function googleSignInRecoveryFor(window) {
     }));
   }
   return googleSignInRecoveries.get(window);
+}
+
+function configureWebsiteWindowOpenHandler(window, contents, signInRecovery) {
+  contents.setWindowOpenHandler(({ url }) => {
+    if (!supportedWebUrl(url)) return { action: 'deny' };
+    if (isGoogleSignInPopup(url)) {
+      signInRecovery.rememberPopup(url, contents.getURL());
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          parent: window,
+          width: 500,
+          height: 650,
+          autoHideMenuBar: true,
+          webPreferences: {
+            session: contents.session,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            webviewTag: false
+          }
+        }
+      };
+    }
+    signInRecovery.rememberPopup(url, contents.getURL());
+    window.webContents.send('open-link-in-tab', url);
+    return { action: 'deny' };
+  });
+  contents.on('did-create-window', (popup, { url }) => {
+    signInRecovery.rememberPopup(url, contents.getURL());
+    signInRecovery.watch(popup.webContents);
+    popup.webContents.setUserAgent(browserUserAgent);
+    configureWebsiteWindowOpenHandler(window, popup.webContents, signInRecovery);
+  });
 }
 
 function publishUpdateState(state) {
@@ -762,6 +796,7 @@ function configureGuestSession(guestSession) {
   guestSession.on('will-download', (_event, item, contents) => { protectBrowserDownload(contents, item); });
   guestSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'search-page-preload.cjs') });
   guestSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'page-activity-preload.cjs') });
+  guestSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'overlay-dismiss-preload.cjs') });
   configureCertificateErrorHandling(guestSession);
   guestSession.setPermissionRequestHandler(createPermissionRequestHandler(requestSitePermission));
   guestSession.setPermissionCheckHandler(createPermissionCheckHandler(({ permission, requestingUrl, mediaTypes }) => {
@@ -853,12 +888,7 @@ function configureNativeTabContents(window, tabId, contents) {
       if (contents.__torNavigationPending === url) contents.__torNavigationPending = '';
     });
   });
-  contents.setWindowOpenHandler(({ url }) => {
-    if (!supportedWebUrl(url)) return { action: 'deny' };
-    signInRecovery.rememberPopup(url, contents.getURL());
-    window.webContents.send('open-link-in-tab', url);
-    return { action: 'deny' };
-  });
+  configureWebsiteWindowOpenHandler(window, contents, signInRecovery);
 }
 
 function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
@@ -877,8 +907,9 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
     minWidth: 960,
     minHeight: 640,
     title: guest ? `${browserName} - hosť` : browserName,
-    backgroundColor: '#0b1118',
+    backgroundColor: '#00000000',
     frame: false,
+    transparent: true,
     titleBarStyle: 'hidden',
     roundedCorners: true,
     resizable: true,
@@ -935,8 +966,14 @@ function createWindow(initialUrl = 'linsoft://start', { guest = false } = {}) {
   if (!guest) {
     window.on('resize', () => saveWindowState(window));
     window.on('move', () => saveWindowState(window));
-    window.on('maximize', () => saveWindowState(window));
-    window.on('unmaximize', () => saveWindowState(window));
+    window.on('maximize', () => {
+      saveWindowState(window);
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('window-state', { maximized: true });
+    });
+    window.on('unmaximize', () => {
+      saveWindowState(window);
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('window-state', { maximized: false });
+    });
     window.on('close', () => saveWindowState(window));
   }
   window.on('close', (event) => {
@@ -995,6 +1032,33 @@ ipcMain.on('window-control', (event, action) => {
   if (action === 'fullscreen') window.setFullScreen(!window.isFullScreen());
   if (action === 'toggle-always-on-top') window.setAlwaysOnTop(!window.isAlwaysOnTop());
   if (action === 'close') window.close();
+});
+ipcMain.handle('window-state', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) return { maximized: false };
+  return { maximized: window.isMaximized() };
+});
+ipcMain.on('window-drag', (event, data) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed() || !data || !['start', 'move', 'end'].includes(data.phase)) return;
+  if (data.phase === 'end') {
+    delete window.__manualWindowDrag;
+    return;
+  }
+  if (!Number.isFinite(data.screenX) || !Number.isFinite(data.screenY) ||
+      Math.abs(data.screenX) > 100000 || Math.abs(data.screenY) > 100000) return;
+  if (data.phase === 'start') {
+    delete window.__manualWindowDrag;
+    if (window.isMaximized() || window.isFullScreen() || window.isMinimized()) return;
+    const bounds = window.getBounds();
+    window.__manualWindowDrag = { pointerX: data.screenX, pointerY: data.screenY, windowX: bounds.x, windowY: bounds.y };
+    return;
+  }
+  const drag = window.__manualWindowDrag;
+  if (!drag || window.isMaximized() || window.isFullScreen() || window.isMinimized()) return;
+  const x = drag.windowX + Math.round(data.screenX - drag.pointerX);
+  const y = drag.windowY + Math.round(data.screenY - drag.pointerY);
+  if (Math.abs(x) <= 100000 && Math.abs(y) <= 100000) window.setPosition(x, y);
 });
 ipcMain.on('confirm-window-close', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
@@ -2284,6 +2348,19 @@ function nativeTabsForEvent(event) {
   const window = BrowserWindow.fromWebContents(event.sender);
   return window?.__nativeTabsEnabled ? window.__nativeTabs : null;
 }
+ipcMain.on('browser-page-pointerdown', ({ sender }) => {
+  const guestHost = sender.hostWebContents;
+  if (guestHost && !guestHost.isDestroyed()) {
+    guestHost.send('dismiss-webview-overlay');
+    return;
+  }
+  for (const window of BrowserWindow.getAllWindows()) {
+    const nativeTabs = window.__nativeTabs;
+    if (!nativeTabs || ![...nativeTabs.views.values()].some((view) => view.webContents === sender)) continue;
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('dismiss-webview-overlay');
+    return;
+  }
+});
 ipcMain.handle('native-tabs-enabled', (event) => BrowserWindow.fromWebContents(event.sender)?.__nativeTabsEnabled === true);
 ipcMain.handle('browser-memory', (event) => {
   if (!BrowserWindow.fromWebContents(event.sender)) throw new Error('Memory measurement is only available to browser windows.');
@@ -2368,8 +2445,34 @@ ipcMain.handle('native-tab-command', async (event, { tabId, command, value, from
   if (!view) return { ok: false };
   const contents = view.webContents;
   if (command === 'reload') contents.reload();
+  else if (command === 'stop' && contents.isLoading()) contents.stop();
+  else if (command === 'reader-mode' && typeof value === 'boolean') {
+    const css = 'body.linsoft-reader-active { background:#f7f3ea !important; color:#252525 !important; font-family: Georgia, "Times New Roman", serif !important; } body.linsoft-reader-active main, body.linsoft-reader-active article, body.linsoft-reader-active [role="main"] { width:min(760px,calc(100% - 40px)) !important; max-width:760px !important; margin:32px auto !important; font-size:18px !important; line-height:1.8 !important; } body.linsoft-reader-active p, body.linsoft-reader-active li { font-size:1em !important; line-height:1.8 !important; } body.linsoft-reader-active nav, body.linsoft-reader-active header, body.linsoft-reader-active aside, body.linsoft-reader-active footer, body.linsoft-reader-active [role="banner"], body.linsoft-reader-active [role="navigation"], body.linsoft-reader-active [role="complementary"], body.linsoft-reader-active .ad, body.linsoft-reader-active .ads, body.linsoft-reader-active .advert, body.linsoft-reader-active [class*="advert" i], body.linsoft-reader-active [id*="advert" i] { display:none !important; } body.linsoft-reader-active img, body.linsoft-reader-active video { max-width:100% !important; height:auto !important; }';
+    await contents.executeJavaScript(`(() => {
+      let style = document.getElementById('linsoft-reader-mode');
+      if (${value}) {
+        if (!style) {
+          style = document.createElement('style');
+          style.id = 'linsoft-reader-mode';
+          style.textContent = ${JSON.stringify(css)};
+          (document.head || document.documentElement).appendChild(style);
+        }
+        document.body?.classList.add('linsoft-reader-active');
+      } else {
+        style?.remove();
+        document.body?.classList.remove('linsoft-reader-active');
+      }
+      return true;
+    })()`);
+  }
   else if (command === 'back' && contents.canGoBack()) contents.goBack();
   else if (command === 'forward' && contents.canGoForward()) contents.goForward();
+  else if (command === 'download-url') {
+    let downloadUrl;
+    try { downloadUrl = new URL(value); } catch { return { ok: false, message: 'Neplatná webová adresa.' }; }
+    if (!['http:', 'https:'].includes(downloadUrl.protocol)) return { ok: false, message: 'Neplatná webová adresa.' };
+    contents.downloadURL(downloadUrl.href);
+  }
   else if (command === 'zoom' && Number.isFinite(value)) contents.setZoomFactor(value);
   else if (command === 'mute' && typeof value === 'boolean') contents.setAudioMuted(value);
   else if (command === 'paste' && fromContextMenu) {
@@ -2482,6 +2585,7 @@ ipcMain.on('openvpn-disconnect', () => { if (openVpnProcess) { openVpnProcess.ki
 app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'search-page-preload.cjs') });
   session.defaultSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'page-activity-preload.cjs') });
+  session.defaultSession.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, 'lib', 'overlay-dismiss-preload.cjs') });
   if (process.platform === 'win32' || process.platform === 'linux') app.setAsDefaultProtocolClient('linsoft');
   app.commandLine.appendSwitch('enable-features', 'ParallelDownloading');
   app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -2532,7 +2636,7 @@ app.whenReady().then(() => {
         if (contents.isDestroyed() || contents.getURL() !== url) return;
         const owner = contents.hostWebContents || BrowserWindow.fromWebContents(contents)?.webContents ||
           BrowserWindow.getAllWindows().find(window => [...(window.__nativeTabs?.views.values() || [])].some(view => view.webContents === contents))?.webContents;
-        if (owner && !owner.isDestroyed()) owner.send('search-error', 'Linsoft Search sa nepodarilo spustiť. Skús vyhľadávanie znova alebo zvoľ iný vyhľadávač.');
+        if (owner && !owner.isDestroyed()) owner.send('search-error', 'Linsoft Search nenačítal výsledky alebo nenašiel žiadne. Skús iný výraz alebo vyhľadávanie zopakuj.');
       });
     });
     if (contents.getType() !== 'webview') return;
@@ -2588,13 +2692,9 @@ app.whenReady().then(() => {
         if (!contents.isDestroyed()) void contents.loadURL(url).catch((error) => contents.hostWebContents?.send('tor-navigation-error', `Onion stránku sa nepodarilo načítať: ${error.message}`));
       }).catch((error) => contents.hostWebContents?.send('tor-navigation-error', `Tor proxy sa nepodarilo spustiť: ${error.message}`));
     });
-    contents.setWindowOpenHandler(({ url }) => {
-      if (!supportedWebUrl(url)) return { action: 'deny' };
-      const owner = BrowserWindow.fromWebContents(contents.hostWebContents);
-      if (owner) googleSignInRecoveryFor(owner).rememberPopup(url, contents.getURL());
-      contents.hostWebContents?.send('open-link-in-tab', url);
-      return { action: 'deny' };
-    });
+    const owner = BrowserWindow.fromWebContents(contents.hostWebContents);
+    if (owner) configureWebsiteWindowOpenHandler(owner, contents, googleSignInRecoveryFor(owner));
+    else contents.setWindowOpenHandler(() => ({ action: 'deny' }));
   });
   session.defaultSession.on('will-download', async (event, item, webContents) => {
     const releaseProtection = protectBrowserDownload(webContents, item);
