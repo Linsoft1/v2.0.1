@@ -1,5 +1,7 @@
 # Linsoft Browser
 
+![Linsoft Browser logo](assets/linsoft-icon.svg)
+
 Linsoft Browser is a desktop browser for Windows and Linux Debian, focused on a clean interface, quick web access, bookmarks, app installs, and basic privacy controls.
 
 ## Features

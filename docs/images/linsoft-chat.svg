@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="background" x1="20" y1="12" x2="236" y2="244" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#329bff"/><stop offset=".5" stop-color="#3567ed"/><stop offset="1" stop-color="#6539c9"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="150" y1="160" x2="220" y2="214" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#66f0db"/><stop offset="1" stop-color="#2ac3db"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="62" fill="url(#background)"/>
+  <path d="M68 58h100c18 0 32 14 32 32v48c0 18-14 32-32 32h-51l-34 27v-27H68c-18 0-32-14-32-32V90c0-18 14-32 32-32Z" fill="#fff"/>
+  <path d="M88 87v51h51" fill="none" stroke="#3567ed" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="160" cy="109" r="9" fill="#3567ed"/>
+  <path d="M175 165h25c12 0 22 10 22 22v7c0 12-10 22-22 22h-7l-17 14v-14h-1c-12 0-22-10-22-22v-7c0-12 10-22 22-22Z" fill="url(#accent)"/>
+  <circle cx="175" cy="191" r="4" fill="#17459c"/>
+  <circle cx="188" cy="191" r="4" fill="#17459c"/>
+  <circle cx="201" cy="191" r="4" fill="#17459c"/>
+</svg>

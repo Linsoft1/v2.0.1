@@ -17,6 +17,7 @@ try {
 } catch { apps = []; }
 const faviconCache = new Map();
 const catalog = [
+  ['Linsoft Chat', 'https://linsoft.ddns.net/linsoft-chat/', 'social'], ['Linsoft Office', 'https://linsoft.ddns.net/linsoft-offiece/', 'work'],
   ['Google', 'https://www.google.com', 'work'], ['Gmail', 'https://mail.google.com', 'work'], ['Google Drive', 'https://drive.google.com', 'work'], ['Google Calendar', 'https://calendar.google.com', 'work'],
   ['Microsoft 365', 'https://www.office.com', 'work'], ['Outlook', 'https://outlook.live.com', 'work'], ['GitHub', 'https://github.com', 'work'], ['Slack', 'https://app.slack.com', 'social'],
   ['Discord', 'https://discord.com/app', 'social'], ['Zoom', 'https://app.zoom.us', 'social'], ['Notion', 'https://www.notion.so', 'work'], ['Trello', 'https://trello.com', 'work'],

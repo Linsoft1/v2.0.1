@@ -18,18 +18,49 @@ const ipcHandlers = [...mainSource.matchAll(/\bipcMain\.handle\(\s*['"]([^'"]+)[
 const duplicateIpcHandlers = [...new Set(ipcHandlers.filter((channel, index) => ipcHandlers.indexOf(channel) !== index))];
 if (duplicateIpcHandlers.length) throw new Error(`Duplicate IPC handlers in main.cjs: ${duplicateIpcHandlers.join(', ')}`);
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const packageLock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
 const browserName = 'Linsoft Browser';
+if (packageLock.version !== packageJson.version || packageLock.packages?.['']?.version !== packageJson.version) {
+  throw new Error('package.json and package-lock.json versions do not match');
+}
 if (packageJson.productName !== browserName || packageJson.build.productName !== browserName) {
   throw new Error('Linsoft Browser product names are inconsistent in package.json');
+}
+if (packageJson.build.appId !== 'sk.linsoft.browser' || packageJson.homepage !== 'https://github.com/Linsoft1/v2.0.1') {
+  throw new Error('Linsoft Browser package identity or project homepage is inconsistent');
 }
 if (!mainSource.includes(`const browserName = '${browserName}';`) || !mainSource.includes('app.setName(browserName)')) {
   throw new Error('Electron core application name is not Linsoft Browser');
 }
+if (!mainSource.includes(`app.setAppUserModelId('${packageJson.build.appId}')`)) {
+  throw new Error('Windows application identity is not aligned with the package appId');
+}
 const browserPage = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 if (!browserPage.includes(`<title>${browserName}</title>`)) throw new Error('Browser window title is not Linsoft Browser');
+if (!browserPage.includes('assets/linsoft-icon.svg')) throw new Error('Browser window is missing the Linsoft Browser favicon');
 if (!browserPage.includes(`App Centrum · ${browserName}`)) throw new Error('Integrated App Center is missing the Linsoft Browser identity');
 const appCenterPage = fs.readFileSync(path.join(root, 'Linsoft centrum app', 'index.html'), 'utf8');
 if (!appCenterPage.includes(`<title>${browserName} – App Centrum</title>`)) throw new Error('Standalone App Center title is not branded as Linsoft Browser');
+if (!appCenterPage.includes('../assets/linsoft-icon.svg')) throw new Error('Standalone App Center is missing the Linsoft Browser logo');
+const appCenterSource = fs.readFileSync(path.join(root, 'Linsoft centrum app', 'app.js'), 'utf8');
+for (const serviceUrl of ['https://linsoft.ddns.net/linsoft-chat/', 'https://linsoft.ddns.net/linsoft-offiece/']) {
+  if (!appCenterSource.includes(serviceUrl)) throw new Error(`App Center is missing a Linsoft service: ${serviceUrl}`);
+}
+const websitePage = fs.readFileSync(path.join(root, 'docs', 'index.html'), 'utf8');
+if (!websitePage.includes(`<title>${browserName} ${packageJson.version}`) || !websitePage.includes(`v${packageJson.version} •`)) {
+  throw new Error('Linsoft Browser website version does not match package.json');
+}
+if (!websitePage.includes('images/linsoft-icon.svg') || !fs.existsSync(path.join(root, 'docs', 'images', 'linsoft-icon.svg'))) {
+  throw new Error('Linsoft Browser website is missing its logo or favicon');
+}
+if (!websitePage.includes('id="sluzby"') || !websitePage.includes('https://linsoft.ddns.net/linsoft-chat/') || !websitePage.includes('https://linsoft.ddns.net/linsoft-offiece/')) {
+  throw new Error('Linsoft website is missing the Linsoft Chat and Linsoft Office services');
+}
+for (const serviceLogo of ['linsoft-chat.svg', 'linsoft-office.svg']) {
+  if (!websitePage.includes(`images/${serviceLogo}`) || !fs.existsSync(path.join(root, 'docs', 'images', serviceLogo))) {
+    throw new Error(`Linsoft website is missing a service logo: ${serviceLogo}`);
+  }
+}
 const preloadSource = fs.readFileSync(path.join(root, 'preload.cjs'), 'utf8');
 if (!preloadSource.includes(`appName: '${browserName}'`)) throw new Error('Preload application name is not Linsoft Browser');
 const desktopEntry = fs.readFileSync(path.join(root, 'packaging', 'linsoft-browser.desktop'), 'utf8');
@@ -46,6 +77,9 @@ const iconSizes = Array.from({ length: iconCount }, (_, index) => {
 });
 for (const size of ['16x16', '24x24', '32x32', '48x48', '64x64', '128x128', '256x256']) {
   if (!iconSizes.includes(size)) throw new Error(`Windows application icon is missing the ${size} resolution`);
+}
+for (const asset of ['assets/linsoft-icon.svg', packageJson.build.win.icon, packageJson.build.linux.icon]) {
+  if (!fs.existsSync(path.join(root, asset))) throw new Error(`Missing branded application icon: ${asset}`);
 }
 if (packageJson.license !== 'MIT') throw new Error('Linsoft source code must declare its MIT license');
 if (!fs.existsSync(path.join(root, 'LICENSE')) || !packageJson.build.files.includes('LICENSE')) {

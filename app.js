@@ -656,10 +656,15 @@ const appCatalog = [
   ['Desmos', 'https://www.desmos.com/calculator', 'tools'], ['WolframAlpha', 'https://www.wolframalpha.com', 'tools'], ['GeoGebra', 'https://www.geogebra.org/calculator', 'tools'], ['Reverso', 'https://www.reverso.net/text-translation', 'tools'], ['QR Code Monkey', 'https://www.qrcode-monkey.com', 'tools'],
   ['UptimeRobot', 'https://uptimerobot.com', 'tools'], ['web.dev Measure', 'https://pagespeed.web.dev', 'tools'], ['WebAIM Contrast Checker', 'https://webaim.org/resources/contrastchecker', 'tools']
 ];
-const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://start', search: 'Google', safe: true, popups: true, tracking: false, trackingProtection: true, downloads: 'Downloads', downloadFolderPath: '', askDownload: false, adBlock: true, clearExit: false, restoreTabs: true, suspendInactiveTabs: true, confirmClose: true, camera: true, microphone: true, webNotifications: false, showBookmarksBar: false, showToolbarTools: false, compact: false, glassOpacity: 62, glassBlur: 12, reduceMotion: false, spellcheckLanguages: null, autoUpdateCheck: true };
+const defaultSettings = { theme: 'dark', startup: 'start', home: 'linsoft://start', search: 'Google', safe: true, popups: true, tracking: false, trackingProtection: true, downloads: 'Downloads', downloadFolderPath: '', askDownload: false, adBlock: false, adBlockManualVersion: 1, clearExit: false, restoreTabs: true, suspendInactiveTabs: true, confirmClose: true, camera: true, microphone: true, webNotifications: false, showBookmarksBar: false, showToolbarTools: false, compact: false, glassOpacity: 62, glassBlur: 12, reduceMotion: false, spellcheckLanguages: null, autoUpdateCheck: true };
 let settingsFromStorage = {};
 try { settingsFromStorage = JSON.parse(localStorage.getItem('linsoft-settings') || '{}'); } catch { settingsFromStorage = {}; }
 const settingsState = Object.assign({}, defaultSettings, settingsFromStorage);
+if (!settingsFromStorage || settingsFromStorage.adBlockManualVersion !== 1) {
+  settingsState.adBlock = false;
+  settingsState.adBlockManualVersion = 1;
+  localStorage.setItem('linsoft-settings', JSON.stringify(settingsState));
+}
 defaultSettings.learnSuggestions = true;
 settingsState.learnSuggestions = settingsFromStorage.learnSuggestions !== false;
 let learnedSuggestions = [];
@@ -1849,6 +1854,8 @@ function startPage() {
   addressInput.value = 'linsoft://start';
   tabTitle.textContent = 'Linsoft Browser';
   setInstallAppAvailable(false);
+  const tab = tabs.get(activeTabId);
+  if (tab) tab.icon = '';
   updateActiveTab('linsoft://start', 'Linsoft Browser');
   updateNavigationButtons();
   setTabIcon(activeTabId, '', true);
@@ -1858,7 +1865,9 @@ function startPage() {
     { title: 'Google', url: 'https://www.google.com' },
     { title: 'YouTube', url: 'https://www.youtube.com' },
     { title: 'GitHub', url: 'https://github.com' },
-    { title: 'Správy', url: 'https://news.google.com' }
+    { title: 'Správy', url: 'https://news.google.com' },
+    { title: 'Linsoft Chat', url: 'https://linsoft.ddns.net/linsoft-chat/' },
+    { title: 'Linsoft Office', url: 'https://linsoft.ddns.net/linsoft-offiece/' }
   ];
   const favorites = startFavorites.length ? startFavorites : defaultFavorites;
   const siteMarkup = (item) => {
@@ -1933,13 +1942,19 @@ function updateConnectionIndicator(url) {
 }
 
 function installYoutubeAdBlock(viewer) {
-  if (!settingsState.adBlock || !viewer) return;
-  let hostname = '';
-  try { hostname = new URL(viewer.getURL?.() || viewer.src || '').hostname; } catch { return; }
-  if (!/youtube\.com$/i.test(hostname)) return;
+  if (!viewer) return;
+  const enabled = settingsState.adBlock === true;
+  if (enabled) {
+    let hostname = '';
+    try { hostname = new URL(viewer.getURL?.() || viewer.src || '').hostname; } catch { return; }
+    if (!/youtube\.com$/i.test(hostname)) return;
+  }
   viewer.executeJavaScript(`(() => {
+    if (!${enabled}) {
+      window.__linsoftYoutubeAdBlock?.cleanup?.();
+      return;
+    }
     if (window.__linsoftYoutubeAdBlock) return;
-    window.__linsoftYoutubeAdBlock = true;
     const selectors = [
       '.video-ads', '.ytp-ad-module', '.ytp-ad-overlay-container', '.ytp-ad-text-overlay',
       '.ytp-ad-player-overlay', '.ytp-ad-image-overlay', '.ytp-ad-overlay-slot',
@@ -1947,8 +1962,14 @@ function installYoutubeAdBlock(viewer) {
       'ytd-action-companion-ad-renderer', 'ytd-in-feed-ad-layout-renderer',
       'ytd-banner-promo-renderer', 'ytd-ad-slot-renderer'
     ];
-    const clean = () => {
-      document.querySelectorAll(selectors.join(',')).forEach((element) => element.remove());
+    const adSelector = selectors.join(',');
+    const clean = (roots, inspectPlayer = true) => {
+      roots.forEach((root) => {
+        if (!(root instanceof Element)) return;
+        if (root.matches(adSelector)) root.remove();
+        else root.querySelectorAll(adSelector).forEach((element) => element.remove());
+      });
+      if (!inspectPlayer) return;
       const skip = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
       if (skip) skip.click();
       const player = document.querySelector('.html5-video-player');
@@ -1957,10 +1978,35 @@ function installYoutubeAdBlock(viewer) {
         if (video) { video.currentTime = video.duration || 0; video.play().catch(() => {}); }
       }
     };
-    clean();
-    new MutationObserver(clean).observe(document.documentElement, { childList: true, subtree: true });
-    window.setInterval(clean, 2500);
-  })()`).catch(() => {});
+    clean([document.documentElement]);
+    let pendingNodes = [];
+    let cleanupTimer = 0;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof Element) pendingNodes.push(node);
+        }
+      }
+      if (pendingNodes.length && !cleanupTimer) {
+        cleanupTimer = window.setTimeout(() => {
+          cleanupTimer = 0;
+          const nodes = pendingNodes;
+          pendingNodes = [];
+          clean(nodes, true);
+        }, 120);
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    const interval = window.setInterval(() => clean([document.documentElement]), 3000);
+    window.__linsoftYoutubeAdBlock = {
+      cleanup: () => {
+        observer.disconnect();
+        window.clearTimeout(cleanupTimer);
+        window.clearInterval(interval);
+        delete window.__linsoftYoutubeAdBlock;
+      }
+    };
+  })()`).catch((error) => console.warn('Linsoft Browser could not update YouTube ad blocking:', error.message));
 }
 
 function installOverlayCloseFallback(viewer) {
@@ -3587,7 +3633,13 @@ document.getElementById('forwardButton').addEventListener('click', () => navigat
 document.getElementById('bookmarkButton').addEventListener('click', (event) => { const url = addressInput.value; if (!url || url.startsWith('linsoft://')) return showToast('Na domovskú stránku sa záložka nepridáva.'); if (!savedBookmarks.some((item) => item.url === url)) { savedBookmarks.push({ url, title: tabTitle.textContent }); localStorage.setItem('linsoft-bookmarks', JSON.stringify(savedBookmarks)); renderSavedBookmarks(); } event.currentTarget.querySelector('use').setAttribute('href', '#icon-bookmark-check'); event.currentTarget.classList.add('active'); event.currentTarget.setAttribute('aria-label', 'Záložka uložená'); showToast('Záložka uložená.'); });
 const adBlockButton = document.getElementById('adBlockButton');
 const updateAdBlockButton = () => { adBlockButton.classList.toggle('active', settingsState.adBlock); adBlockButton.querySelector('use').setAttribute('href', settingsState.adBlock ? '#icon-shield-check' : '#icon-shield-off'); adBlockButton.title = settingsState.adBlock ? 'AdBlock zapnutý' : 'AdBlock vypnutý'; adBlockButton.setAttribute('aria-label', adBlockButton.title); };
-adBlockButton.addEventListener('click', () => { settingsState.adBlock = !settingsState.adBlock; saveSettings(); updateAdBlockButton(); showToast(settingsState.adBlock ? 'AdBlock je zapnutý.' : 'AdBlock je vypnutý.'); });
+adBlockButton.addEventListener('click', () => {
+  settingsState.adBlock = !settingsState.adBlock;
+  saveSettings();
+  document.querySelectorAll('.tab-surface webview').forEach(installYoutubeAdBlock);
+  updateAdBlockButton();
+  showToast(settingsState.adBlock ? 'AdBlock je zapnutý.' : 'AdBlock je vypnutý.');
+});
 document.getElementById('minimizeWindow').addEventListener('click', () => window.linsoftBrowser?.windowControl('minimize'));
 function updateMaximizeButton(state) {
   const button = document.getElementById('maximizeWindow');
@@ -3888,16 +3940,27 @@ document.querySelector('.tabs-bar').addEventListener('pointerover', (event) => {
     const title = tabPreview.querySelector('.tab-hover-preview-copy strong');
     const address = tabPreview.querySelector('.tab-hover-preview-copy small');
     const group = tabPreview.querySelector('.tab-hover-preview-copy em');
-    const iconUrl = safeWebsiteFaviconUrl(currentTab.icon);
+    const tabIcon = tabButton.querySelector('.tab-logo');
+    const tabFavicon = tabIcon?.querySelector('.tab-favicon');
+    const iconUrl = tabFavicon && !tabFavicon.hidden ? safeWebsiteFaviconUrl(tabFavicon.currentSrc || tabFavicon.src) : '';
+    const brandImage = tabIcon ? getComputedStyle(tabIcon).backgroundImage : 'none';
+    const previewIcon = tabPreview.querySelector('.tab-hover-preview-icon');
     title.textContent = currentTab.title || 'Nová karta';
     address.textContent = currentTab.url || 'linsoft://start';
     group.textContent = currentTab.groupName ? `Skupina · ${currentTab.groupName}` : currentTab.group ? `Skupina · ${currentTab.group}` : '';
     group.hidden = !group.textContent;
     fallback.textContent = (currentTab.title || 'L').trim().charAt(0).toUpperCase() || 'L';
     image.hidden = !iconUrl;
-    fallback.hidden = Boolean(iconUrl);
-    image.onerror = () => { image.hidden = true; fallback.hidden = false; };
+    fallback.hidden = Boolean(iconUrl || brandImage !== 'none');
+    previewIcon.style.backgroundImage = brandImage;
+    image.onerror = () => {
+      if (image.src !== iconUrl) return;
+      image.hidden = true;
+      image.removeAttribute('src');
+      fallback.hidden = brandImage !== 'none';
+    };
     if (iconUrl) image.src = iconUrl;
+    else image.removeAttribute('src');
     const rect = tabButton.getBoundingClientRect();
     const width = 276;
     tabPreview.style.left = `${Math.max(8, Math.min(rect.left + rect.width / 2 - width / 2, window.innerWidth - width - 8))}px`;
@@ -4169,7 +4232,7 @@ window.linsoftBrowser?.onWebviewFullscreen?.((active) => document.querySelector(
 window.linsoftBrowser?.onBrowserShortcut?.(({ key, shift }) => {
   if (key === 'escape') {
     if (document.querySelector('.browser-window')?.classList.contains('webview-fullscreen')) {
-      window.linsoftBrowser?.windowControl('fullscreen');
+      window.linsoftBrowser?.windowControl('exit-html-fullscreen');
       return;
     }
     document.querySelector('.webview-context-menu')?.closeContextMenu?.();

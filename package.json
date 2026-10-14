@@ -1,15 +1,22 @@
 {
   "name": "linsoft-browser",
-  "version": "2.0.29",
+  "version": "2.0.30",
   "description": "Linsoft Browser 2.0 — cross-platform web browser for Windows and Debian Linux",
   "license": "MIT",
   "main": "main.cjs",
   "productName": "Linsoft Browser",
   "author": {
     "name": "Martin Pastorek",
-    "email": "support@linsoft.local"
+    "url": "https://github.com/Linsoft1/v2.0.1"
   },
-  "homepage": "https://linsoft.local",
+  "homepage": "https://github.com/Linsoft1/v2.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Linsoft1/v2.0.1.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Linsoft1/v2.0.1/issues"
+  },
   "scripts": {
     "start": "node tools/start-browser.cjs",
     "dev": "node tools/start-browser.cjs",

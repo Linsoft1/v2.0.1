@@ -10,7 +10,7 @@ if ($publish.provider -ne 'github' -or !$publish.owner -or !$publish.repo) {
 }
 $remote = "https://github.com/$($publish.owner)/$($publish.repo).git"
 $publishPaths = @(
-  '.github', '.gitignore', 'README.md', 'RELEASE_CHECKLIST.md',
+  '.github', '.gitignore', 'README.md', 'RELEASE_CHECKLIST.md', 'docs',
   'Linsoft centrum app', 'app.js', 'index.html', 'main.cjs',
   'package-lock.json', 'package.json', 'preload.cjs', 'styles.css',
   'assets', 'lib', 'packaging', 'scripts', 'tests', 'tools'

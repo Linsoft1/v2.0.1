@@ -432,18 +432,33 @@ test('permissions are denied unless enabled globally and explicitly remembered o
   assert.equal(getPermissionDecision({ ...request, decisions: { 'https://camera.example|video': 'deny' } }).decision, 'deny');
 });
 
-test('new profiles allow media requests while stored global blocks remain unchanged', () => {
+test('new profiles allow media requests and only enable AdBlock after manual selection', () => {
   const renderer = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   const start = renderer.indexOf('const defaultSettings =');
   const end = renderer.indexOf('defaultSettings.learnSuggestions', start);
   assert.ok(start !== -1 && end > start);
   for (const stored of [{}, { camera: false, microphone: false }, { camera: true, microphone: false }]) {
-    const context = vm.createContext({ localStorage: { getItem: () => JSON.stringify(stored) } });
+    let savedSettings = JSON.stringify(stored);
+    const storage = { getItem: () => savedSettings, setItem: (_key, value) => { savedSettings = value; } };
+    const context = vm.createContext({ localStorage: storage });
     vm.runInContext(`${renderer.slice(start, end)}; globalThis.settings = settingsState;`, context);
     assert.equal(context.settings.camera, stored.camera ?? true);
     assert.equal(context.settings.microphone, stored.microphone ?? true);
     assert.equal(context.settings.webNotifications, false);
+    assert.equal(context.settings.adBlock, false);
   }
+  const manuallyEnabledStorage = { getItem: () => JSON.stringify({ adBlock: true, adBlockManualVersion: 1 }), setItem() {} };
+  const manuallyEnabledContext = vm.createContext({ localStorage: manuallyEnabledStorage });
+  vm.runInContext(`${renderer.slice(start, end)}; globalThis.settings = settingsState;`, manuallyEnabledContext);
+  assert.equal(manuallyEnabledContext.settings.adBlock, true);
+  let legacySettings = JSON.stringify({ adBlock: true });
+  const legacyStorage = { getItem: () => legacySettings, setItem: (_key, value) => { legacySettings = value; } };
+  const legacyContext = vm.createContext({ localStorage: legacyStorage });
+  vm.runInContext(`${renderer.slice(start, end)}; globalThis.settings = settingsState;`, legacyContext);
+  assert.equal(legacyContext.settings.adBlock, false);
+  assert.equal(legacyContext.settings.adBlockManualVersion, 1);
+  assert.equal(JSON.parse(legacySettings).adBlock, false);
+  assert.equal(JSON.parse(legacySettings).adBlockManualVersion, 1);
 });
 
 test('settings microphone grants are temporary, audio-only and limited to the browser UI', () => {
@@ -690,8 +705,12 @@ test('guest permission checks do not inherit saved site grants', () => {
   assert.equal(getPermissionDecision({ ...request, decisions: {} }).decision, 'prompt');
 });
 
+test('fullscreen permission is available to valid web origins', () => {
+  assert.equal(getPermissionDecision({ permission: 'fullscreen', requestingUrl: 'https://example.com/watch', preferences: {} }).decision, 'allow');
+  assert.equal(getPermissionDecision({ permission: 'fullscreen', requestingUrl: 'file:///private/page.html', preferences: {} }).decision, 'deny');
+});
+
 test('unknown permission types fail closed', () => {
-  assert.equal(getPermissionDecision({ permission: 'fullscreen', requestingUrl: 'https://example.com', preferences: {} }).decision, 'deny');
   assert.equal(getPermissionDecision({ permission: 'media', mediaTypes: ['unknown'], requestingUrl: 'https://example.com', preferences: {} }).decision, 'deny');
 });
 

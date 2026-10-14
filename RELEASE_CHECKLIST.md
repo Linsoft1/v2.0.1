@@ -1,48 +1,55 @@
 # Linsoft Browser Release Checklist
 
-## Current Release: 2.0.29
+## Release 2.0.30
 
-- Improves page presentation with reader mode, per-site zoom, slow-load feedback and navigation recovery.
-- Adds browser settings backup/restore and keyboard tab search.
-- Improves Google OAuth popup handling and expands browser smoke coverage for both tab engines.
-- Includes the accumulated browser, privacy, tab lifecycle and Debian packaging changes since 2.0.28.
-- `npm test` and `npm run test:electron-smoke` pass locally before release.
+- Adds Linsoft Chat and Linsoft Office to the browser start page, App Center, and project website.
+- Refreshes the Linsoft services section with service logos, descriptions, and accurate encryption and local-storage notes.
+- Identifies website requests as Linsoft Browser while preserving Chromium compatibility.
+- Keeps AdBlock opt-in and improves its behavior on active pages.
+- Speeds up entering and leaving webpage/video fullscreen.
+- Aligns the application branding and Windows identity, and updates package metadata and website links.
+- `npm test` and `npm run test:electron-smoke` must pass before publication.
+- The unsigned Windows installer and verified Debian package are built by the GitHub Actions release workflow.
+- The release workflow publishes both platform packages to GitHub Releases; the Pages workflow deploys `docs/` to the Linsoft Browser website.
+- The release website must show the GitHub-provided SHA-256 digests rather than locally guessed checksum values.
 - The Windows installer is unsigned; the release workflow disables automatic code-signing discovery.
-- Tag `v2.0.29` triggers the GitHub Actions release workflow. CI builds Windows and Debian artifacts and publishes them to the GitHub Release.
-- Release workflow [38372124661](https://github.com/Linsoft1/v2.0.1/actions/runs/38372124661) succeeded: tests, Windows installer, verified Debian package and GitHub Release upload.
 
 ## Release Gate
 
-- [x] `npm ci` succeeds on both Windows and Linux runners.
-- [x] `npm test` passes locally and in CI.
-- [x] `npm run test:electron-smoke` passes for webview and native tab engines.
-- [x] Windows installer builds locally and uploads from CI.
-- [ ] Windows installer is signed with the release code-signing certificate (not included in this release, by approval).
-- [x] Debian package builds and passes `node tools/verify-deb.cjs` in CI.
-- [x] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
+- [x] `npm test` passes locally.
+- [x] `npm run test:electron-smoke` passes locally for webview and native tab engines.
+- [ ] Release workflow tests pass in CI.
+- [x] Windows 2.0.30 installer builds locally.
+- [ ] Windows installer uploads from CI.
+- [ ] Debian package builds and passes `node tools/verify-deb.cjs` in CI.
+- [ ] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
+- [ ] GitHub Pages deploy succeeds with the updated website and service logos.
+- [ ] Download links and release-provided SHA-256 digests are checked after publication.
 - [ ] Install the release packages and verify the app starts.
+- [ ] Windows installer is signed with the release code-signing certificate (not included in this release).
 
 ## Local Commands
 
 ```sh
 npm ci
 npm test
+npm run test:electron-smoke
 npm run build:installer
-npm run build:linux
+npx electron-builder --linux dir --publish never
 node tools/build-deb.cjs
 node tools/verify-deb.cjs
 ```
 
 ## Expected Artifacts
 
-- Windows: `dist/Linsoft-Browser-Setup-<version>.exe`, `dist/latest.yml`, and `dist/*.blockmap`
-- Debian: `dist/Linsoft-Browser-<version>-amd64.deb` and `dist-debian-final/Linsoft-Browser-<version>-amd64.deb`
+- Windows: `dist/Linsoft-Browser-Setup-2.0.30.exe`, `dist/latest.yml`, and `dist/*.blockmap`
+- Debian: `dist-debian-final/Linsoft-Browser-2.0.30-amd64.deb`
 
 ## Optional Debian APT publication gate
 
 - [ ] Dedicated archive-signing key configured in GitHub Secrets; public fingerprint verified and published.
 - [ ] Pages contains signed repository metadata, package indexes, keyring and the latest amd64 package.
-- [ ] Combined website/repository stays below the Pages 1 GB size limit.
+- [ ] Combined website/repository stays below the Pages 1 GB limit.
 - [ ] Isolated APT signature/hash verification passes.
 - [ ] Administrator setup and unattended upgrade from an older version verified on Debian.
 - [ ] Weekly metadata refresh succeeds before its 30-day validity expires.

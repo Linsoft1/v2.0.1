@@ -17,13 +17,14 @@ const { createGoogleSignInRecovery, findSignInBrowser, isGoogleSignInPopup, open
 const { checkDebianUpdate } = require('./lib/debian-updates.cjs');
 const browserName = 'Linsoft Browser';
 app.setName(browserName);
+app.setAppUserModelId('sk.linsoft.browser');
 const isPackagedBuild = app.isPackaged && process.env.LINSOFT_DEV_LAUNCH !== '1';
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { autoUpdater = null; }
 let updateState = { status: 'idle' };
 const experimentalNativeTabs = process.env.LINSOFT_NATIVE_TABS === '1';
 const isLinux = process.platform === 'linux';
-const browserUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36 LinsoftBrowser/${app.getVersion()}`;
+const browserUserAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36 LinsoftBrowser/${app.getVersion()} (Linsoft Browser ${app.getVersion()})`;
 app.userAgentFallback = browserUserAgent;
 const writableDataPath = process.env.LINSOFT_BROWSER_USER_DATA || path.join(app.getPath('appData'), 'Linsoft Browser');
 const browserCachePath = process.env.LINSOFT_BROWSER_USER_DATA
@@ -443,7 +444,7 @@ const browserPreferences = {
   downloads: 'Downloads',
   downloadFolderPath: '',
   askDownload: false,
-  adBlock: true,
+  adBlock: false,
   trackingProtection: true,
   camera: true,
   microphone: true,
@@ -471,7 +472,7 @@ function readWindowState() {
 }
 
 function saveWindowState(window) {
-  if (!window || window.isDestroyed() || window.isMinimized() || window.isFullScreen()) return;
+  if (!window || window.isDestroyed() || window.isMinimized() || window.isFullScreen() || window.__htmlFullscreenWindowState) return;
   try {
     const bounds = window.getBounds();
     require('node:fs').mkdirSync(path.dirname(windowStatePath), { recursive: true });
@@ -827,20 +828,70 @@ function configureGuestSession(guestSession) {
   });
 }
 
+function exitHtmlFullscreen(window, contents = window.__htmlFullscreenContents) {
+  if (!contents || contents.isDestroyed?.() || window.__htmlFullscreenContents !== contents) return false;
+  void contents.executeJavaScript(`(() => {
+    const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (fullscreenElement && exit) {
+      return Promise.resolve(exit.call(document)).catch(() => {
+        document.querySelector('.ytp-fullscreen-button[aria-pressed="true"]')?.click();
+      });
+    }
+    document.querySelector('.ytp-fullscreen-button[aria-pressed="true"]')?.click();
+    const video = document.querySelector('video');
+    if (video?.webkitDisplayingFullscreen) video.webkitExitFullscreen?.();
+  })()`)
+    .catch((error) => console.warn('Linsoft Browser could not exit page fullscreen:', error.message))
+    .finally(() => leaveHtmlFullscreen(window, contents));
+  return true;
+}
+
+function enterHtmlFullscreen(window, contents) {
+  if (window.isDestroyed()) return;
+  window.__htmlFullscreenContents = contents;
+  if (!window.isFullScreen() && !window.__htmlFullscreenWindowState) {
+    const maximized = window.isMaximized();
+    window.__htmlFullscreenWindowState = {
+      bounds: maximized ? window.getNormalBounds() : window.getBounds(),
+      maximized,
+      alwaysOnTop: window.isAlwaysOnTop()
+    };
+    const { screen } = require('electron');
+    const displayBounds = screen.getDisplayMatching(window.getBounds()).bounds;
+    if (maximized) window.unmaximize();
+    window.setAlwaysOnTop(true);
+    window.setBounds(displayBounds, false);
+  }
+  window.webContents.send('webview-fullscreen', true);
+}
+
+function leaveHtmlFullscreen(window, contents) {
+  if (window.isDestroyed() || window.__htmlFullscreenContents !== contents) return;
+  delete window.__htmlFullscreenContents;
+  const previousState = window.__htmlFullscreenWindowState;
+  delete window.__htmlFullscreenWindowState;
+  if (previousState) {
+    if (window.isMaximized()) window.unmaximize();
+    window.setBounds(previousState.bounds, false);
+    if (previousState.maximized) window.maximize();
+    window.setAlwaysOnTop(previousState.alwaysOnTop);
+  }
+  window.webContents.send('webview-fullscreen', false);
+}
+
 function configureNativeTabContents(window, tabId, contents) {
   const signInRecovery = googleSignInRecoveryFor(window);
   signInRecovery.watch(contents);
-  contents.on('enter-html-full-screen', () => { if (!window.isDestroyed()) { window.setFullScreen(true); window.webContents.send('webview-fullscreen', true); } });
-  contents.on('leave-html-full-screen', () => { if (!window.isDestroyed()) { window.setFullScreen(false); window.webContents.send('webview-fullscreen', false); } });
+  contents.on('enter-html-full-screen', () => {
+    enterHtmlFullscreen(window, contents);
+  });
+  contents.on('leave-html-full-screen', () => {
+    leaveHtmlFullscreen(window, contents);
+  });
   contents.on('before-input-event', (inputEvent, input) => {
-    const key = String(input.key || '').toLowerCase();
-    if (input.type === 'keyDown' && key === 'f' && !input.control && !input.meta && !input.alt && /youtube\.com|youtu\.be/i.test(contents.getURL?.() || '')) {
-      inputEvent.preventDefault();
-      const fullscreen = !window.isFullScreen();
-      window.setFullScreen(fullscreen);
-      window.webContents.send('webview-fullscreen', fullscreen);
-      return;
-    }
+    const rawKey = String(input.key || '').toLowerCase();
+    const key = rawKey === 'esc' ? 'escape' : rawKey;
     if (input.type === 'mouseDown' && ['left', 'right', 'middle'].includes(input.button)) {
       window.webContents.send('dismiss-webview-overlay');
       if (input.button === 'left') return;
@@ -851,8 +902,13 @@ function configureNativeTabContents(window, tabId, contents) {
       return;
     }
     if (input.type === 'keyDown' && key === 'escape') {
-      inputEvent.preventDefault();
-      window.webContents.send('browser-shortcut', { key, shift: false });
+      if (window.__htmlFullscreenContents === contents) {
+        inputEvent.preventDefault();
+        exitHtmlFullscreen(window, contents);
+      } else {
+        inputEvent.preventDefault();
+        window.webContents.send('browser-shortcut', { key, shift: false });
+      }
       return;
     }
     if (input.type !== 'keyDown' || (!(input.control || input.meta) && !input.alt)) return;
@@ -1028,6 +1084,10 @@ ipcMain.on('window-control', (event, action) => {
   if (action === 'restore') {
     if (window.isMinimized()) window.restore();
     if (window.isMaximized()) window.unmaximize();
+  }
+  if (action === 'exit-html-fullscreen') {
+    exitHtmlFullscreen(window);
+    return;
   }
   if (action === 'fullscreen') window.setFullScreen(!window.isFullScreen());
   if (action === 'toggle-always-on-top') window.setAlwaysOnTop(!window.isAlwaysOnTop());
@@ -2641,13 +2701,8 @@ app.whenReady().then(() => {
     });
     if (contents.getType() !== 'webview') return;
     contents.on('before-input-event', (inputEvent, input) => {
-      const key = String(input.key || '').toLowerCase();
-      if (input.type === 'keyDown' && key === 'f' && !input.control && !input.meta && !input.alt && /youtube\.com|youtu\.be/i.test(contents.getURL?.() || '')) {
-        inputEvent.preventDefault();
-        const parent = BrowserWindow.fromWebContents(contents.hostWebContents);
-        if (parent && !parent.isDestroyed()) { const fullscreen = !parent.isFullScreen(); parent.setFullScreen(fullscreen); parent.webContents.send('webview-fullscreen', fullscreen); }
-        return;
-      }
+      const rawKey = String(input.key || '').toLowerCase();
+      const key = rawKey === 'esc' ? 'escape' : rawKey;
       if (input.type === 'mouseDown' && ['left', 'right', 'middle'].includes(input.button)) {
         contents.hostWebContents?.send('dismiss-webview-overlay');
         if (input.button === 'left') return;
@@ -2658,6 +2713,12 @@ app.whenReady().then(() => {
         return;
       }
       if (input.type === 'keyDown' && key === 'escape') {
+        const parent = BrowserWindow.fromWebContents(contents.hostWebContents);
+        if (parent?.__htmlFullscreenContents === contents) {
+          inputEvent.preventDefault();
+          exitHtmlFullscreen(parent, contents);
+          return;
+        }
         inputEvent.preventDefault();
         contents.hostWebContents?.send('browser-shortcut', { key, shift: false });
         return;
@@ -2678,8 +2739,14 @@ app.whenReady().then(() => {
     });
     contents.setUserAgent(browserUserAgent);
     contents.on('render-process-gone', (_event, details) => { contents.hostWebContents?.send('webview-process-gone', { reason: details.reason }); });
-    contents.on('enter-html-full-screen', () => { const parent = BrowserWindow.fromWebContents(contents.hostWebContents); if (parent && !parent.isDestroyed()) { parent.setFullScreen(true); parent.webContents.send('webview-fullscreen', true); } });
-    contents.on('leave-html-full-screen', () => { const parent = BrowserWindow.fromWebContents(contents.hostWebContents); if (parent && !parent.isDestroyed()) { parent.setFullScreen(false); parent.webContents.send('webview-fullscreen', false); } });
+    contents.on('enter-html-full-screen', () => {
+      const parent = BrowserWindow.fromWebContents(contents.hostWebContents);
+      if (parent) enterHtmlFullscreen(parent, contents);
+    });
+    contents.on('leave-html-full-screen', () => {
+      const parent = BrowserWindow.fromWebContents(contents.hostWebContents);
+      if (parent) leaveHtmlFullscreen(parent, contents);
+    });
     contents.on('will-navigate', (navigationEvent, url) => {
       if (!supportedNavigationUrl(url)) { navigationEvent.preventDefault(); return; }
       if (!isOnionUrl(url) || torState.proxyEnabled) return;

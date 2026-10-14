@@ -84,8 +84,8 @@ async function connectPageDebugger(debugPort, pageUrl, mainProcess = false) {
   });
   await send('Runtime.enable');
   return {
-    evaluate: async (expression) => {
-      const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    evaluate: async (expression, userGesture = false) => {
+      const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture });
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || 'Website evaluation failed');
       return result.result.value;
     },
@@ -189,6 +189,21 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
     }
     if (initial?.ready !== 'complete' || initial.tabs < 1 || !initial.api) throw new Error(`Unexpected initial UI state: ${JSON.stringify(initial)}`);
     if (await evaluate('window.linsoftBrowser.nativeTabsEnabled()') !== nativeTabs) throw new Error('Tab engine IPC state did not match the requested mode.');
+    const linsoftServices = await evaluate(`Array.from(document.querySelectorAll('.start-favorite-open')).map(button => ({ title: button.querySelector(':scope > span:last-child')?.textContent.trim(), url: button.dataset.url }))`);
+    for (const [name, url] of [
+      ['Linsoft Chat', 'https://linsoft.ddns.net/linsoft-chat/'],
+      ['Linsoft Office', 'https://linsoft.ddns.net/linsoft-offiece/']
+    ]) {
+      if (!linsoftServices.some((service) => service.title === name && service.url === url)) {
+        throw new Error(`${name} is missing from the browser start-page quick links: ${JSON.stringify(linsoftServices)}`);
+      }
+    }
+    const initialAdBlock = await evaluate(`({ enabled: settingsState.adBlock, active: document.querySelector('#adBlockButton')?.classList.contains('active') })`);
+    if (initialAdBlock.enabled || initialAdBlock.active) throw new Error(`AdBlock should start disabled until manually enabled: ${JSON.stringify(initialAdBlock)}`);
+    await evaluate(`document.querySelector('#adBlockButton').click()`);
+    await waitFor(() => evaluate(`settingsState.adBlock && document.querySelector('#adBlockButton')?.classList.contains('active')`), true);
+    await evaluate(`document.querySelector('#adBlockButton').click()`);
+    await waitFor(() => evaluate(`!settingsState.adBlock && !document.querySelector('#adBlockButton')?.classList.contains('active')`), true);
     const originalWindowState = await mainDebugger.evaluate(`(() => {
       const BrowserWindow = process.mainModule.require('electron').BrowserWindow;
       const browserWindow = BrowserWindow.getAllWindows().find(window => !window.isDestroyed());
@@ -645,6 +660,157 @@ async function smokeTabEngine({ nativeTabs, startUrl }) {
       throw new Error(`Tab is not displaying the website's original favicon: ${JSON.stringify({ displayedFavicon, iconDebug })}`);
     }
     await waitFor(() => evaluate(`JSON.parse(localStorage.getItem('linsoft-history') || '[]').find(item => item.url === ${JSON.stringify(startUrl)})?.favicon`), expectedFavicon);
+    await evaluate(`(() => {
+      tabs.get(activeTabId).icon = 'https://www.youtube.com/favicon.ico';
+      const tab = document.querySelector('.managed-tab.active');
+      tab.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+    })()`);
+    await waitFor(() => evaluate(`document.querySelector('.tab-hover-preview')?.hidden`), false);
+    const previewFavicon = await evaluate(`(() => ({
+      actual: document.querySelector('.managed-tab.active .tab-favicon')?.currentSrc,
+      preview: document.querySelector('.tab-hover-preview-icon img')?.currentSrc,
+      previewVisible: document.querySelector('.tab-hover-preview-icon img')?.hidden === false
+    }))()`);
+    if (!previewFavicon.previewVisible || previewFavicon.preview !== previewFavicon.actual) {
+      throw new Error(`Tab hover preview did not reuse the visible tab favicon: ${JSON.stringify(previewFavicon)}`);
+    }
+    await evaluate(`(() => {
+      tabs.get(activeTabId).icon = 'https://www.youtube.com/favicon.ico';
+      startPage();
+      document.querySelector('.managed-tab.active').dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }));
+    })()`);
+    await waitFor(() => evaluate(`document.querySelector('.tab-hover-preview')?.hidden`), true);
+    await evaluate(`document.querySelector('.managed-tab.active').dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))`);
+    await waitFor(() => evaluate(`document.querySelector('.tab-hover-preview')?.hidden`), false);
+    const startPreviewIcon = await evaluate(`(() => {
+      const tabIcon = document.querySelector('.managed-tab.active .tab-logo');
+      const previewIcon = document.querySelector('.tab-hover-preview-icon');
+      return {
+        staleTabIcon: tabs.get(activeTabId)?.icon || '',
+        tabBrand: getComputedStyle(tabIcon).backgroundImage,
+        previewBrand: previewIcon.style.backgroundImage,
+        previewFaviconVisible: previewIcon.querySelector('img').hidden === false
+      };
+    })()`);
+    if (startPreviewIcon.staleTabIcon || startPreviewIcon.tabBrand === 'none' ||
+        startPreviewIcon.previewBrand !== startPreviewIcon.tabBrand || startPreviewIcon.previewFaviconVisible) {
+      throw new Error(`Start-page tab preview retained a stale website favicon: ${JSON.stringify(startPreviewIcon)}`);
+    }
+    await evaluate(`document.querySelector('.managed-tab.active').dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse' }))`);
+    await waitFor(() => evaluate(`document.querySelector('.tab-hover-preview')?.hidden`), true);
+    const fullscreenUrl = new URL('/fullscreen', startUrl).href;
+    await evaluate(`document.querySelector('#addressInput').value = ${JSON.stringify(fullscreenUrl)}; document.querySelector('#addressForm').requestSubmit()`);
+    await waitFor(() => evaluate(`document.querySelector('#tabTitle')?.textContent`), 'Smoke Fullscreen');
+    const fullscreenPage = await connectPageDebugger(debugPort, fullscreenUrl);
+    try {
+      const beforeFullscreen = await mainDebugger.evaluate(`(() => {
+        const { BrowserWindow, screen } = process.mainModule.require('electron');
+        const window = BrowserWindow.getAllWindows()[0];
+        const bounds = window.getBounds();
+        return { bounds, displayBounds: screen.getDisplayMatching(bounds).bounds };
+      })()`);
+      await fullscreenPage.evaluate(`document.querySelector('#fullscreen-target').requestFullscreen()`, true);
+      await waitFor(() => fullscreenPage.evaluate(`Boolean(document.fullscreenElement && document.fullscreenElement.id === 'fullscreen-target')`), true);
+      await waitFor(() => evaluate(`document.querySelector('.browser-window')?.classList.contains('webview-fullscreen')`), true);
+      const fullscreenWindowState = () => mainDebugger.evaluate(`(() => {
+        const { BrowserWindow, screen } = process.mainModule.require('electron');
+        const window = BrowserWindow.getAllWindows()[0];
+        const bounds = window.getBounds();
+        const displayBounds = screen.getDisplayMatching(bounds).bounds;
+        const minimum = window.getMinimumSize();
+        return {
+          fullScreen: window.isFullScreen(),
+          bounds,
+          expectedBounds: {
+            x: displayBounds.x,
+            y: displayBounds.y,
+            width: Math.max(displayBounds.width, minimum[0]),
+            height: Math.max(displayBounds.height, minimum[1])
+          }
+        };
+      })()`);
+      try {
+        await waitFor(async () => {
+          const state = await fullscreenWindowState();
+          return !state.fullScreen && state.bounds.x === state.expectedBounds.x && state.bounds.y === state.expectedBounds.y &&
+            state.bounds.width === state.expectedBounds.width && state.bounds.height === state.expectedBounds.height;
+        }, true);
+      } catch (error) {
+        throw new Error(`${error.message} Fullscreen window state: ${JSON.stringify(await fullscreenWindowState())}. Before: ${JSON.stringify(beforeFullscreen)}`);
+      }
+      await mainDebugger.evaluate(`(() => {
+        const window = process.mainModule.require('electron').BrowserWindow.getAllWindows()[0];
+        const contents = window?.__htmlFullscreenContents;
+        if (!contents) throw new Error('Electron did not track the webpage in fullscreen.');
+        contents.sendInputEvent({ type: 'keyDown', keyCode: 'ESC' });
+        contents.sendInputEvent({ type: 'keyUp', keyCode: 'ESC' });
+        return true;
+      })()`);
+      await waitFor(() => fullscreenPage.evaluate(`!document.fullscreenElement`), true);
+      await waitFor(() => evaluate(`!document.querySelector('.browser-window')?.classList.contains('webview-fullscreen')`), true);
+      await waitFor(() => mainDebugger.evaluate(`(() => {
+        const window = process.mainModule.require('electron').BrowserWindow.getAllWindows()[0];
+        const current = window.getBounds();
+        const previous = ${JSON.stringify(beforeFullscreen.bounds)};
+        return current.x === previous.x && current.y === previous.y &&
+          current.width === previous.width && current.height === previous.height;
+      })()`), true);
+      const maximizedWindowState = await mainDebugger.evaluate(`(() => {
+        const window = smokeDragTestWindow;
+        const actualIsMaximized = window.isMaximized.bind(window);
+        window.__fullscreenTestActualIsMaximized = actualIsMaximized;
+        window.__fullscreenTestMaximized = false;
+        window.isMaximized = () => window.__fullscreenTestMaximized;
+        window.maximize = () => { window.__fullscreenTestMaximized = true; };
+        window.unmaximize = () => { window.__fullscreenTestMaximized = false; };
+        window.__smokeMaximized = true;
+        window.__fullscreenTestMaximized = true;
+        window.webContents.send('window-state', { maximized: true });
+        return { bounds: window.getNormalBounds(), alwaysOnTop: window.isAlwaysOnTop() };
+      })()`);
+      await waitFor(() => mainDebugger.evaluate('smokeDragTestWindow.isMaximized()'), true);
+      await fullscreenPage.evaluate(`document.querySelector('#fullscreen-target').requestFullscreen()`, true);
+      await waitFor(() => fullscreenPage.evaluate(`Boolean(document.fullscreenElement)`), true);
+      try {
+        await waitFor(() => mainDebugger.evaluate('Boolean(smokeDragTestWindow.__htmlFullscreenWindowState?.maximized)'), true);
+      } catch (error) {
+        const state = await mainDebugger.evaluate(`(() => {
+          const window = smokeDragTestWindow;
+          return {
+            pageFullscreenTracked: Boolean(window.__htmlFullscreenContents),
+            savedWindowState: window.__htmlFullscreenWindowState,
+            maximized: window.isMaximized(),
+            fullscreen: window.isFullScreen()
+          };
+        })()`);
+        throw new Error(`${error.message} Maximized fullscreen state: ${JSON.stringify(state)}`);
+      }
+      await fullscreenPage.evaluate(`document.exitFullscreen()`);
+      await waitFor(() => fullscreenPage.evaluate(`!document.fullscreenElement`), true);
+      await waitFor(() => mainDebugger.evaluate(`(() => {
+        const window = smokeDragTestWindow;
+        const current = window.getNormalBounds();
+        const previous = ${JSON.stringify(maximizedWindowState.bounds)};
+        return window.isMaximized() && window.isAlwaysOnTop() === ${JSON.stringify(maximizedWindowState.alwaysOnTop)} &&
+          current.x === previous.x && current.y === previous.y &&
+          current.width === previous.width && current.height === previous.height;
+      })()`), true);
+      await mainDebugger.evaluate(`(() => {
+        const window = smokeDragTestWindow;
+        window.__smokeMaximized = false;
+        window.__fullscreenTestMaximized = false;
+        window.webContents.send('window-state', { maximized: false });
+        delete window.isMaximized;
+        delete window.maximize;
+        delete window.unmaximize;
+        delete window.__fullscreenTestActualIsMaximized;
+        delete window.__fullscreenTestMaximized;
+        return true;
+      })()`);
+    } finally {
+      fullscreenPage.close();
+    }
+    console.log(`${nativeTabs ? 'native' : 'webview'} tabs: webpage fullscreen is exited with Escape`);
     await evaluate(`renderAddressSuggestions('smoke one')`);
     const historySuggestionFavicon = await evaluate(`document.querySelector('.address-suggestion-icon img')?.src`);
     if (historySuggestionFavicon !== expectedFavicon) {
@@ -1108,6 +1274,7 @@ async function waitFor(read, expected) {
 }
 
 async function main() {
+  const browserUserAgents = [];
   const server = http.createServer((request, response) => {
     if (request.url === '/favicon.svg') {
       response.writeHead(200, { 'Content-Type': 'image/svg+xml' });
@@ -1136,8 +1303,10 @@ async function main() {
       setTimeout(() => response.end(' file'), 100);
       return;
     }
+    if (request.url === '/one') browserUserAgents.push(request.headers['user-agent'] || '');
     const routes = {
       '/one': ['Smoke One', '<p>Smoke One</p>'],
+      '/fullscreen': ['Smoke Fullscreen', '<div id="fullscreen-target" style="width:80vw;height:70vh;background:#123;color:white">Fullscreen target</div>'],
       '/two': ['Smoke Two', '<p style="height:5000px">Smoke Two</p>'],
       '/no-favicon': ['Smoke No Favicon', '<p>No explicit favicon</p>'],
       '/activity': ['Smoke Activity', '<p>Activity test</p>'],
@@ -1158,6 +1327,10 @@ async function main() {
   try {
     await smokeTabEngine({ nativeTabs: false, startUrl });
     await smokeTabEngine({ nativeTabs: true, startUrl });
+    if (browserUserAgents.length < 2 || browserUserAgents.some((userAgent) => !/LinsoftBrowser\/\d+\.\d+\.\d+ \(Linsoft Browser \d+\.\d+\.\d+\)/.test(userAgent))) {
+      throw new Error(`Website requests are missing the Linsoft Browser identity: ${JSON.stringify(browserUserAgents)}`);
+    }
+    console.log('webview and native tabs: website requests identify Linsoft Browser while retaining Chromium compatibility');
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
