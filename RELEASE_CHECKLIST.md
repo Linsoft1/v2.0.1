@@ -18,15 +18,15 @@
 
 - [x] `npm test` passes locally.
 - [x] `npm run test:electron-smoke` passes locally for webview and native tab engines.
-- [ ] Release workflow tests pass in CI.
+- [x] Release workflow tests pass in CI.
 - [x] Windows 2.0.30 installer builds locally.
-- [ ] Windows installer uploads from CI.
-- [ ] Debian package builds and passes `node tools/verify-deb.cjs` in CI.
-- [ ] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
-- [ ] GitHub Pages deploy succeeds with the updated website and service logos.
-- [ ] Download links and release-provided SHA-256 digests are checked after publication.
+- [x] Windows installer uploads from CI.
+- [x] Debian package builds and passes `node tools/verify-deb.cjs` in CI.
+- [x] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
+- [x] GitHub Pages deploy succeeds with the updated website and service logos.
+- [x] Download links and release-provided SHA-256 digests are checked after publication.
 - [ ] Install the release packages and verify the app starts.
-- [ ] Windows installer is signed with the release code-signing certificate (not included in this release).
+- Windows installer is unsigned; a release code-signing certificate is not configured.
 
 ## Local Commands
 
