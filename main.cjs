@@ -333,6 +333,7 @@ function isTorChatCameraGrant(webContents, permission, requestingUrl, mediaTypes
 }
 
 function isUsbCameraGrant(webContents, permission, requestingUrl, mediaTypes = []) {
+  if (!webContents) return false;
   const parentWindow = BrowserWindow.fromWebContents(webContents);
   return permission === 'media' && mediaTypes.length === 1 && mediaTypes[0] === 'video'
     && browserPreferences.autoUsbCamera === true
@@ -343,6 +344,7 @@ function isUsbCameraGrant(webContents, permission, requestingUrl, mediaTypes = [
 }
 
 function isMediaDeviceTestGrant(webContents, permission, requestingUrl, mediaTypes = []) {
+  if (!webContents) return false;
   const parentWindow = BrowserWindow.fromWebContents(webContents);
   const grantedTypes = mediaDeviceTestGrants.get(webContents?.id);
   return permission === 'media' && mediaTypes.length === 1

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="application-name" content="Linsoft Browser">
   <meta name="theme-color" content="#0d2030">
-  <title>Linsoft Browser 2.0.31 – Rýchly a bezpečný prehliadač</title>
-  <meta name="description" content="Spoznajte open-source Linsoft Browser 2.0.31: pohodlnejšie prehliadanie, Linsoft Chat a Office, PDF, OpenVPN a voliteľné Tor nástroje pre Windows a Linux.">
+  <title>Linsoft Browser 2.0.32 – Rýchly a bezpečný prehliadač</title>
+  <meta name="description" content="Spoznajte open-source Linsoft Browser 2.0.32: pohodlnejšie prehliadanie, Linsoft Chat a Office, PDF, OpenVPN a voliteľné Tor nástroje pre Windows a Linux.">
   <link rel="icon" type="image/svg+xml" href="images/linsoft-icon.svg">
   <meta property="og:site_name" content="Linsoft Browser">
   <meta property="og:title" content="Linsoft Browser – Váš web pod vašou kontrolou">
@@ -905,7 +905,7 @@
           <h3>Windows 10 / 11 · 64-bit</h3>
           <p>Inštalátor x64 má približne 145 MiB (152 MB). Stiahnite ho výhradne z oficiálneho vydania projektu.</p>
           <ol class="step-list">
-            <li>Stiahnite inštalátor <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.31/Linsoft-Browser-Setup-2.0.31.exe">Linsoft-Browser-Setup-2.0.31.exe</a>.</li>
+            <li>Stiahnite inštalátor <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.32/Linsoft-Browser-Setup-2.0.32.exe">Linsoft-Browser-Setup-2.0.32.exe</a>.</li>
             <li>Otvorte súbor a v sprievodcovi vyberte priečinok inštalácie.</li>
             <li>Po dokončení spustite Linsoft Browser z nainštalovaného priečinka.</li>
           </ol>
@@ -915,11 +915,11 @@
           <h3>Debian / Ubuntu · amd64</h3>
           <p>Balík `.deb` amd64 má približne 175 MiB (183 MB). Stiahnite ho z oficiálneho vydania; inštaláciu môžete spustiť aj cez systémovú aplikáciu na správu balíkov.</p>
           <ol class="step-list">
-            <li>Stiahnite <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.31/Linsoft-Browser-2.0.31-amd64.deb">Linsoft-Browser-2.0.31-amd64.deb</a>.</li>
+            <li>Stiahnite <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.32/Linsoft-Browser-2.0.32-amd64.deb">Linsoft-Browser-2.0.32-amd64.deb</a>.</li>
             <li>Otvorte Terminál v priečinku so stiahnutým súborom.</li>
             <li>Spustite príkaz nižšie a potvrďte systémovú inštaláciu.</li>
           </ol>
-          <code class="guide-code">sudo apt install ./Linsoft-Browser-2.0.31-amd64.deb</code>
+          <code class="guide-code">sudo apt install ./Linsoft-Browser-2.0.32-amd64.deb</code>
           <p class="guide-callout">Príkaz použite v priečinku, kam sa balík stiahol (zvyčajne `~/Downloads`). Správca balíkov nainštaluje potrebné závislosti.</p>
         </article>
       </div>
@@ -935,20 +935,12 @@
         <p class="guide-callout">Inštalátory sú veľké. Pri pomalom pripojení môže sťahovanie trvať niekoľko minút; pred inštaláciou sa uisti, že máš dostatok voľného miesta na stiahnutý súbor aj na rozbalenú aplikáciu.</p>
       </div>
       <div class="checksums-panel" id="kontrolne-sucty">
-        <h3>Overenie súborov vydania 2.0.31</h3>
-        <p>Stiahni inštalátor z <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.31" target="_blank" rel="noopener noreferrer">oficiálneho vydania na GitHube ↗</a>. Pred inštaláciou porovnaj lokálne vypočítaný SHA-256 digest s hodnotou pri príslušnom súbore:</p>
-        <div class="checksum-row">
-          <strong>Windows x64 · .exe</strong>
-          <code>526c506abed5bbba5ebd4a3171e8e54582d1e9acf8bb7df9d13d31cebe0e18a5</code>
-        </div>
-        <div class="checksum-row">
-          <strong>Debian/Ubuntu amd64 · .deb</strong>
-          <code>88da76542f36661eb5868cb8f6ee4fb644fbe0489d846d7d3337c02a2d68a5a4</code>
-        </div>
+        <h3>Overenie súborov vydania 2.0.32</h3>
+        <p>Stiahni inštalátor z <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.32" target="_blank" rel="noopener noreferrer">oficiálneho vydania na GitHube ↗</a>. Pred inštaláciou porovnaj lokálne vypočítaný SHA-256 digest s hodnotou pri príslušnom súbore:</p>
         <p>Windows PowerShell:</p>
-        <code class="verification-code">Get-FileHash .\Linsoft-Browser-Setup-2.0.31.exe -Algorithm SHA256</code>
+        <code class="verification-code">Get-FileHash .\Linsoft-Browser-Setup-2.0.32.exe -Algorithm SHA256</code>
         <p>Debian / Ubuntu:</p>
-        <code class="verification-code">sha256sum Linsoft-Browser-2.0.31-amd64.deb</code>
+        <code class="verification-code">sha256sum Linsoft-Browser-2.0.32-amd64.deb</code>
         <p class="guide-callout">SHA-256 digest z GitHubu pomáha odhaliť poškodené alebo neúplné stiahnutie, ale sám osebe nepotvrdzuje identitu vydavateľa. Inštalátor Windows nie je digitálne podpísaný; porovnávaj hash len s dôveryhodným zdrojom.</p>
       </div>
       <p class="guide-links">Zdrojový kód a postup na zostavenie aplikácie sú nižšie v sekcii <a href="#zdroj">Zdrojový kód a prispievanie</a>.</p>
@@ -985,7 +977,7 @@
         <p>Prehliadač je postavený na technológiách Electron a Chromium a cieli na Windows a Debian Linux. Vývoj prebieha verejne na GitHube: možno si prezrieť zdrojový kód, nahlásiť problém a navrhnúť zlepšenie.</p>
         <p>Projekt sa volá Linsoft a jeho cieľom je vytvárať použiteľný softvér s otvoreným zdrojovým kódom, transparentnými právami a užitočnými možnosťami — bez predstierania, že otvorený kód sám osebe zaručuje súkromie alebo bezpečnosť.</p>
         <div class="stats">
-          <div class="stat"><span>2.0.31</span> Aktuálna verzia</div>
+          <div class="stat"><span>2.0.32</span> Aktuálna verzia</div>
           <div class="stat"><span>MIT</span> Licencia kódu Linsoftu</div>
           <div class="stat"><span>GitHub</span> Verejný zdrojový kód</div>
         </div>
@@ -1016,6 +1008,17 @@
         <p>Vyberte si konkrétne vydanie alebo si pozrite porovnanie jeho zmien so staršou verziou.</p>
       </div>
       <div class="release-list">
+        <article class="release-row">
+          <div class="release-version">v2.0.32</div>
+          <div>
+            <div class="release-date">16. októbra 2026 · najnovšie vydanie</div>
+            <p class="release-summary">Opravený pád pri spracovaní oprávnení kamery alebo mikrofónu, ak Electron neodovzdal platnú kartu okna.</p>
+          </div>
+          <div class="release-links">
+            <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.32" target="_blank" rel="noopener noreferrer">Vydanie a súbory ↗</a>
+            <a href="https://github.com/Linsoft1/v2.0.1/compare/v2.0.31...v2.0.32" target="_blank" rel="noopener noreferrer">Zmeny od 2.0.31 ↗</a>
+          </div>
+        </article>
         <article class="release-row">
           <div class="release-version">v2.0.31</div>
           <div>
@@ -1201,16 +1204,16 @@ npm start</code></pre>
       <div class="download-card windows" id="download-windows">
         <svg viewBox="0 0 24 24"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
         <h3>Windows</h3>
-        <p>Windows 10 / 11 (64-bit) • v2.0.31</p>
-        <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.31/Linsoft-Browser-Setup-2.0.31.exe" class="btn btn-primary">Stiahnuť .exe</a>
+        <p>Windows 10 / 11 (64-bit) • v2.0.32</p>
+        <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.32/Linsoft-Browser-Setup-2.0.32.exe" class="btn btn-primary">Stiahnuť .exe</a>
       </div>
 
       <!-- Linux -->
       <div class="download-card linux" id="download-linux">
         <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
         <h3>Linux</h3>
-        <p>Debian / Ubuntu (amd64) • v2.0.31</p>
-        <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.31/Linsoft-Browser-2.0.31-amd64.deb" class="btn btn-secondary">Stiahnuť .deb</a>
+        <p>Debian / Ubuntu (amd64) • v2.0.32</p>
+        <a href="https://github.com/Linsoft1/v2.0.1/releases/download/v2.0.32/Linsoft-Browser-2.0.32-amd64.deb" class="btn btn-secondary">Stiahnuť .deb</a>
       </div>
     </div>
   </section>
