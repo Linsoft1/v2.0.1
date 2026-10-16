@@ -936,7 +936,15 @@
       </div>
       <div class="checksums-panel" id="kontrolne-sucty">
         <h3>Overenie súborov vydania 2.0.31</h3>
-        <p>Stiahni inštalátor z <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.31" target="_blank" rel="noopener noreferrer">oficiálneho vydania na GitHube ↗</a>. Na stránke vydania skontroluj SHA-256 digest pri príslušnom súbore a porovnaj ho s lokálnym výpočtom:</p>
+        <p>Stiahni inštalátor z <a href="https://github.com/Linsoft1/v2.0.1/releases/tag/v2.0.31" target="_blank" rel="noopener noreferrer">oficiálneho vydania na GitHube ↗</a>. Pred inštaláciou porovnaj lokálne vypočítaný SHA-256 digest s hodnotou pri príslušnom súbore:</p>
+        <div class="checksum-row">
+          <strong>Windows x64 · .exe</strong>
+          <code>526c506abed5bbba5ebd4a3171e8e54582d1e9acf8bb7df9d13d31cebe0e18a5</code>
+        </div>
+        <div class="checksum-row">
+          <strong>Debian/Ubuntu amd64 · .deb</strong>
+          <code>88da76542f36661eb5868cb8f6ee4fb644fbe0489d846d7d3337c02a2d68a5a4</code>
+        </div>
         <p>Windows PowerShell:</p>
         <code class="verification-code">Get-FileHash .\Linsoft-Browser-Setup-2.0.31.exe -Algorithm SHA256</code>
         <p>Debian / Ubuntu:</p>
