@@ -10,15 +10,15 @@
 
 ## Release Gate
 
-- [ ] `npm ci` succeeds on both Windows and Linux runners.
+- [x] `npm ci` succeeds on both Windows and Linux runners.
 - [x] `npm test` passes locally (66 tests).
 - [x] `npm run test:navigation` passes for both tab engines.
-- [ ] `npm run test:tor` passes against a separate guest process.
-- [ ] Windows installer builds and uploads.
+- [x] `npm run test:tor` passes against a separate guest process.
+- [x] Windows installer builds and uploads.
 - [x] Unsigned Windows installer accepted for this release; the website discloses the publisher warning.
-- [ ] Debian package builds and passes `node tools/verify-deb.cjs`.
-- [ ] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
-- [ ] GitHub Pages deployment completes and links to the 2.0.32 release assets.
+- [x] Debian package builds and passes `node tools/verify-deb.cjs`.
+- [x] GitHub Release contains the Windows installer, `latest.yml`, blockmap, and Debian package.
+- [x] GitHub Pages deployment completes and links to the 2.0.32 release assets.
 - [ ] Install the Windows package and verify Settings > Updates, manual check, download progress, and restart/install behavior.
 - [ ] Install two copies, create and join a chat invitation, exchange messages, then verify stopping the host disconnects the guest.
 
