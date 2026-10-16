@@ -8,14 +8,14 @@ const { requestOnionService, waitForOnionService } = require('../lib/tor-hosting
 const { clearTorChatFileTransfer, createTorChatRoom, createTorChatServer, enqueueTorChatFileChunk, enqueueTorChatMessage, enqueueTorChatVideoFrame, getTorChatFileChunks, getTorChatVideoState } = require('../lib/tor-chat-protocol.cjs');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'linsoft-tor-test-'));
-const dataDir = path.join(os.tmpdir(), 'linsoft-tor-test-cache');
+const dataDir = path.join(root, 'tor-data');
 const serviceDir = path.join(root, 'hidden-service');
 const configPath = path.join(root, 'torrc');
 const sitePath = path.join(root, 'index.html');
 const torPath = process.platform === 'win32'
   ? path.resolve('assets/tor/windows/tor/tor.exe')
   : path.resolve('assets/tor/linux/tor/tor');
-const proxyPort = 29150;
+let proxyPort;
 let server;
 let chatServer;
 let tor;
@@ -164,8 +164,11 @@ function runGuestProcess({ onion, token, proxyPort, room }) {
 
 async function run() {
   if (!fs.existsSync(torPath)) throw new Error(`Bundled Tor not found: ${torPath}`);
+  const proxyProbe = require('node:net').createServer();
+  await new Promise((resolve, reject) => { proxyProbe.once('error', reject); proxyProbe.listen(0, '127.0.0.1', resolve); });
+  proxyPort = proxyProbe.address().port;
+  await new Promise((resolve, reject) => proxyProbe.close((error) => error ? reject(error) : resolve()));
   fs.mkdirSync(dataDir, { recursive: true });
-  try { fs.unlinkSync(path.join(dataDir, 'lock')); } catch {}
   fs.mkdirSync(serviceDir, { recursive: true });
   fs.writeFileSync(sitePath, '<!doctype html><title>Linsoft Tor Test</title><h1>Tor hosting OK</h1>', 'utf8');
   const chatToken = crypto.randomBytes(24).toString('base64url');
@@ -208,7 +211,7 @@ async function run() {
   const tokenHeader = { Authorization: `Bearer ${chatToken}` };
   const chatHealth = await waitForOnionService(`http://${onion}:81/_linsoft/chat/v1/health`, proxyPort, { timeoutMs: 180000, attemptTimeoutMs: 20000, retryDelayMs: 10000, headers: tokenHeader });
   const guest = await runGuestProcess({ onion, token: chatToken, proxyPort, room: chatRoom });
-  console.log(JSON.stringify({ ok: true, testOnly: true, onion, onionLifetime: 'temporary; this service stops when the smoke test exits', statusCode, chatHealth, ...guest, response: 'Tor hosting and separate host/guest processes OK' }));
+  console.log(JSON.stringify({ ok: true, onion, statusCode, chatHealth, ...guest, response: 'Tor hosting and separate host/guest processes OK' }));
 }
 
 (process.argv.includes('--guest') ? runGuestClient() : run()).catch((error) => {

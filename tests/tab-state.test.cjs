@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeSessionTabs, recordNavigation } = require('../lib/tab-state.js');
+const { internalUrls, normalizeClosedTabs, normalizeSessionTabs, recordNavigation } = require('../lib/tab-state.js');
+
+test('built-in camera page is a restorable internal browser route', () => {
+  assert.equal(internalUrls.has('linsoft://camera'), true);
+});
 
 test('navigation state tracks back, forward, and new routes without losing forward entries', () => {
   const tab = { url: 'https://a.example/', history: ['https://a.example/', 'https://b.example/'], historyIndex: 1 };
@@ -94,4 +98,16 @@ test('session restoration preserves explicit crash recovery without persisting r
   assert.equal(result[0].loaded, undefined);
   assert.equal(result[1].crashed, false);
   assert.equal(result[1].crashReason, '');
+});
+
+test('recently closed tabs are bounded and unsafe or malformed entries are discarded', () => {
+  const result = normalizeClosedTabs([
+    { id: 4, url: 'https://safe.example/', title: 'Safe' },
+    { id: 5, url: 'javascript:alert(1)' },
+    ...Array.from({ length: 12 }, (_, index) => ({ id: index + 10, url: `https://site${index}.example/` }))
+  ], (url) => /^https:\/\//.test(url));
+
+  assert.equal(result.length, 10);
+  assert.equal(result[0].url, 'https://safe.example/');
+  assert.ok(result.every((tab) => tab.url.startsWith('https://')));
 });

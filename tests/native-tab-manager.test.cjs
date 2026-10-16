@@ -5,13 +5,16 @@ const { NativeTabManager } = require('../lib/native-tab-manager.cjs');
 
 class FakeWebContents extends EventEmitter {
   loadURL(url) { this.url = url; return Promise.resolve(); }
+  insertCSS() { return Promise.resolve(); }
   setAudioMuted(muted) { this.muted = muted; }
   close() { this.closed = true; }
+  stop() { this.stopped = true; }
 }
 
 class FakeWebContentsView {
   constructor() { this.webContents = new FakeWebContents(); }
   setBounds(bounds) { this.bounds = bounds; }
+  setVisible(visible) { this.visible = visible; }
 }
 
 test('native tab manager signals document readiness for scroll restoration', () => {
@@ -20,7 +23,7 @@ test('native tab manager signals document readiness for scroll restoration', () 
   const manager = new NativeTabManager({ window, WebContentsView: FakeWebContentsView, createWebPreferences: () => ({}), onEvent: (...event) => events.push(event) });
   const view = manager.load(1, 'https://example.com/');
   view.webContents.emit('did-finish-load');
-  assert.deepEqual(events, [[1, 'ready']]);
+  assert.deepEqual(events, [[1, 'navigation-started', { url: 'https://example.com/' }], [1, 'ready']]);
 });
 test('native tab manager activates one view and preserves its bounds', () => {
   const children = new Set();
@@ -47,6 +50,70 @@ test('native tab manager activates one view and preserves its bounds', () => {
   assert.equal(manager.views.size, 1);
   assert.equal(first.webContents.closed, undefined);
   assert.equal(manager.views.get(2), undefined);
+});
+
+test('native loading screen hides only main-frame navigation until the document is ready', () => {
+  const events = [];
+  const manager = new NativeTabManager({
+    window: { contentView: { addChildView() {}, removeChildView() {} } },
+    WebContentsView: FakeWebContentsView,
+    createWebPreferences: () => ({}),
+    onEvent: (...event) => events.push(event)
+  });
+  const view = manager.load(1, 'https://example.com');
+  assert.equal(view.visible, false);
+  view.webContents.emit('dom-ready');
+  assert.equal(view.visible, true);
+  assert.equal(events.at(-1)[1], 'document-ready');
+  view.webContents.emit('did-start-navigation', {}, 'https://example.com/frame', false, false);
+  view.webContents.emit('did-start-navigation', {}, 'https://example.com/#section', true, true);
+  assert.equal(view.visible, true);
+  view.webContents.emit('did-start-navigation', {}, 'https://example.org', false, true);
+  assert.equal(view.visible, false);
+  view.webContents.emit('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'https://example.org', true);
+  view.webContents.emit('dom-ready');
+  view.webContents.emit('did-stop-loading');
+  manager.activate(1);
+  assert.equal(view.visible, false);
+  manager.load(1, 'https://example.com');
+  view.webContents.emit('dom-ready');
+  assert.equal(view.visible, true);
+});
+
+test('aborted navigation and subframe failures do not leave the native view hidden', () => {
+  const manager = new NativeTabManager({
+    window: { contentView: { addChildView() {}, removeChildView() {} } },
+    WebContentsView: FakeWebContentsView,
+    createWebPreferences: () => ({}),
+    onEvent: () => {}
+  });
+
+  const view = manager.load(1, 'https://example.com');
+  view.webContents.emit('did-fail-load', {}, -3, 'ABORTED', 'https://example.com', true);
+  view.webContents.emit('did-stop-loading');
+  assert.equal(view.visible, true);
+  view.webContents.emit('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'https://example.com/frame', false);
+  assert.equal(view.visible, true);
+});
+
+test('stopping a native navigation stops the website and clears its pending loading state', () => {
+  const events = [];
+  const manager = new NativeTabManager({
+    window: { contentView: { addChildView() {}, removeChildView() {} } },
+    WebContentsView: FakeWebContentsView,
+    createWebPreferences: () => ({}),
+    onEvent: (...event) => events.push(event)
+  });
+  const view = manager.load(1, 'https://example.com');
+  assert.equal(manager.stop(1), true);
+  assert.equal(view.webContents.stopped, true);
+  assert.equal(view.__navigationPending, false);
+  assert.equal(view.visible, true);
+  assert.deepEqual(events.slice(-2), [[1, 'document-ready'], [1, 'loading', { loading: false }]]);
+  view.webContents.emit('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'https://example.com', true);
+  manager.stop(1);
+  assert.equal(view.visible, false);
+  assert.equal(manager.stop(999), false);
 });
 
 test('native tab manager destroys detached views without removing them from the window', () => {
@@ -90,6 +157,30 @@ test('native tab manager reports main-frame navigation failures', () => {
   view.webContents.emit('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'https://example.com', true);
   view.webContents.emit('did-fail-load', {}, -3, 'ABORTED', 'https://example.com', false);
   assert.deepEqual(events.at(-1), [1, 'failed', { errorCode: -105, errorDescription: 'NAME_NOT_RESOLVED', validatedURL: 'https://example.com' }]);
+});
+
+test('native tab manager restores a failed view after its certificate is explicitly approved', () => {
+  const events = [];
+  const manager = new NativeTabManager({
+    window: { contentView: { addChildView() {}, removeChildView() {} } },
+    WebContentsView: FakeWebContentsView,
+    createWebPreferences: () => ({}),
+    onEvent: (...event) => events.push(event)
+  });
+  const view = manager.load(1, 'https://192.168.2.2/');
+  view.webContents.emit('did-fail-load', {}, -202, 'CERT_AUTHORITY_INVALID', 'https://192.168.2.2/', true);
+  assert.equal(view.visible, false);
+  assert.equal(view.__navigationFailed, true);
+
+  assert.equal(manager.prepareForCertificateApproval(view.webContents), true);
+  assert.equal(view.visible, false);
+  assert.equal(view.__navigationFailed, false);
+  assert.equal(view.__navigationPending, true);
+
+  view.webContents.emit('dom-ready');
+  assert.equal(view.visible, true);
+  assert.equal(view.__navigationPending, false);
+  assert.deepEqual(events.at(-1), [1, 'document-ready']);
 });
 
 test('native tab manager applies mute state and forwards media playback events', () => {

@@ -1,34 +1,27 @@
 {
   "name": "linsoft-browser",
-  "version": "2.0.30",
+  "version": "2.0.31",
   "description": "Linsoft Browser 2.0 — cross-platform web browser for Windows and Debian Linux",
-  "license": "MIT",
   "main": "main.cjs",
   "productName": "Linsoft Browser",
   "author": {
     "name": "Martin Pastorek",
-    "url": "https://github.com/Linsoft1/v2.0.1"
+    "email": "support@linsoft.local"
   },
   "homepage": "https://github.com/Linsoft1/v2.0.1",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Linsoft1/v2.0.1.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Linsoft1/v2.0.1/issues"
-  },
+  "license": "MIT",
   "scripts": {
     "start": "node tools/start-browser.cjs",
     "dev": "node tools/start-browser.cjs",
-    "test:electron-smoke": "node tools/smoke-electron.cjs",
     "build:win": "electron-builder --win portable",
     "build:portable": "electron-builder --win portable",
     "build:installer": "electron-builder --win nsis --config.win.signAndEditExecutable=false",
     "build:linux": "electron-builder --linux deb",
     "build:deb": "electron-builder --linux deb",
     "build:all": "npm run build:portable && npm run build:linux",
-    "test": "node tools/validate-project.cjs && node --test tests/browser-algorithms.test.cjs tests/browser-policies.test.cjs tests/google-signin.test.cjs tests/native-tab-manager.test.cjs tests/tab-state.test.cjs tests/tor-hosting.test.cjs tests/tor-chat-protocol.test.cjs",
+    "test": "node tools/validate-project.cjs && node --test tests/browser-policies.test.cjs tests/certificate-approval.test.cjs tests/certificate-warning.test.cjs tests/native-tab-manager.test.cjs tests/openvpn-controls.test.cjs tests/tab-state.test.cjs tests/tab-transfer-registry.test.cjs tests/tor-hosting.test.cjs tests/tor-chat-protocol.test.cjs tests/usb-camera.test.cjs",
     "test:tor": "node tools/test-tor-hosting.cjs",
+    "test:navigation": "node tools/test-navigation.cjs",
     "make-icon": "node scripts/make-icon.cjs"
   },
   "devDependencies": {
@@ -53,8 +46,8 @@
       "app.js",
       "main.cjs",
       "preload.cjs",
-      "LICENSE",
       "package.json",
+      "LICENSE",
       "lib/**/*",
       "Linsoft centrum app/**/*",
       "assets/**/*"

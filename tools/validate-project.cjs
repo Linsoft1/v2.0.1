@@ -4,6 +4,9 @@ const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const files = ['app.js', 'main.cjs', 'preload.cjs', path.join('lib', 'browser-policies.cjs'), path.join('lib', 'google-signin.cjs'), path.join('lib', 'native-tab-manager.cjs'), path.join('lib', 'permission-handlers.cjs'), path.join('lib', 'tab-state.js'), path.join('tools', 'smoke-electron.cjs'), path.join('Linsoft centrum app', 'app.js')];
+files.push(path.join('lib', 'certificate-approval.cjs'));
+files.push(path.join('lib', 'certificate-warning.cjs'));
+files.push(path.join('lib', 'usb-camera-devices.js'));
 files.push(path.join('lib', 'search-page-preload.cjs'));
 files.push(path.join('lib', 'page-activity-preload.cjs'));
 files.push(path.join('lib', 'overlay-dismiss-preload.cjs'));
@@ -38,7 +41,8 @@ if (!mainSource.includes(`app.setAppUserModelId('${packageJson.build.appId}')`))
 const browserPage = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 if (!browserPage.includes(`<title>${browserName}</title>`)) throw new Error('Browser window title is not Linsoft Browser');
 if (!browserPage.includes('assets/linsoft-icon.svg')) throw new Error('Browser window is missing the Linsoft Browser favicon');
-if (!browserPage.includes(`App Centrum · ${browserName}`)) throw new Error('Integrated App Center is missing the Linsoft Browser identity');
+const browserSource = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+if (!browserSource.includes(`App Centrum · ${browserName}`)) throw new Error('Integrated App Center is missing the Linsoft Browser identity');
 const appCenterPage = fs.readFileSync(path.join(root, 'Linsoft centrum app', 'index.html'), 'utf8');
 if (!appCenterPage.includes(`<title>${browserName} – App Centrum</title>`)) throw new Error('Standalone App Center title is not branded as Linsoft Browser');
 if (!appCenterPage.includes('../assets/linsoft-icon.svg')) throw new Error('Standalone App Center is missing the Linsoft Browser logo');
@@ -47,7 +51,7 @@ for (const serviceUrl of ['https://linsoft.ddns.net/linsoft-chat/', 'https://lin
   if (!appCenterSource.includes(serviceUrl)) throw new Error(`App Center is missing a Linsoft service: ${serviceUrl}`);
 }
 const websitePage = fs.readFileSync(path.join(root, 'docs', 'index.html'), 'utf8');
-if (!websitePage.includes(`<title>${browserName} ${packageJson.version}`) || !websitePage.includes(`v${packageJson.version} •`)) {
+if (!websitePage.includes(`<title>${browserName} ${packageJson.version}`) || !websitePage.includes(`• v${packageJson.version}`)) {
   throw new Error('Linsoft Browser website version does not match package.json');
 }
 if (!websitePage.includes('images/linsoft-icon.svg') || !fs.existsSync(path.join(root, 'docs', 'images', 'linsoft-icon.svg'))) {
@@ -90,6 +94,12 @@ const hasLinsoftProtocol = protocols.some((entry) => entry.schemes?.includes('li
 if (!hasLinsoftProtocol) throw new Error('Missing linsoft protocol registration');
 if (!packageJson.build.files.includes('lib/**/*')) throw new Error('Browser policy module is missing from packaged files');
 if (!packageJson.build.files.includes('Linsoft centrum app/**/*')) throw new Error('Standalone App Centrum is missing from packaged files');
+if (!packageJson.build.files.includes('styles.css')) throw new Error('In-tab certificate warning styles are missing from packaged files');
+const styles = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+if (!styles.includes('.certificate-warning-overlay')) throw new Error('In-tab certificate warning styles are missing');
+if (!fs.readFileSync(path.join(root, 'preload.cjs'), 'utf8').includes("onCertificateWarning:")) {
+  throw new Error('In-tab certificate warning bridge is missing from the preload');
+}
 const installerScript = fs.readFileSync(path.join(root, 'packaging', 'installer.nsh'), 'utf8');
 if (!installerScript.includes('FriendlyAppName') || !installerScript.includes('SupportedTypes') || !installerScript.includes('SHChangeNotify')) {
   throw new Error('Windows Open With registration for Linsoft Browser is incomplete');

@@ -1,29 +1,59 @@
 # Linsoft Browser
 
-![Linsoft Browser logo](assets/linsoft-icon.svg)
-
 Linsoft Browser is a desktop browser for Windows and Linux Debian, focused on a clean interface, quick web access, bookmarks, app installs, and basic privacy controls.
 
 ## Features
 
 - Browser tabs and navigation
-- Per-site zoom, reader mode, clear slow-load feedback and navigation recovery
-- Search open tabs with `Ctrl+Shift+A`; use the arrow keys and Enter to switch
-- Settings backup and restore for preferences, bookmarks, favorites, installed web apps, and per-site zoom. Backups intentionally exclude history, passwords, cookies, website data, and local folder paths.
+- Browser tabs use theme-aware rounded styling, a clear active underline, stable site icons, larger close/audio targets and keyboard focus indicators. Pinned tabs remain compact, loading indicators respect reduced-motion preferences, and the active page is marked for assistive technology.
+- Focused tabs support Left/Right arrows and Home/End in their visible order, and Delete or middle-click to close. Pinned/locked tabs retain their close protection; accessible names and tooltips include pinned, locked and muted states.
+- When tabs overflow, the tab strip scrolls horizontally without a visible scrollbar and brings the selected tab into view. New-tab and window controls stay outside the scrolling area.
+- Window controls use consistent SVG icons, larger focusable targets and a distinct close highlight. Maximize/restore, full-screen and always-on-top indicators reflect actual Electron window events rather than guessing from clicks.
+- Address suggestions identify bookmark/history/open-tab sources, match multi-word names without diacritics and show keyboard hints. Matching open tabs activate directly; unmatched queries can be searched. Connection details distinguish HTTP, HTTPS and internal content without claiming HTTPS guarantees a trustworthy site.
+- A branded Linsoft warning appears directly inside the affected tab when connecting to local devices with untrusted HTTPS certificates, including private IPv4/IPv6 and `.local` addresses. It hides URL paths and query data, focuses the safe return action, explains common certificate errors, and exposes technical details accessibly. Explicit approval temporarily permits certificate errors only for the same local device's HTTPS/WSS resources on any port in that tab; the in-memory approval clears when navigating to another device and is never stored on disk.
+- Optional USB camera auto-start is off by default. When enabled in Privacy settings, Linsoft authorizes its internal page to identify camera devices without starting capture; connecting a new video input opens a dedicated camera tab with a visible live indicator and stop control. The video-only capture stops when switching tabs, and camera access is never granted to websites.
+- Privacy settings also offer explicit camera and microphone tests. The camera test shows a temporary preview; the microphone test displays an input-level meter. Both tests stop when leaving settings or switching tabs, and their narrowly scoped internal permissions are released when stopped.
+- The browser menu has grouped tools, consistent icons and shortcut hints, with direct entries for Linsoft Chat and Linsoft Office. The searchable open-tab overview (Ctrl+Shift+A) follows visible tab order and supports arrows, Enter and Escape.
+- Bookmarks and history offer combined name/address search, sorting and result counts. The bookmark library uses responsive cards with site icons, readable site labels, quick-access pin controls and a helpful first-use empty state. History can be filtered by date range, groups visits by day, shows recent-activity summaries, and supports undo after removing one or all entries; bookmark actions retain their original targets after sorting/filtering.
+- The bookmarks bar scrolls horizontally when it overflows, with discoverable left/right controls, mouse-wheel support, keyboard-accessible bookmark buttons and a clear empty state.
+- The start page has a responsive weather card using the device location only after permission; first-use instructions explain how to start the lookup and allow location access. Coordinates are rounded to roughly 1 km and sent to Open-Meteo for current conditions. The approximate location and last forecast are cached locally for quick display and offline fallback. Refreshing weather does not re-request location; a separate action changes it. The card shows temperature, conditions, humidity, wind, daily high/low and the forecast update time. Settings can hide weather, the footer or individual quick-access links without deleting bookmarks or saved favorites.
+- The toolbar's labeled Tools control remains discoverable when its extra buttons are collapsed, including at narrower window sizes.
+- Appearance settings include dark, light and Glass Blue themes, compact chrome and three browser-interface text sizes; web page zoom remains independent.
+- Named tab groups retain their color/name in the restored session, can be renamed together, and can be closed as a group from the tab context menu.
+- The connection panel lists permissions for the active site. Clearing that site's cookies and storage requires confirmation and is restricted in the main process to the actual active HTTP(S) origin; matching saved permissions are cleared too.
 - Bookmarks and history
 - Home/start page
+- Branded loading and connection-error screens with the Linsoft Browser logo, retry and address-check actions
+- Stop loading from the toolbar or loading screen; a per-tab warning appears after 15 seconds and clears when loading stops
+- Connection-error screens offer Home and expandable technical details; onion loading shows the live Tor proxy state (manual proxies are not reported as verified Tor)
 - Web app installation support
+- Drag an unlocked web or local-file tab outside the tab strip to move it into a new Linsoft Browser window; the source tab closes only after the target confirms the transfer.
+- Download history can be cleared with confirmation without hiding active downloads or deleting files already saved on disk.
 - App center
+- Integrated App Center uses the full tab area with a responsive catalog grid and page scrolling
+- Settings use the full tab area, with a sidebar on large windows and horizontal section navigation on smaller windows
+- The Settings page hides its scrollbar while retaining mouse-wheel, touchpad and keyboard scrolling.
+- The Settings logo has a softly glowing light ring that follows its rounded frame; reduced-motion preferences keep it static.
+- About uses the official Linsoft logo with the same light frame in a responsive app identity card.
+- License terms in About are presented as numbered, responsive blocks with larger text, headings and framed icons, without changing the existing terms.
+- Updates includes a branded installed-version card, explicit checking/error/ready states and an accessible download progress bar. Preview and development builds report update unavailability rather than claiming to be current; installation requires the packaged Windows app.
+- Update states use distinct icons and accents, errors offer retry, and the last check time is displayed when supplied by the updater.
+- Advanced settings are grouped into protection, downloads, tabs, language/measurement tools and Tor/proxy, with keyboard-accessible section shortcuts. Existing controls retain their save and immediate-action behavior.
+- Advanced groups can be collapsed individually or all at once without losing edits. Search results and section shortcuts reopen the relevant group automatically.
+- Tor/proxy has separate live connection cards, labeled SOCKS fields and a distinct hosting section. Manual proxy actions apply immediately; hosting shares the selected folder independently of Tor browsing.
+- OpenVPN includes labeled profile/connection cards and a larger keyboard-accessible log with a display-only clear action. Saved profile names appear when opening settings; cancelling profile selection keeps the previous profile.
+- OpenVPN requires a selected profile before connecting, prevents duplicate connection requests, and supports cancelling an in-progress connection. Disconnecting waits for the client to exit; state messages do not claim a connection before client confirmation.
+- Advanced group expansion is remembered locally across settings reopening and app restarts, independently of saved browser preferences.
+- Downloads has active/completed totals, responsive status cards, accessible progress (including unknown-size transfers), size/speed details and per-file folder shortcuts.
+- Downloads includes a searchable file list combined with status filters, summary tiles and contextual empty states. Failed/cancelled transfers have distinct indicators; displayed speeds are labeled as averages. Removing an entry is labeled as history-only, not deletion from disk.
+- The Downloads panel hides its scrollbar while retaining mouse-wheel, touchpad and keyboard scrolling.
+- Settings include accent-insensitive search, explicit save/discard controls, preserved drafts when switching tabs, and a separate live Tor/manual-proxy/OpenVPN overview. Leaving an edited settings page requires confirmation; section changes keep edits. Theme changes apply after saving, while connection actions apply immediately.
+- Settings navigation includes section descriptions and keyboard focus indicators; theme-aware cards and connection indicators improve readability. The sticky save/discard bar follows all settings, including management controls.
+- App Center dashboard includes the Linsoft logo, live app/favorite totals, section shortcuts and an accessible filtered catalog result count
 - Downloads panel
-- Optional exit cleanup clears cookies and shader cache while preserving websites' local storage and IndexedDB
 - OpenVPN support
 - Built-in Tor Expert Bundle for static onion hosting
 - Linux `.deb` packaging support
-- Local camera test in Settings -> Privacy, with device selection and live preview.
-  It requests separate consent, captures video only, and never records or uploads
-  images. Stop, changing the camera, leaving the panel/tab, hiding the window,
-  or the 60-second limit releases capture. Camera drivers and system privacy
-  permissions must be available; a missing camera produces an explicit message.
 
 ## Requirements
 
@@ -43,251 +73,25 @@ npm install
 npm start
 ```
 
-## Experimental native tab engine
-
-The native `WebContentsView` tab engine remains opt-in while it receives wider
-runtime testing. To try it from PowerShell:
-
-```powershell
-$env:LINSOFT_NATIVE_TABS = '1'
-npm start
-```
-
-Both tab engines now share navigation-history and page-state handling. The
-native engine also restores muted tabs, suspends inactive pages, recreates
-crashed renderers, and enables Chromium's PDF plugin only for PDF URLs (local
-files are validated before opening). `npm test` covers these shared policies
-and lifecycle rules. Run `npm run test:electron-smoke` for an isolated,
-headless Electron check of startup, local navigation, back/forward, bookmark
-suggestions, popup tabs, suspension/restoration and draft preservation in both
-tab engines, including keyboard tab search, backup export/import, and explicit
-renderer crash recovery. It does not cover downloads, PDF rendering, full
-session restoration, or real websites. Keep the native engine opt-in until
-those workflows are manually checked on Windows and Linux.
-
-To also verify two consecutive address-bar searches against the live Linsoft
-Search website, run:
-
-```powershell
-$env:LINSOFT_SMOKE_LIVE_SEARCH = '1'
-npm run test:electron-smoke
-Remove-Item Env:LINSOFT_SMOKE_LIVE_SEARCH
-```
-
-This opt-in check submits public test queries to the live service and verifies
-that the results view contains links in both tab engines. It requires internet
-access. Source changes are used by `npm start`; an already installed executable
-needs a rebuilt package to include them.
-
-Linsoft Search queries use a narrowly scoped session preload to hide the initial
-search form before rendering. Search starts at DOM readiness rather than waiting
-for all page resources. Opening the search homepage without a query is unchanged.
-The browser waits up to 10 seconds for the site's search function or form,
-submits once, and avoids resubmitting a query already handled by the site.
-Failures produce a browser notification. The temporary hiding is removed when
-the results view starts, or after 15 seconds with a visible retry message if
-initialization fails. The preload exposes no IPC or Node APIs to websites.
-Native URL query support still requires a change in the separately hosted Search
-project; this repository only contains the browser-side integration.
-
-## Address suggestions and inactive tabs
-
-Address recognition supports domain names (including international names), local
-servers, IPv4/IPv6, paths, query strings and fragments. Search phrases stay search
-queries; malformed addresses and unsafe schemes are rejected with a notification.
-Suggestions are computed locally from history and bookmarks, matching without
-diacritics and ranking exact matches above prefixes, then considering bookmarks,
-recency and visit count. One-character typos and adjacent swapped letters can
-offer similar titles/domains, below literal matches, without changing the typed
-address or automatically navigating. Matching open tabs offer a switch action
-instead of opening duplicates. Prepared local indexes are rebuilt when history
-or bookmarks change; typing is debounced by 80 ms. Guest windows do not show
-these suggestions. No suggestion queries are sent to a server.
-
-Local suggestion learning is enabled by default. Selecting a suggestion records
-the normalized typed query, canonical destination URL, bounded selection count
-and timestamp (at most 200 query/URL pairs). The bonus only changes ordering within
-the same match strength; similar spellings cannot displace literal matches.
-The advanced settings can disable both recording and personalization, or erase
-the learned order. Guest windows never learn. Clearing history/browser data also
-erases learned order; removing a history suggestion forgets its destination's
-learning. Other browser windows refresh learned data when local storage changes.
-
-When inactive-tab suspension is enabled, the browser checks once a minute and
-considers at most two tabs, oldest first. With less than 15% free system RAM the
-inactivity threshold is 5 minutes, with at least 40% it is 20 minutes, otherwise
-10 minutes. A failed memory measurement is reported and no tabs are unloaded.
-Active,
-pinned, locked, loading and audio-playing tabs, YouTube, supported Office document
-pages and Linsoft Chat are excluded. Before unloading, both engines check for
-playing media, live media tracks, editable documents and filled/changed forms,
-including same-origin frames. Inaccessible frames conservatively prevent
-suspension. Trusted form edits protect the document until navigation/reload, even
-after the visible field is cleared; this deliberately favors draft safety.
-Selecting a suspended tab reloads its URL. Arbitrary in-memory website state
-or calls without DOM media cannot be fully detected. The tab context menu's
-“Túto stránku nikdy neuspávať” saves an exception for the exact origin (scheme,
-host and port), covering all its tabs. Remove exceptions in the settings'
-performance section or using the same menu. Guest exceptions stay in the guest
-profile. Pin or lock individual tabs that must not be unloaded.
-
-Among eligible tabs, suspension favors larger measured Chromium processes,
-dividing their working set by the number of associated web contents when shared,
-then breaking ties by inactivity. This is a prioritization estimate, not exact
-per-page allocation or guaranteed freed RAM. The advanced settings' performance
-overview shows measured process working sets, shared-process labels and protection
-reasons, alongside the existing page-load measurements. Measurements are local,
-refreshed on request and during the minute-based suspension check.
-
-Before suspension the browser remembers the top-level URL and scroll position.
-After reloading the same URL, both engines restore it with a bounded three-second
-layout wait. User interaction cancels restoration; navigation to another URL
-does not receive the old position. Changed layouts may prevent exact restoration
-and produce a notification. Nested-frame scroll positions and arbitrary website
-application state are not restored.
-
-A narrow isolated preload records trusted edits and installs main-world activity
-tracking before website scripts. Open RTCPeerConnection objects (even while
-connecting), pending/live camera, microphone or display-capture tracks, non-read
-fetch requests and XHR requests prevent suspension. Closing peers, stopping
-capture tracks or finishing requests releases that protection; edits remain
-protected until document navigation. Browser downloads also protect their source
-web contents. Frame reports are kept in the main process; no general-purpose IPC
-or Node API is exposed to websites. These are conservative detectors, not a
-universal guarantee: workers, unusual native API replacements, cloned media
-tracks, socket uploads without tracked peers and browser-native form submissions
-may need an explicit never-suspend exception.
-
-When a renderer crashes, its tab shows an explicit recovery screen instead of
-reloading on selection. Recovery recreates only the selected tab, preserves its
-browser navigation history and warns that unsaved site edits may have been lost.
-The crash marker survives session restoration, so restarting the browser does
-not silently reload a previously crashed document.
-Tabs sharing the crashed Chromium process may all be affected. This does not
-recover documents from renderer memory or replace website autosave/backups.
-
-## Downloads
-
-Downloads, including executable files, do not show an additional file-extension
-warning. The existing save-location prompt still follows the download settings.
-Downloaded files are not automatically executed. Only run files from sources
-you trust. The Electron smoke test downloads an inert `.exe`-named fixture and
-checks its saved contents in both tab engines without opening it.
-
-## Website camera and microphone
-
-New profiles allow websites to request camera and microphone access. This does
-not grant access automatically: the browser asks whether to block, allow this
-request, or always allow the requesting website. Existing global settings and
-saved website blocks are preserved.
-
-If a website cannot request access, enable Camera and Microphone in Settings >
-Privacy and security. These toggles are saved and applied immediately. Remove
-an old website block from the saved permissions list, then retry on the website.
-Capture requires HTTPS or a trustworthy local origin and working device access
-in the operating system. Browser permission cannot override OS privacy controls.
-
-Settings > Privacy and security includes a microphone test with a live input
-level meter and an input-device selector. Device names become available after
-granting the first test permission; use Refresh devices after plugging in a
-microphone. Changing the selection stops capture; start the test again to use
-that exact input. An unavailable selected device reports an error rather than
-silently using another microphone. The choice only applies to this test.
-Start it and confirm the separate local-test permission, then speak
-and check that the meter responds. Audio is analyzed locally without recording,
-playback or transmission. Stop ends capture; leaving the panel/tab or hiding the
-window also stops the test, and it ends automatically after 60 seconds.
-The test permission is temporary, audio-only and restricted to the browser UI;
-it does not enable microphone access for websites or change saved blocks.
-
-The Electron smoke test uses simulated devices, not your real camera or
-microphone. It verifies website capture in both tab engines, one-time and saved
-approval, rejection, and immediate global blocking. Only the test process mocks
-the permission dialog responses; the normal app still asks the user.
-
-## Update notifications on Windows and Debian
-
-Packaged Linux builds check the latest stable GitHub release eight seconds after
-startup and every six hours, using the same automatic-check setting and update
-banner as Windows. Manual checks are available in Settings > Updates. Development
-builds do not check for updates automatically.
-
-Automatic checks respect the setting on both Windows and Debian. Closing the
-update banner hides it only until the next update-state notification: each
-successful check that finds a newer version shows the banner again, including
-the same version previously dismissed. No banner is shown when already current.
-
-Only a newer release with an uploaded `.deb` matching the current architecture
-is offered. The download button opens the official GitHub package URL; install
-the downloaded package with the system package manager. The browser does not
-request administrator privileges or silently install or restart on Linux.
-Network errors and missing packages are reported in Settings > Updates.
-GitHub receives the usual network request information during these checks.
-
-For opt-in automatic Debian installation through signed APT and
-unattended-upgrades, see [APT setup](./packaging/APT_UPDATES.md). It requires
-repository-signing configuration before deployment and one-time administrator
-setup on Debian. System APT upgrades are independent of the browser's
-notification setting; the browser itself never gains root privileges.
-
-## Website hosting
-
-The static website and its optimized, locally hosted browser screenshots are in
-[`docs/`](./docs/). GitHub Actions deploys it to
-[GitHub Pages](https://linsoft1.github.io/v2.0.1/) when changes to that folder
-are pushed to `main`. Before the first deployment, enable GitHub Pages in the
-repository settings under **Settings > Pages**, with **GitHub Actions** as the
-build and deployment source.
-
-## License
-
-Original Linsoft Browser source code is released under the [MIT License](./LICENSE).
-You may use, modify, redistribute, and sell it, provided the copyright and
-license notice are included. Third-party libraries, trademarks, and third-party
-content shown in website screenshots retain their own licenses and are not
-relicensed by the Linsoft license.
-
 ## Validate the project
 
 ```powershell
 & "C:\Users\Martin\AppData\Local\Microsoft\WinGet\Packages\OpenJS.NodeJS.LTS_Microsoft.Winget.Source_8wekyb3d8bbwe\node-v24.19.0-win-x64\npm.cmd" test
 ```
 
-The live Tor hosting smoke test is separate because it requires a working Tor network connection:
+The live Tor hosting smoke test is separate because it requires a working Tor network connection. It uses an isolated temporary Tor data directory and an automatically selected local SOCKS port; it does not reuse or unlock another Tor instance's data:
 
 ```powershell
 npm run test:tor
 ```
 
-## Google sign-in and website device registration
+Navigation UI checks launch isolated Electron profiles for both tab engines, verify the real 15-second slow-load threshold, stopping website requests, error recovery, controlled Tor status updates, settings search, saved/discarded drafts, tab-switch preservation, departure/close guards, remembered advanced groups, VPN button availability, the OpenVPN status API, and real downloads from a local test website. Downloads are checked for saved contents, completed progress, unknown-size progress, failure filtering and clearing history while preserving active downloads. VPN process lifecycle tests in `npm test` use controlled process events without changing network routing. Neither suite establishes a real VPN connection or downloads a packaged application update:
 
-Google can reject sign-in with "This browser or app may not be secure". Linsoft
-Browser detects Google's `deniedsigninrejected`, `disallowed_useragent`, and
-`restricted_useragent` error URLs in regular and native tabs, including popups.
-Google Identity Services and OAuth popup URLs from the exact HTTPS
-`accounts.google.com` origin open in a separate sandboxed window using the
-originating tab's browser session; other site popups continue to open as tabs.
-This preserves the popup flow without bypassing Google's user-agent restrictions.
-It offers to restart at the originating website's home address in an installed
-Microsoft Edge or Google Chrome on Windows, or Google Chrome, Firefox, or
-Microsoft Edge on Linux. If none is found, the address can be copied manually.
-The selected browser is launched directly, avoiding a loop when Linsoft Browser
-is the system default.
+```powershell
+npm run test:navigation
+```
 
-This is a fallback, not a bypass of Google's sign-in restrictions. Only the
-website origin is passed; paths, query parameters, fragments, passwords, cookies,
-and OAuth tokens are not transferred. Sign-in and any device registration must
-be restarted and completed in the other browser. Its own profile is used even
-when the originating Linsoft Browser window is a guest window; a confirmation
-is required before launching it. This does not sign the user into the original
-Linsoft Browser tab or add USB/passkey device support.
-
-`npm test` includes offline tests for rejected sign-in detection, the allowed
-Google popup origins, popup origin tracking, subframe isolation, safe launch
-arguments, and launch failures. `npm run test:electron-smoke` verifies the
-Google popup window in both tab engines.
-Actual Google sign-in and device registration still require a manual test on
-the affected website with the user's device and account.
+Stopping an onion navigation cancels that tab's pending navigation, not the shared Tor service used by other tabs.
 
 ## Onion chat 1:1
 
@@ -309,9 +113,8 @@ node tools/verify-deb.cjs
 
 ## Release state
 
-Release build and package validation results are recorded in
-[RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md).
+The current project state is validated and ready for release based on successful project validation and Debian package verification.
 
 ## Notes
 
-Use `npm.cmd` from PowerShell on Windows when the `npm` command is not available.
+The shell environment used during verification did not have `npm` on PATH in one session, but the project itself passed validation when run with the explicit npm path. The core app and packaging flow are therefore considered valid.
