@@ -18,7 +18,9 @@ const { getCertificateWarningDetails, isLocalCertificateHost } = require('./lib/
 const browserName = 'Linsoft Browser';
 app.setName(browserName);
 app.setAppUserModelId('sk.linsoft.browser');
-const isPackagedBuild = app.isPackaged && process.env.LINSOFT_DEV_LAUNCH !== '1';
+// Set by Linsoft Runtime when the browser is started from an installed .lsa package.
+const lsaHost = globalThis.linsoftLsaHost || null;
+const isPackagedBuild = !lsaHost && app.isPackaged && process.env.LINSOFT_DEV_LAUNCH !== '1';
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { autoUpdater = null; }
 let updateState = { status: 'idle' };
@@ -71,7 +73,42 @@ function publishUpdateState(state) {
   }
 }
 
+async function checkLsaUpdate() {
+  try {
+    const state = { ...(await lsaHost.checkForUpdate()), checkedAt: Date.now() };
+    publishUpdateState(state);
+    return { ok: true, ...state };
+  } catch (error) {
+    const state = { ...formatUpdateFailure(error), checkedAt: Date.now() };
+    publishUpdateState(state);
+    return state;
+  }
+}
+
+async function downloadLsaUpdate() {
+  publishUpdateState({ status: 'downloading', version: updateState.version, percent: 0 });
+  try {
+    const result = await lsaHost.downloadUpdate((percent) => publishUpdateState({ status: 'downloading', version: updateState.version, percent }));
+    publishUpdateState({ status: 'downloaded', version: result.version });
+    return { ok: true };
+  } catch (error) {
+    const state = { ...formatUpdateFailure(error), checkedAt: Date.now() };
+    publishUpdateState(state);
+    return state;
+  }
+}
+
+function setupLsaUpdates() {
+  const checkForUpdates = () => {
+    if (browserPreferences.autoUpdateCheck === false || ['downloading', 'downloaded'].includes(updateState.status)) return;
+    checkLsaUpdate().catch(() => {});
+  };
+  setTimeout(checkForUpdates, 8000);
+  setInterval(checkForUpdates, 6 * 60 * 60 * 1000);
+}
+
 function setupAutoUpdater() {
+  if (lsaHost) { setupLsaUpdates(); return; }
   if (!autoUpdater || !isPackagedBuild || process.platform !== 'win32') return;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -1243,11 +1280,12 @@ ipcMain.handle('clipboard-write-image', async (_event, url) => {
 ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('update-state', () => updateState);
 ipcMain.handle('update-check', async () => {
+  if (lsaHost) return checkLsaUpdate();
   if (!autoUpdater || !isPackagedBuild) return { ok: false, status: 'unavailable', message: 'Aktualizácie sú dostupné iba v nainštalovanej verzii.' };
   try { autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true; const result = await autoUpdater.checkForUpdates(); const state = { ...getUpdateStatus(app.getVersion(), result?.updateInfo), checkedAt: Date.now() }; publishUpdateState(state); return { ok: true, ...state }; } catch (error) { const state = { ...formatUpdateFailure(error), checkedAt: Date.now() }; publishUpdateState(state); return state; }
 });
-ipcMain.handle('update-download', async () => { if (!autoUpdater) return { ok: false }; try { await autoUpdater.downloadUpdate(); return { ok: true }; } catch (error) { return formatUpdateFailure(error); } });
-ipcMain.on('update-install', () => { if (autoUpdater) autoUpdater.quitAndInstall(); });
+ipcMain.handle('update-download', async () => { if (lsaHost) return downloadLsaUpdate(); if (!autoUpdater) return { ok: false }; try { await autoUpdater.downloadUpdate(); return { ok: true }; } catch (error) { return formatUpdateFailure(error); } });
+ipcMain.on('update-install', () => { if (lsaHost) lsaHost.restartToUpdate(); else if (autoUpdater) autoUpdater.quitAndInstall(); });
 ipcMain.handle('password-list', (event) => isGuestWebContents(event.sender) ? [] : passwordVault.map(({ id, hostname, username, createdAt, updatedAt }) => ({ id, hostname, username, createdAt, updatedAt })));
 ipcMain.handle('password-get', (event, id) => { if (isGuestWebContents(event.sender)) return null; const entry = passwordVault.find((item) => item.id === id); return entry ? { hostname: entry.hostname, username: entry.username, password: entry.password } : null; });
 ipcMain.handle('password-save', (event, entry) => {
@@ -2342,7 +2380,7 @@ ipcMain.handle('install-web-app', async (_event, data) => {
     const fs = require('node:fs');
     const desktopDir = path.join(os.homedir(), 'Desktop');
     const desktopFile = path.join(desktopDir, `${shortcutName}.desktop`);
-    const iconPath = path.join(app.getAppPath(), 'assets', 'linsoft-icon-256.png');
+    const iconPath = path.join(__dirname, 'assets', 'linsoft-icon-256.png');
     const content = [
       '[Desktop Entry]',
       'Version=1.0',

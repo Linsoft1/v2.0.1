@@ -1,0 +1,13 @@
+{
+  "name": "linsoft-runtime",
+  "productName": "Linsoft Runtime",
+  "version": "1.0.0",
+  "description": "Linsoft Runtime – inštaluje a spúšťa podpísané balíky Linsoft aplikácií (.lsa)",
+  "main": "main.cjs",
+  "author": {
+    "name": "Martin Pastorek",
+    "email": "support@linsoft.local"
+  },
+  "homepage": "https://github.com/Linsoft1/v2.0.1",
+  "license": "MIT"
+}

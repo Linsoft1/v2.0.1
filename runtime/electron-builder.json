@@ -1,0 +1,59 @@
+{
+  "appId": "sk.linsoft.runtime",
+  "productName": "Linsoft Runtime",
+  "electronVersion": "44.4.5",
+  "directories": {
+    "app": "runtime",
+    "output": "dist-runtime"
+  },
+  "asar": false,
+  "files": [
+    "main.cjs",
+    "package.json",
+    "trusted-keys.json",
+    "lib/**/*",
+    "!node_modules/**/*"
+  ],
+  "npmRebuild": false,
+  "afterPack": "scripts/set-exe-icon.cjs",
+  "fileAssociations": [
+    {
+      "ext": "lsa",
+      "name": "Linsoft aplikácia",
+      "description": "Linsoft aplikácia (.lsa)",
+      "mimeType": "application/x-linsoft-app",
+      "role": "Viewer"
+    }
+  ],
+  "win": {
+    "target": "nsis",
+    "icon": "assets/linsoft-icon.ico",
+    "artifactName": "Linsoft-Runtime-Setup-${version}.${ext}",
+    "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Linsoft Browser (LSA)",
+    "installerIcon": "assets/linsoft-icon.ico",
+    "uninstallerIcon": "assets/linsoft-icon.ico"
+  },
+  "linux": {
+    "target": ["deb"],
+    "icon": "assets/linsoft-icon-256.png",
+    "category": "Network;WebBrowser",
+    "executableName": "linsoft-runtime",
+    "artifactName": "Linsoft-Runtime-${version}-${arch}.${ext}",
+    "synopsis": "Spúšťa Linsoft Browser z balíkov .lsa",
+    "description": "Linsoft Runtime inštaluje, overuje podpis a spúšťa Linsoft Browser a ďalšie Linsoft aplikácie z balíkov .lsa."
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "Linsoft1",
+    "repo": "v2.0.1",
+    "private": false
+  }
+}

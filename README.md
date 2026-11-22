@@ -111,6 +111,25 @@ node tools/build-deb.cjs
 node tools/verify-deb.cjs
 ```
 
+## Linsoft package (.lsa) and Linsoft Runtime
+
+The whole browser can also be distributed as one signed, cross-platform file `Linsoft-Browser-<version>.lsa`. It is a ZIP archive with `manifest.json` (SHA-256 of every file), `signature.sig` (Ed25519 over the manifest) and the application files, including the Tor binaries for Windows and Linux.
+
+Users install **Linsoft Runtime** once (`dist-runtime/Linsoft-Runtime-Setup-<version>.exe`, or the `.deb`). It registers `.lsa`, verifies the signature and every file hash, installs into `%LOCALAPPDATA%\Linsoft\Runtime` (Linux: `~/.local/share/linsoft-runtime`), and starts the browser from there. It keeps the previous version and automatically switches back to it when a new version fails to start twice (or manually with `"Linsoft Runtime" --rollback`). In runtime mode, update checks look for the `.lsa` asset on the latest GitHub release instead of using `electron-updater`.
+
+```powershell
+npm run lsa:keygen          # once: private key in ~/.linsoft/lsa-signing-key.pem (BACK IT UP), public key → runtime/trusted-keys.json
+npm run build:lsa           # dist-lsa/Linsoft-Browser-<version>.lsa  (--platform win32|linux for a smaller single-platform package)
+npm run build:runtime       # dist-runtime/Linsoft-Runtime-Setup-<runtime version>.exe
+npm run build:runtime:linux # dist-runtime/Linsoft-Runtime-<runtime version>-amd64.deb
+npm run runtime             # development runtime (LINSOFT_RUNTIME_HOME overrides the install folder)
+npm run test:lsa            # end-to-end test of the built .lsa (add -- --skip-tor without network)
+```
+
+`test:lsa` checks the signature and every file hash, refuses damaged/foreign packages, installs the package through the runtime like a double-click, starts the browser and checks its features (including Tor from the package), starts it with the packaged runtime from `dist-runtime`, and verifies automatic rollback. It uses a temporary runtime folder and profile, so real user data is not touched.
+
+Never commit the private key. A runtime only trusts keys listed in `runtime/trusted-keys.json` at the time it was built, so losing the key means users must reinstall the runtime.
+
 ## Release state
 
 The current project state is validated and ready for release based on successful project validation and Debian package verification.

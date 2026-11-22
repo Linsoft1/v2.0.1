@@ -9,10 +9,10 @@ module.exports = async function setExecutableIcon(context) {
     icon: iconPath,
     'version-string': {
       CompanyName: 'Linsoft',
-      FileDescription: 'Linsoft Browser',
+      FileDescription: context.packager.appInfo.productName,
       InternalName: context.packager.appInfo.productFilename,
       OriginalFilename: `${context.packager.appInfo.productFilename}.exe`,
-      ProductName: 'Linsoft Browser'
+      ProductName: context.packager.appInfo.productName
     }
   });
   console.log(`Embedded Linsoft icon in ${executablePath}`);
