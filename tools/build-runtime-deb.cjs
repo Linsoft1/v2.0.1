@@ -3,7 +3,7 @@
 //   npm run build:runtime:linux     (runs electron-builder --dir, then this script)
 //
 // Installs to /opt/Linsoft Runtime, adds /usr/bin/linsoft-runtime, a desktop entry and the
-// application/x-linsoft-app MIME type so double-clicking an .lsa file opens Linsoft Runtime.
+// application/x-linsoft-runtime-package MIME type so double-clicking an .lsr file opens Linsoft Runtime.
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
@@ -106,24 +106,24 @@ for (const executable of executableModes.keys()) if (!fs.existsSync(path.join(ap
 
 const desktop = [
   '[Desktop Entry]',
-  'Name=Linsoft Browser (LSA)',
+  'Name=Linsoft Browser (LSR)',
   'GenericName=Linsoft Runtime',
-  'Comment=Spúšťa Linsoft Browser a aplikácie z podpísaných balíkov .lsa',
+  'Comment=Spúšťa Linsoft Browser a aplikácie z podpísaných balíkov .lsr',
   `Exec="/${installDir}/linsoft-runtime" %F`,
   'Icon=linsoft-runtime',
   'Terminal=false',
   'Type=Application',
   'Categories=Network;WebBrowser;',
-  'MimeType=application/x-linsoft-app;',
+  'MimeType=application/x-linsoft-runtime-package;',
   'StartupWMClass=Linsoft Browser',
   ''
 ].join('\n');
 const mimeXml = [
   '<?xml version="1.0" encoding="UTF-8"?>',
   '<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">',
-  '  <mime-type type="application/x-linsoft-app">',
-  '    <comment>Linsoft aplikácia</comment>',
-  '    <glob pattern="*.lsa"/>',
+  '  <mime-type type="application/x-linsoft-runtime-package">',
+  '    <comment>Linsoft Runtime balík</comment>',
+  '    <glob pattern="*.lsr"/>',
   '  </mime-type>',
   '</mime-info>',
   ''
@@ -150,7 +150,7 @@ entries.push({ name: 'usr/share/mime/packages/linsoft-runtime.xml', data: Buffer
 directories(entries, 'usr/share/icons/hicolor/256x256/apps');
 entries.push({ name: 'usr/share/icons/hicolor/256x256/apps/linsoft-runtime.png', data: fs.readFileSync(path.join(root, 'assets', 'linsoft-icon-256.png')) });
 directories(entries, 'usr/share/icons/hicolor/256x256/mimetypes');
-entries.push({ name: 'usr/share/icons/hicolor/256x256/mimetypes/application-x-linsoft-app.png', data: fs.readFileSync(path.join(root, 'assets', 'linsoft-icon-256.png')) });
+entries.push({ name: 'usr/share/icons/hicolor/256x256/mimetypes/application-x-linsoft-runtime-package.png', data: fs.readFileSync(path.join(root, 'assets', 'linsoft-icon-256.png')) });
 
 const payloadBytes = entries.reduce((sum, entry) => sum + (entry.data ? entry.data.length : 0), 0);
 const md5sums = entries.filter((entry) => entry.type !== '5' && entry.type !== '2' && entry.data).map((entry) => `${crypto.createHash('md5').update(entry.data).digest('hex')}  ${entry.name}`).join('\n');
@@ -162,9 +162,9 @@ const control = [
   'Architecture: amd64',
   `Installed-Size: ${Math.ceil(payloadBytes / 1024)}`,
   'Maintainer: Martin Pastorek <support@linsoft.local>',
-  'Description: Linsoft Runtime – installs and runs signed .lsa packages',
+  'Description: Linsoft Runtime – installs and runs signed .lsr packages',
   ' Verifies, installs and starts Linsoft Browser and other Linsoft',
-  ' applications distributed as signed .lsa packages.',
+  ' applications distributed as signed .lsr packages.',
   ''
 ].join('\n');
 

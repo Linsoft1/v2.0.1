@@ -2,8 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createLsaStore, MAX_FAILED_LAUNCHES } = require('../runtime/lib/lsa-store.cjs');
-const { createKey, tempDir, writePackage } = require('./lsa-test-helpers.cjs');
+const { createLsaStore, MAX_FAILED_LAUNCHES } = require('../runtime/lib/lsr-store.cjs');
+const { createKey, tempDir, writePackage } = require('./lsr-test-helpers.cjs');
 
 const key = createKey();
 const ID = 'sk.linsoft.browser';
@@ -11,7 +11,7 @@ const ID = 'sk.linsoft.browser';
 function setup(options = {}) {
   const dir = tempDir();
   const store = createLsaStore({ root: path.join(dir, 'home'), trustedKeys: [key.trusted], runtimeVersion: '1.0.0', electronVersion: '44.4.5', ...options });
-  const pkg = (version, extra = {}) => writePackage(path.join(dir, `${version}-${Math.random()}.lsa`), { key, version, ...extra });
+  const pkg = (version, extra = {}) => writePackage(path.join(dir, `${version}-${Math.random()}.lsr`), { key, version, ...extra });
   return { store, pkg };
 }
 

@@ -1,13 +1,13 @@
-// Creates the Ed25519 key that signs Linsoft .lsa packages.
+// Creates the Ed25519 key that signs Linsoft .lsr packages.
 // The private key stays outside the repository (default: ~/.linsoft/lsa-signing-key.pem);
 // the public key is added to runtime/trusted-keys.json so Linsoft Runtime trusts it.
 //
-//   node tools/lsa-keygen.cjs [--key <path>] [--name "Linsoft"]
+//   node tools/lsr-keygen.cjs [--key <path>] [--name "Linsoft"]
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { publicKeyId } = require('../runtime/lib/lsa-format.cjs');
+const { publicKeyId } = require('../runtime/lib/lsr-format.cjs');
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(name);

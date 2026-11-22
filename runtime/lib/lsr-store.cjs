@@ -1,12 +1,12 @@
 'use strict';
-// Installed .lsa applications: <root>/apps/<id>/versions/<version>/ plus state.json
+// Installed .lsr applications: <root>/apps/<id>/versions/<version>/ plus state.json
 // with the current and previous version. A freshly installed version is "pending"
 // until the app reports a healthy start; after repeated failed starts the store
 // falls back to the previous version automatically.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { LsaError, compareVersions, extractLsaPackage, openLsaPackage, verifyInstalledApp } = require('./lsa-format.cjs');
+const { LsaError, compareVersions, extractLsaPackage, openLsaPackage, verifyInstalledApp } = require('./lsr-format.cjs');
 
 const MAX_FAILED_LAUNCHES = 2;
 

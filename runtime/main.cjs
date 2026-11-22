@@ -1,8 +1,8 @@
 'use strict';
-// Linsoft Runtime: installs signed .lsa packages and starts Linsoft Browser from them.
+// Linsoft Runtime: installs signed .lsr packages and starts Linsoft Browser from them.
 //
 //   Linsoft Runtime                 → start the installed Linsoft Browser
-//   Linsoft Runtime file.lsa        → verify, confirm and install the package, then start it
+//   Linsoft Runtime file.lsr        → verify, confirm and install the package, then start it
 //   Linsoft Runtime --rollback      → switch back to the previously installed version
 //
 // The browser runs inside this process: after the installed copy is verified, its main
@@ -13,11 +13,11 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { Worker } = require('node:worker_threads');
-const { compareVersions } = require('./lib/lsa-format.cjs');
-const { createLsaStore } = require('./lib/lsa-store.cjs');
+const { compareVersions } = require('./lib/lsr-format.cjs');
+const { createLsaStore } = require('./lib/lsr-store.cjs');
 
 const BROWSER_ID = 'sk.linsoft.browser';
-const DEFAULT_UPDATES = { github: 'Linsoft1/v2.0.1', asset: 'Linsoft-Browser-{version}.lsa' };
+const DEFAULT_UPDATES = { github: 'Linsoft1/v2.0.1', asset: 'Linsoft-Browser-{version}.lsr' };
 const RUNTIME_NAME = 'Linsoft Runtime';
 const runtimeVersion = app.getVersion();
 // Automated tests only: a development (unpackaged) runtime can skip confirmation dialogs.
@@ -48,7 +48,7 @@ const storeOptions = { root: runtimeHome(), trustedKeys: loadTrustedKeys(), runt
 const store = createLsaStore(storeOptions);
 
 function packageArgument(argv) {
-  return argv.slice(1).find((value) => /\.lsa$/i.test(value) && fs.existsSync(value)) || '';
+  return argv.slice(1).find((value) => /\.lsr$/i.test(value) && fs.existsSync(value)) || '';
 }
 
 function relaunchWithout(value) {
@@ -137,7 +137,7 @@ async function findLatestRelease(updates) {
 async function downloadToFile(url, onProgress) {
   const downloads = path.join(storeOptions.root, 'downloads');
   fs.mkdirSync(downloads, { recursive: true });
-  const target = path.join(downloads, `${crypto.randomBytes(6).toString('hex')}.lsa`);
+  const target = path.join(downloads, `${crypto.randomBytes(6).toString('hex')}.lsr`);
   const response = await net.fetch(url, { headers: { 'User-Agent': 'Linsoft-Runtime' } });
   if (!response.ok || !response.body) throw new Error(`Sťahovanie zlyhalo (${response.status}).`);
   const total = Number(response.headers.get('content-length')) || 0;
@@ -194,12 +194,12 @@ function createHost(installed) {
 // ------------------------------------------------------------------ startup
 
 async function installFromPicker() {
-  const { response } = await dialog.showMessageBox({ type: 'info', title: RUNTIME_NAME, message: 'Linsoft Browser ešte nie je nainštalovaný.', detail: 'Stiahni najnovšiu verziu z internetu alebo vyber balík .lsa z počítača.', buttons: ['Stiahnuť najnovšiu', 'Vybrať súbor .lsa', 'Zavrieť'], defaultId: 0, cancelId: 2, noLink: true });
+  const { response } = await dialog.showMessageBox({ type: 'info', title: RUNTIME_NAME, message: 'Linsoft Browser ešte nie je nainštalovaný.', detail: 'Stiahni najnovšiu verziu z internetu alebo vyber balík .lsr z počítača.', buttons: ['Stiahnuť najnovšiu', 'Vybrať súbor .lsr', 'Zavrieť'], defaultId: 0, cancelId: 2, noLink: true });
   if (response === 0) {
     const progress = progressWindow('Sťahujem Linsoft Browser');
     try {
       const latest = await findLatestRelease(DEFAULT_UPDATES);
-      if (!latest?.url) throw new Error('Na GitHube zatiaľ nie je zverejnený balík .lsa.');
+      if (!latest?.url) throw new Error('Na GitHube zatiaľ nie je zverejnený balík .lsr.');
       const file = await downloadToFile(latest.url, (percent) => progress.set(Math.round(percent * 0.8)));
       try {
         progress.set(80, 'Inštalujem…');
@@ -213,7 +213,7 @@ async function installFromPicker() {
     } finally { progress.close(); }
   }
   if (response === 1) {
-    const picked = await dialog.showOpenDialog({ title: 'Vyber balík Linsoft Browser', properties: ['openFile'], filters: [{ name: 'Linsoft aplikácia', extensions: ['lsa'] }] });
+    const picked = await dialog.showOpenDialog({ title: 'Vyber balík Linsoft Browser', properties: ['openFile'], filters: [{ name: 'Linsoft Runtime balík', extensions: ['lsr'] }] });
     if (picked.canceled || !picked.filePaths[0]) return false;
     return confirmAndInstall(picked.filePaths[0]);
   }

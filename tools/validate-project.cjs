@@ -12,8 +12,8 @@ files.push(path.join('lib', 'page-activity-preload.cjs'));
 files.push(path.join('lib', 'overlay-dismiss-preload.cjs'));
 files.push(path.join('lib', 'browser-algorithms.js'));
 files.push(path.join('lib', 'debian-updates.cjs'));
-for (const file of ['main.cjs', 'lib/lsa-format.cjs', 'lib/lsa-store.cjs', 'lib/install-worker.cjs']) files.push(path.join('runtime', ...file.split('/')));
-files.push(path.join('tools', 'lsa-build.cjs'), path.join('tools', 'lsa-keygen.cjs'), path.join('tools', 'test-lsa.cjs'), path.join('tools', 'build-runtime-deb.cjs'), path.join('tools', 'coreos', 'test-lsa-linux.cjs'));
+for (const file of ['main.cjs', 'lib/lsr-format.cjs', 'lib/lsr-store.cjs', 'lib/install-worker.cjs']) files.push(path.join('runtime', ...file.split('/')));
+files.push(path.join('tools', 'lsr-build.cjs'), path.join('tools', 'lsr-keygen.cjs'), path.join('tools', 'test-lsr.cjs'), path.join('tools', 'build-runtime-deb.cjs'), path.join('tools', 'linux-test', 'test-lsr-linux.cjs'));
 for (const file of files) {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`Syntax error in ${file}: ${result.stderr || result.stdout}`);

@@ -1,6 +1,6 @@
-// End-to-end test of a built Linsoft Browser .lsa package.
+// End-to-end test of a built Linsoft Browser .lsr package.
 //
-//   node tools/test-lsa.cjs [path/to/Linsoft-Browser-<version>.lsa] [--skip-tor]
+//   node tools/test-lsr.cjs [path/to/Linsoft-Browser-<version>.lsr] [--skip-tor]
 //
 // 1. package integrity (signature, every file hash, required files)
 // 2. damaged copies are refused (library and runtime level)
@@ -15,12 +15,12 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const electronPath = require('electron');
-const { ZipReader, ZipWriter, MANIFEST_NAME, SIGNATURE_NAME, extractLsaPackage, openLsaPackage, publicKeyId, sha256, signManifest } = require('../runtime/lib/lsa-format.cjs');
-const { createLsaStore } = require('../runtime/lib/lsa-store.cjs');
+const { ZipReader, ZipWriter, MANIFEST_NAME, SIGNATURE_NAME, extractLsaPackage, openLsaPackage, publicKeyId, sha256, signManifest } = require('../runtime/lib/lsr-format.cjs');
+const { createLsaStore } = require('../runtime/lib/lsr-store.cjs');
 
 const root = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-const lsaFile = path.resolve(process.argv.slice(2).find((arg) => !arg.startsWith('--')) || path.join(root, 'dist-lsa', `Linsoft-Browser-${pkg.version}.lsa`));
+const lsaFile = path.resolve(process.argv.slice(2).find((arg) => !arg.startsWith('--')) || path.join(root, 'dist-lsr', `Linsoft-Browser-${pkg.version}.lsr`));
 const skipTor = process.argv.includes('--skip-tor');
 const trustedKeys = JSON.parse(fs.readFileSync(path.join(root, 'runtime', 'trusted-keys.json'), 'utf8')).keys;
 const runtimeVersion = JSON.parse(fs.readFileSync(path.join(root, 'runtime', 'package.json'), 'utf8')).version;
@@ -161,7 +161,7 @@ async function browserChecks(port, label) {
   const page = await waitForBrowserPage(port);
   const cdp = await connect(page);
   try {
-    await check(`${label}: spustená verzia ${expectedVersion} z nainštalovanej .lsa`, async () => {
+    await check(`${label}: spustená verzia ${expectedVersion} z nainštalovanej .lsr`, async () => {
       const version = await cdp.evaluate('window.linsoftBrowser.getVersion()');
       assert(version === expectedVersion, `verzia je ${version}`);
       const href = await cdp.evaluate('location.href');
@@ -176,8 +176,8 @@ async function browserChecks(port, label) {
 }
 
 async function main() {
-  console.log(`Linsoft .lsa test · ${path.relative(root, lsaFile)}\nPracovný priečinok: ${work}\n`);
-  assert(fs.existsSync(lsaFile), `Balík neexistuje: ${lsaFile} (spusti npm run build:lsa)`);
+  console.log(`Linsoft .lsr test · ${path.relative(root, lsaFile)}\nPracovný priečinok: ${work}\n`);
+  assert(fs.existsSync(lsaFile), `Balík neexistuje: ${lsaFile} (spusti npm run build:lsr)`);
 
   console.log('— 1. Integrita balíka');
   let manifest;
@@ -212,7 +212,7 @@ async function main() {
   });
 
   console.log('\n— 2. Poškodené a podvrhnuté balíky');
-  const flipped = path.join(work, 'flipped.lsa');
+  const flipped = path.join(work, 'flipped.lsr');
   copyWithFlippedByte(lsaFile, flipped, 'app.js');
   await check('zmenený bajt v app.js sa odhalí', () => {
     const opened = openLsaPackage(flipped, trustedKeys);
@@ -220,7 +220,7 @@ async function main() {
     throw new Error('poškodený balík prešiel');
   });
   await check('orezaný (nedostiahnutý) balík sa odmietne', () => {
-    const truncated = path.join(work, 'truncated.lsa');
+    const truncated = path.join(work, 'truncated.lsr');
     const data = fs.readFileSync(lsaFile);
     fs.writeFileSync(truncated, data.subarray(0, Math.floor(data.length * 0.7)));
     try { openLsaPackage(truncated, trustedKeys).reader.close(); } catch (error) { return `odmietnuté (${error.code})`; }
@@ -228,7 +228,7 @@ async function main() {
   });
   await check('balík podpísaný cudzím kľúčom sa odmietne', () => {
     const { privateKey } = crypto.generateKeyPairSync('ed25519');
-    const foreign = path.join(work, 'foreign.lsa');
+    const foreign = path.join(work, 'foreign.lsr');
     writeBrokenUpdate(foreign, privateKey.export({ type: 'pkcs8', format: 'pem' }), '9.9.9');
     try { openLsaPackage(foreign, trustedKeys).reader.close(); } catch (error) { assert(error.code === 'untrusted', error.message); return 'odmietnuté (untrusted)'; }
     throw new Error('cudzí podpis prešiel');
@@ -243,7 +243,7 @@ async function main() {
 
   console.log('\n— 3. Inštalácia dvojklikom a funkcie prehliadača');
   const port = await freePort();
-  await check('runtime nainštaluje .lsa a reštartuje sa do prehliadača', async () => {
+  await check('runtime nainštaluje .lsr a reštartuje sa do prehliadača', async () => {
     const run = await devRuntime([lsaFile, `--remote-debugging-port=${port}`]);
     const code = await Promise.race([run.exited, sleep(180000).then(() => 'timeout')]);
     assert(code === 0, `inštalácia skončila: ${code}\n${run.output().trim()}`);
@@ -276,7 +276,7 @@ async function main() {
       const result = await cdp.evaluate(`Promise.all([window.linsoftBrowser.listDownloads(), window.linsoftBrowser.listSitePermissions(), window.linsoftBrowser.getAdblockStats()]).then(([d, p, a]) => ({ downloads: Array.isArray(d), permissions: Array.isArray(p) || typeof p === 'object', adblock: typeof a === 'object' }))`);
       assert(result.downloads && result.permissions && result.adblock, JSON.stringify(result));
     });
-    await check('kontrola aktualizácií ide cez runtime (.lsa na GitHube)', async () => {
+    await check('kontrola aktualizácií ide cez runtime (.lsr na GitHube)', async () => {
       const result = await cdp.evaluate('window.linsoftBrowser.checkForUpdates()');
       if (result.status === 'error') { warn(`GitHub nedostupný: ${result.message}`); return 'preskočené'; }
       assert(['latest', 'available'].includes(result.status), JSON.stringify(result));
@@ -330,7 +330,7 @@ async function main() {
   fs.writeFileSync(devKeysFile, JSON.stringify({ keys: [{ keyId: publicKeyId(testKeyPem), name: 'E2E test', publicKey: testKeyPem }] }));
   const brokenVersion = '99.0.0';
   await check(`nainštaluje sa pokazená verzia ${brokenVersion}`, () => {
-    const broken = path.join(work, 'broken.lsa');
+    const broken = path.join(work, 'broken.lsr');
     writeBrokenUpdate(broken, privateKey.export({ type: 'pkcs8', format: 'pem' }), brokenVersion);
     const store = storeFor([...trustedKeys, ...JSON.parse(fs.readFileSync(devKeysFile, 'utf8')).keys]);
     store.install(broken);

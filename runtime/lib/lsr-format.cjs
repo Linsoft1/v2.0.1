@@ -1,6 +1,6 @@
 'use strict';
-// Linsoft Application package (.lsa) format.
-// An .lsa file is a ZIP archive that contains `manifest.json`, `signature.sig`
+// Linsoft Application package (.lsr) format.
+// An .lsr file is a ZIP archive that contains `manifest.json`, `signature.sig`
 // and every application file listed (with size and SHA-256) in the manifest.
 // The signature is an Ed25519 signature over the exact bytes of manifest.json,
 // so one signature check plus per-file hash checks authenticate the whole package.
@@ -74,7 +74,7 @@ function compareVersions(a, b) {
 
 function validateManifest(manifest) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw new LsaError('bad-manifest', 'Manifest chýba alebo je poškodený.');
-  if (manifest.lsa !== LSA_FORMAT_VERSION) throw new LsaError('unsupported-format', `Nepodporovaná verzia formátu .lsa: ${manifest.lsa}`);
+  if (manifest.lsa !== LSA_FORMAT_VERSION) throw new LsaError('unsupported-format', `Nepodporovaná verzia formátu .lsr: ${manifest.lsa}`);
   if (typeof manifest.id !== 'string' || !ID_PATTERN.test(manifest.id)) throw new LsaError('bad-manifest', 'Manifest má neplatné id aplikácie.');
   if (typeof manifest.name !== 'string' || !manifest.name.trim() || manifest.name.length > 80) throw new LsaError('bad-manifest', 'Manifest má neplatný názov aplikácie.');
   if (typeof manifest.version !== 'string' || !VERSION_PATTERN.test(manifest.version)) throw new LsaError('bad-manifest', 'Manifest má neplatnú verziu.');
@@ -253,14 +253,14 @@ class ZipReader {
 
   readCentralDirectory() {
     const size = fs.fstatSync(this.fd).size;
-    if (size < 22) throw new LsaError('corrupt', 'Súbor nie je balík .lsa.');
+    if (size < 22) throw new LsaError('corrupt', 'Súbor nie je balík .lsr.');
     const tailLength = Math.min(size, 22 + 0xffff);
     const tail = readAt(this.fd, size - tailLength, tailLength);
     let eocd = -1;
     for (let i = tail.length - 22; i >= 0; i -= 1) {
       if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
     }
-    if (eocd < 0) throw new LsaError('corrupt', 'Súbor nie je balík .lsa.');
+    if (eocd < 0) throw new LsaError('corrupt', 'Súbor nie je balík .lsr.');
     const count = tail.readUInt16LE(eocd + 10);
     const cdSize = tail.readUInt32LE(eocd + 12);
     const cdOffset = tail.readUInt32LE(eocd + 16);
@@ -318,7 +318,7 @@ class ZipReader {
 }
 
 /**
- * Opens an .lsa package, checks its signature against trusted keys and validates the manifest.
+ * Opens an .lsr package, checks its signature against trusted keys and validates the manifest.
  * The caller must close the returned reader.
  */
 function openLsaPackage(filePath, trustedKeys) {

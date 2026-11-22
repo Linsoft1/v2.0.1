@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { MANIFEST_NAME, SIGNATURE_NAME, ZipWriter, publicKeyId, sha256, signManifest } = require('../runtime/lib/lsa-format.cjs');
+const { MANIFEST_NAME, SIGNATURE_NAME, ZipWriter, publicKeyId, sha256, signManifest } = require('../runtime/lib/lsr-format.cjs');
 
 function createKey(name = 'Test') {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
@@ -15,7 +15,7 @@ function tempDir() {
 }
 
 /**
- * Writes an .lsa file. `content` maps package paths to file contents (what the zip holds);
+ * Writes an .lsr file. `content` maps package paths to file contents (what the zip holds);
  * `signedContent` (defaults to `content`) is what the manifest describes and signs.
  */
 function writePackage(file, { key, version = '1.0.0', id = 'sk.linsoft.browser', content = { 'main.cjs': 'module.exports = 1;\n', 'assets/a.txt': 'hello' }, signedContent, manifest: overrides = {}, executable = [] }) {

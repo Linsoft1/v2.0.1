@@ -1,8 +1,8 @@
 {
   "name": "linsoft-runtime",
   "productName": "Linsoft Runtime",
-  "version": "1.0.0",
-  "description": "Linsoft Runtime – inštaluje a spúšťa podpísané balíky Linsoft aplikácií (.lsa)",
+  "version": "1.1.0",
+  "description": "Linsoft Runtime – inštaluje a spúšťa podpísané balíky Linsoft aplikácií (.lsr)",
   "main": "main.cjs",
   "author": {
     "name": "Martin Pastorek",

@@ -1,6 +1,6 @@
-// Builds and signs dist-lsa/Linsoft-Browser-<version>.lsa from this project.
+// Builds and signs dist-lsr/Linsoft-Browser-<version>.lsr from this project.
 //
-//   node tools/lsa-build.cjs [--platform all|win32|linux] [--out dist-lsa] [--key <private key>]
+//   node tools/lsr-build.cjs [--platform all|win32|linux] [--out dist-lsr] [--key <private key>]
 //
 // The package contains the same files as the electron-builder build (package.json "build.files")
 // plus the production node_modules, a manifest with the SHA-256 of every file, and an Ed25519
@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execSync } = require('node:child_process');
-const { LSA_FORMAT_VERSION, MANIFEST_NAME, SIGNATURE_NAME, ZipWriter, sha256, signManifest, validateManifest } = require('../runtime/lib/lsa-format.cjs');
+const { LSA_FORMAT_VERSION, MANIFEST_NAME, SIGNATURE_NAME, ZipWriter, sha256, signManifest, validateManifest } = require('../runtime/lib/lsr-format.cjs');
 
 const root = path.resolve(__dirname, '..');
 const MIN_RUNTIME_VERSION = '1.0.0';
@@ -67,14 +67,14 @@ function main() {
   const platform = argument('--platform', 'all');
   if (!['all', 'win32', 'linux'].includes(platform)) throw new Error('--platform musí byť all, win32 alebo linux');
   const keyPath = path.resolve(argument('--key', process.env.LINSOFT_LSA_KEY || path.join(os.homedir(), '.linsoft', 'lsa-signing-key.pem')));
-  if (!fs.existsSync(keyPath)) throw new Error(`Chýba podpisový kľúč ${keyPath}. Vytvor ho príkazom: npm run lsa:keygen`);
-  const outDir = path.resolve(root, argument('--out', 'dist-lsa'));
+  if (!fs.existsSync(keyPath)) throw new Error(`Chýba podpisový kľúč ${keyPath}. Vytvor ho príkazom: npm run lsr:keygen`);
+  const outDir = path.resolve(root, argument('--out', 'dist-lsr'));
 
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const electronVersion = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', 'electron', 'package.json'), 'utf8')).version;
   const publish = pkg.build?.publish || {};
   const suffix = platform === 'all' ? '' : `-${platform}`;
-  const assetPattern = `Linsoft-Browser-{version}${suffix}.lsa`;
+  const assetPattern = `Linsoft-Browser-{version}${suffix}.lsr`;
 
   const absoluteFiles = collectProjectFiles(pkg.build.files);
   collectProductionModules(absoluteFiles);
@@ -107,7 +107,7 @@ function main() {
   const signature = signManifest(manifestBytes, fs.readFileSync(keyPath, 'utf8'));
   const trusted = JSON.parse(fs.readFileSync(path.join(root, 'runtime', 'trusted-keys.json'), 'utf8')).keys || [];
   if (!trusted.some((key) => key.keyId === signature.keyId)) {
-    throw new Error(`Kľúč ${signature.keyId} nie je v runtime/trusted-keys.json – Linsoft Runtime by balík odmietol. Spusti: npm run lsa:keygen`);
+    throw new Error(`Kľúč ${signature.keyId} nie je v runtime/trusted-keys.json – Linsoft Runtime by balík odmietol. Spusti: npm run lsr:keygen`);
   }
 
   fs.mkdirSync(outDir, { recursive: true });
@@ -132,6 +132,6 @@ function main() {
 }
 
 try { main(); } catch (error) {
-  console.error(`lsa-build: ${error.message}`);
+  console.error(`lsr-build: ${error.message}`);
   process.exit(1);
 }

@@ -1,7 +1,7 @@
 'use strict';
 // Runs a package installation off the Electron main thread so the progress window stays responsive.
 const { parentPort, workerData } = require('node:worker_threads');
-const { createLsaStore } = require('./lsa-store.cjs');
+const { createLsaStore } = require('./lsr-store.cjs');
 
 let lastReported = -1;
 try {

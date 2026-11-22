@@ -18,7 +18,7 @@ const { getCertificateWarningDetails, isLocalCertificateHost } = require('./lib/
 const browserName = 'Linsoft Browser';
 app.setName(browserName);
 app.setAppUserModelId('sk.linsoft.browser');
-// Set by Linsoft Runtime when the browser is started from an installed .lsa package.
+// Set by Linsoft Runtime when the browser is started from an installed .lsr package.
 const lsaHost = globalThis.linsoftLsaHost || null;
 const isPackagedBuild = !lsaHost && app.isPackaged && process.env.LINSOFT_DEV_LAUNCH !== '1';
 let autoUpdater = null;

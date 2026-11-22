@@ -1,7 +1,7 @@
-// Portable end-to-end test of Linsoft Runtime + .lsa on a Linux machine without Node.js or the repository.
+// Portable end-to-end test of Linsoft Runtime + .lsr on a Linux machine without Node.js or the repository.
 // Run through the installed runtime's own Electron in Node mode (see spusti-test.sh):
 //
-//   ELECTRON_RUN_AS_NODE=1 "/opt/Linsoft Runtime/linsoft-runtime" test-lsa-linux.cjs Linsoft-Browser-<version>.lsa [--skip-tor]
+//   ELECTRON_RUN_AS_NODE=1 "/opt/Linsoft Runtime/linsoft-runtime" test-lsr-linux.cjs Linsoft-Browser-<version>.lsr [--skip-tor]
 //
 // It uses the libraries and trusted keys of the INSTALLED runtime, a temporary runtime folder and a
 // temporary browser profile, so the user's real Linsoft data is not touched.
@@ -14,7 +14,7 @@ const { spawn } = require('node:child_process');
 const runtimeDir = process.env.LINSOFT_RUNTIME_DIR || '/opt/Linsoft Runtime';
 const runtimeExe = process.env.LINSOFT_RUNTIME_EXE || path.join(runtimeDir, 'linsoft-runtime');
 const appDir = path.join(runtimeDir, 'resources', 'app');
-const { ZipReader, extractLsaPackage, openLsaPackage } = require(path.join(appDir, 'lib', 'lsa-format.cjs'));
+const { ZipReader, extractLsaPackage, openLsaPackage } = require(path.join(appDir, 'lib', 'lsr-format.cjs'));
 const trustedKeys = JSON.parse(fs.readFileSync(path.join(appDir, 'trusted-keys.json'), 'utf8')).keys;
 const lsaFile = path.resolve(process.argv.slice(2).find((arg) => !arg.startsWith('--')) || '');
 const skipTor = process.argv.includes('--skip-tor');
@@ -126,7 +126,7 @@ async function closeBrowser(port) {
 }
 
 async function main() {
-  console.log(`Linsoft .lsa test (Linux) · ${lsaFile}\nRuntime: ${runtimeDir}\n`);
+  console.log(`Linsoft .lsr test (Linux) · ${lsaFile}\nRuntime: ${runtimeDir}\n`);
   assert(fs.existsSync(lsaFile), `Balík neexistuje: ${lsaFile}`);
   assert(process.platform !== 'linux' || process.env.DISPLAY || process.env.WAYLAND_DISPLAY, 'Nie je dostupná grafická obrazovka (DISPLAY/WAYLAND_DISPLAY) – spusti test v termináli na ploche.');
 
@@ -155,7 +155,7 @@ async function main() {
 
   console.log('\n— 2. Poškodené balíky');
   await check('zmenený bajt v app.js sa odhalí', () => {
-    const flipped = path.join(work, 'flipped.lsa');
+    const flipped = path.join(work, 'flipped.lsr');
     fs.copyFileSync(lsaFile, flipped);
     const reader = new ZipReader(lsaFile);
     const entry = reader.entries.get('app.js');
@@ -174,7 +174,7 @@ async function main() {
     throw new Error('poškodený balík prešiel');
   });
   await check('orezaný (nedostiahnutý) balík sa odmietne', () => {
-    const truncated = path.join(work, 'truncated.lsa');
+    const truncated = path.join(work, 'truncated.lsr');
     const data = fs.readFileSync(lsaFile);
     fs.writeFileSync(truncated, data.subarray(0, Math.floor(data.length * 0.7)));
     try { openLsaPackage(truncated, trustedKeys).reader.close(); } catch (error) { return `odmietnuté (${error.code})`; }
@@ -193,7 +193,7 @@ async function main() {
     assert(state.current === expectedVersion, `state.current = ${state.current}`);
   });
   let cdp;
-  await check(`prehliadač ${expectedVersion} beží z nainštalovanej .lsa`, async () => { cdp = await openBrowser(port); });
+  await check(`prehliadač ${expectedVersion} beží z nainštalovanej .lsr`, async () => { cdp = await openBrowser(port); });
   if (cdp) {
     await check('runtime označil spustenie za úspešné', async () => {
       for (let i = 0; i < 20; i += 1) { if (!JSON.parse(fs.readFileSync(statePath, 'utf8')).pending) return; await sleep(500); }
