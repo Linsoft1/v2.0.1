@@ -1,0 +1,22 @@
+LINSOFT CORE OS – TEST LINSOFT BROWSER .LSA
+===========================================
+
+1. Skopíruj celý tento priečinok na Linsoft Core OS (USB, zdieľaný priečinok…).
+
+2. Na Core OS otvor terminál NA PLOCHE (nie cez SSH – prehliadač sa musí zobraziť),
+   prejdi do priečinka a spusti:
+
+       bash spusti-test.sh
+
+   (bez internetu:  bash spusti-test.sh --skip-tor)
+
+3. Zadaj heslo, keď ho sudo vypýta (inštalácia Linsoft Runtime).
+
+4. Keď sa objaví okno „Nainštalovať Linsoft Browser …?“, klikni INŠTALOVAŤ.
+   Prehliadač sa sám otvorí, otestuje a zatvorí – nič nerob, kým test neskončí.
+
+5. Výsledok je v súbore  vysledok-testu.txt  v tomto priečinku.
+
+Test používa dočasný profil, tvoje dáta v Linsoft Browser nemení.
+Po teste si prehliadač nainštaluješ naostro dvojklikom na Linsoft-Browser-*.lsa
+alebo z menu aplikácií: „Linsoft Browser (LSA)“.

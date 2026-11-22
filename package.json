@@ -22,7 +22,7 @@
     "lsa:keygen": "node tools/lsa-keygen.cjs",
     "build:lsa": "node tools/lsa-build.cjs",
     "build:runtime": "electron-builder --config runtime/electron-builder.json --win nsis",
-    "build:runtime:linux": "electron-builder --config runtime/electron-builder.json --linux deb",
+    "build:runtime:linux": "electron-builder --config runtime/electron-builder.json --linux --dir && node tools/build-runtime-deb.cjs",
     "runtime": "electron runtime",
     "test:lsa": "node tools/test-lsa.cjs",
     "test": "node tools/validate-project.cjs && node --test tests/browser-policies.test.cjs tests/certificate-approval.test.cjs tests/certificate-warning.test.cjs tests/lsa-format.test.cjs tests/lsa-store.test.cjs tests/native-tab-manager.test.cjs tests/openvpn-controls.test.cjs tests/tab-state.test.cjs tests/tab-transfer-registry.test.cjs tests/tor-hosting.test.cjs tests/tor-chat-protocol.test.cjs tests/usb-camera.test.cjs",
